@@ -2,7 +2,6 @@
 const CACHE_NAME = 'sierra-navidad-cache-v15';
 const urlsToCache = [
   '/',
-  '/index.html',
   '/manifest.json'
 ];
 
@@ -34,9 +33,9 @@ self.addEventListener('activate', event => {
 
 self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') {
-      return;
+    return;
   }
-  
+
   event.respondWith(
     caches.match(event.request)
       .then(response => {

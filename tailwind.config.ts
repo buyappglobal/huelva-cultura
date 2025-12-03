@@ -2,9 +2,8 @@ import type { Config } from "tailwindcss";
 
 const config: Config = {
     content: [
-        "./pages/**/*.{js,ts,jsx,tsx,mdx}",
-        "./components/**/*.{js,ts,jsx,tsx,mdx}",
-        "./app/**/*.{js,ts,jsx,tsx,mdx}",
+        "./app/**/*.{js,ts,jsx,tsx,mdx}", // Only scan the app directory
+        "./components/**/*.{js,ts,jsx,tsx,mdx}", // And the components directory
     ],
     darkMode: "class",
     theme: {
