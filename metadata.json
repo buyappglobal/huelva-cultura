@@ -1,0 +1,7 @@
+{
+  "name": "Agenda Cultural Huelva",
+  "description": "Tu guía completa de eventos culturales en la provincia de Huelva: música, teatro, exposiciones, fiestas y mucho más. Descubre qué hacer en la Costa, la Sierra, el Condado y toda la provincia.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}

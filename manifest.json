@@ -1,0 +1,27 @@
+{
+  "name": "La Sierra en Navidad",
+  "short_name": "Huelva Cultural",
+  "start_url": "/?source=pwa",
+  "display": "standalone",
+  "background_color": "#1e3a8a",
+  "theme_color": "#1e3a8a",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "https://wsrv.nl/?url=https://solonet.es/wp-content/uploads/2025/11/Diseno-sin-titulo-26.png&w=192&h=192&output=png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "https://wsrv.nl/?url=https://solonet.es/wp-content/uploads/2025/11/Diseno-sin-titulo-26.png&w=512&h=512&output=png",
+      "type": "image/png",
+      "sizes": "512x512"
+    },
+    {
+      "src": "https://wsrv.nl/?url=https://solonet.es/wp-content/uploads/2025/11/Diseno-sin-titulo-26.png&w=512&h=512&output=png&mask=circle",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "maskable"
+    }
+  ]
+}

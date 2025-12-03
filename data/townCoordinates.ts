@@ -1,0 +1,32 @@
+
+
+export const townCoordinates: Record<string, [number, number]> = {
+    "Alájar": [37.874, -6.668],
+    "Almonaster la Real": [37.872, -6.782],
+    "Aracena": [37.893, -6.561],
+    "Aroche": [37.943, -6.957],
+    "Arroyomolinos de León": [38.026, -6.423],
+    "Cala": [37.973, -6.321],
+    "Castaño del Robledo": [37.899, -6.711],
+    "Cortegana": [37.909, -6.809],
+    "Corteconcepción": [37.894, -6.506],
+    "Cortelazor": [37.935, -6.621],
+    "Cumbres de Enmedio": [38.070, -6.993],
+    "Cumbres de San Bartolomé": [38.077, -7.036],
+    "Cumbres Mayores": [38.072, -6.645],
+    "Encinasola": [38.136, -7.070],
+    "Fuenteheridos": [37.902, -6.658],
+    "Galaroza": [37.925, -6.708],
+    "Higuera de la Sierra": [37.834, -6.444],
+    "Hinojales": [38.019, -6.602],
+    "Jabugo": [37.920, -6.829],
+    "La Nava": [37.962, -6.745],
+    "Linares de la Sierra": [37.859, -6.623],
+    "Los Marines": [37.908, -6.619],
+    "Puerto Moral": [37.886, -6.495],
+    "Rosal de la Frontera": [37.969, -7.214],
+    "Santa Ana la Real": [37.863, -6.711],
+    "Santa Olalla del Cala": [37.905, -6.192],
+    "Valdelarco": [37.949, -6.668],
+    "Zufre": [37.836, -6.340]
+};
