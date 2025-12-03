@@ -1,4 +1,4 @@
-'use client'; // Marcar como componente de el cliente ya que usa Leaflet y estado
+'use client'; // Marcar como componente de cliente ya que usa Leaflet y estado
 
 import { useEffect } from 'react';
 import Head from 'next/head';
