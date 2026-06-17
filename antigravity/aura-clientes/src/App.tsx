@@ -47,6 +47,8 @@ export default function App() {
   const [displayInfo, setDisplayInfo] = useState<any>(null);
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
+  const [pairingPin, setPairingPin] = useState("");
+  const [pairingLoading, setPairingLoading] = useState(false);
 
   // Chat state
   const [messages, setMessages] = useState<Message[]>([
@@ -218,6 +220,34 @@ export default function App() {
     setTickets([]);
   };
 
+  const handlePairTV = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pairingPin.trim() || pairingPin.length < 6) {
+      alert("Por favor, introduce un código de 6 dígitos.");
+      return;
+    }
+    setPairingLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/support/pair-device`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: pairingPin, userId: clientInfo.id })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        alert("¡Pantalla vinculada correctamente!");
+        setPairingPin("");
+        fetchClientData();
+      } else {
+        alert(data.error || "Código inválido o caducado.");
+      }
+    } catch (err) {
+      alert("Error de conexión al vincular la pantalla.");
+    } finally {
+      setPairingLoading(false);
+    }
+  };
+
   // Scroll to bottom of chat
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -311,8 +341,10 @@ export default function App() {
 
           <form onSubmit={handleLogin} className="space-y-4 text-left">
             <div>
-              <label className="text-[10px] font-bold uppercase tracking-widest text-white/40 block mb-1.5">Email de la Cuenta</label>
+              <label htmlFor="client-email" className="text-[10px] font-bold uppercase tracking-widest text-white/40 block mb-1.5">Email de la Cuenta</label>
               <input
+                id="client-email"
+                name="email"
                 type="email"
                 required
                 value={clientEmail}
@@ -323,8 +355,10 @@ export default function App() {
             </div>
 
             <div>
-              <label className="text-[10px] font-bold uppercase tracking-widest text-white/40 block mb-1.5">Código de Cuenta (ID Único)</label>
+              <label htmlFor="client-identifier" className="text-[10px] font-bold uppercase tracking-widest text-white/40 block mb-1.5">Código de Cuenta (ID Único)</label>
               <input
+                id="client-identifier"
+                name="identifier"
                 type="text"
                 required
                 value={clientIdentifier}
@@ -476,6 +510,73 @@ export default function App() {
                 Ver Transmisión en Vivo
               </a>
 
+              {/* TV Pairing Section */}
+              <div className="pt-4 border-t border-white/5 space-y-3">
+                {displayInfo?.tvDeviceId ? (
+                  <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-xl space-y-1">
+                    <span className="text-[9px] font-bold uppercase tracking-widest text-green-400 block">TV Vinculada</span>
+                    <p className="text-xs text-white/80 font-mono truncate">{displayInfo.tvDeviceId}</p>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (confirm("¿Estás seguro de desvincular este televisor?")) {
+                          try {
+                            const res = await fetch(`${API_BASE}/api/displays/${clientInfo.id}?callerId=${clientInfo.id}&callerRole=client`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ ...displayInfo, tvDeviceId: null })
+                            });
+                            if (res.ok) {
+                              alert("Televisor desvinculado con éxito.");
+                              fetchClientData();
+                            } else {
+                              alert("Error al desvincular el televisor.");
+                            }
+                          } catch (err) {
+                            alert("Error de red.");
+                          }
+                        }
+                      }}
+                      className="text-[9px] font-bold uppercase tracking-wider text-red-400 hover:text-red-300 transition-colors pt-1 block"
+                    >
+                      Desvincular Pantalla
+                    </button>
+                  </div>
+                ) : (
+                  <form onSubmit={handlePairTV} className="space-y-2">
+                    <label htmlFor="pairing-pin" className="text-[9px] font-bold uppercase tracking-widest text-white/40 block">Vincular Nueva Pantalla (TV)</label>
+                    <div className="flex gap-2">
+                      <input
+                        id="pairing-pin"
+                        name="pairingPin"
+                        type="text"
+                        maxLength={6}
+                        value={pairingPin}
+                        onChange={(e) => setPairingPin(e.target.value.replace(/[^0-9]/g, ''))}
+                        placeholder="Código PIN"
+                        className="flex-1 bg-[#141414] border border-white/10 rounded-xl px-3 py-2 text-xs focus:outline-none text-white font-mono text-center tracking-widest"
+                      />
+                      <button
+                        type="submit"
+                        disabled={pairingLoading || pairingPin.length < 6}
+                        className="px-4 bg-white text-black hover:bg-zinc-200 disabled:opacity-50 rounded-xl text-xs font-bold transition-all flex items-center justify-center cursor-pointer"
+                      >
+                        {pairingLoading ? <Loader2 size={12} className="animate-spin" /> : "Vincular"}
+                      </button>
+                    </div>
+                    <div className="mt-3 p-3 bg-white/[0.02] border border-white/5 rounded-xl space-y-2 text-[10px] text-white/60">
+                      <span className="font-bold text-white uppercase tracking-wider block">¿Cómo conectar tu TV?</span>
+                      <ol className="list-decimal list-inside space-y-1 text-white/40 text-[9px] leading-relaxed">
+                        <li>Enciende tu televisión inteligente y abre el navegador.</li>
+                        <li>Visita la dirección: <span className="text-purple-400 font-mono font-bold">app.aurabusiness.es/tv</span></li>
+                        <li>La pantalla te mostrará un código PIN de 6 dígitos.</li>
+                        <li>Introduce ese código arriba y pulsa <span className="text-white font-semibold">"Vincular"</span>.</li>
+                      </ol>
+                    </div>
+                  </form>
+                )}
+              </div>
+
               {/* Live Audio Stream Player */}
               <div className="pt-4 border-t border-white/5 space-y-3">
                 <div className="flex items-center justify-between">
@@ -611,6 +712,8 @@ export default function App() {
           <form onSubmit={handleSendMessage} className="p-4 border-t border-white/5 bg-black/40">
             <div className="flex gap-2">
               <input
+                id="chat-input"
+                name="chatInput"
                 type="text"
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}

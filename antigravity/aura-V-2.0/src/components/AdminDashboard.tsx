@@ -2932,7 +2932,7 @@ const [user, setUser] = useState<any>(null);
             )}
             {isSuperAdmin && (
               <button
-                onClick={() => navigate("/admin/super")}
+                onClick={() => window.location.href = "https://admin.aurabusiness.es"}
                 className="flex items-center gap-2 rounded-full bg-red-500/10 px-3 py-2 sm:px-4 sm:py-2 text-[10px] font-bold uppercase tracking-widest text-red-500 transition-all hover:bg-red-500 hover:text-white tv-focus"
               >
                 <ShieldCheck size={14} />

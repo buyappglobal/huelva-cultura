@@ -1,17 +1,19 @@
+import React, { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import DisplayRotativa from './components/DisplayRotativa';
-import AdminDashboard from './components/AdminDashboard';
-import Login from './components/Login';
 import ErrorBoundary from './components/ErrorBoundary';
 
 import AuraSoundscape from './components/AuraSoundscape';
 import SmartTVPlayer from './components/SmartTVPlayer';
-import SuperAdmin from './components/SuperAdmin';
-import Changelog from './components/Changelog';
 import HubResolver from './components/HubResolver';
-import AssociationLanding from './components/AssociationLanding';
 import LandingPage from './components/LandingPage';
-import VisualizerUploader from './components/VisualizerUploader';
+
+const ExternalRedirect = ({ url }: { url: string }) => {
+  useEffect(() => {
+    window.location.replace(url);
+  }, [url]);
+  return null;
+};
 
 export default function App() {
   return (
@@ -29,12 +31,9 @@ export default function App() {
           <Route path="/tv" element={<SmartTVPlayer />} />
           <Route path="/tv/:slug" element={<SmartTVPlayer />} />
           
-          {/* Admin Routes */}
-          <Route path="/admin" element={<AdminDashboard />} />
-          <Route path="/admin/login" element={<Login />} />
-          <Route path="/admin/super" element={<SuperAdmin />} />
-          <Route path="/admin/changelog" element={<Changelog />} />
-          <Route path="/admin/visualizer" element={<VisualizerUploader />} />
+          {/* Admin Redirects to dedicated Admin Portal */}
+          <Route path="/admin" element={<ExternalRedirect url="https://admin.aurabusiness.es" />} />
+          <Route path="/admin/*" element={<ExternalRedirect url="https://admin.aurabusiness.es" />} />
 
           {/* Hub Slugs */}
           <Route path="/hub/:slug" element={<HubResolver />} />
