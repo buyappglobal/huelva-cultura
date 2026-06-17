@@ -1310,6 +1310,15 @@ export default function SuperAdmin() {
     setLoading(true);
     setStatus(null);
 
+    // Auto-generate identifier if not specified
+    let finalSlug = slug.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
+    if (!finalSlug) {
+      const base = city.trim() ? city.trim().substring(0, 3).toUpperCase() : "AUR";
+      const cleanBase = base.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Z]/gi, 'A');
+      const num = Math.floor(1000 + Math.random() * 9000);
+      finalSlug = `${cleanBase}${num}`.toLowerCase();
+    }
+
     let secondaryApp;
     try {
       // 1. Create a secondary Firebase app to avoid logging out the current admin
@@ -1346,7 +1355,7 @@ export default function SuperAdmin() {
           hasAdsPanel: hasAdsPanel,
           hasImpulses: hasImpulses,
           isDemoAccount: isDemoAccount,
-          slug: slug.trim().toLowerCase().replace(/[^a-z0-9-]/g, ''),
+          slug: finalSlug,
           whatsapp: whatsapp.trim().replace(/[^0-9+]/g, ''),
           city: city.trim(),
           createdAt: new Date().toISOString()
@@ -1359,7 +1368,7 @@ export default function SuperAdmin() {
       }
 
       // 5. Send welcome email via Resend
-      const emailResult = await sendWelcomeEmail(email, password);
+      const emailResult = await sendWelcomeEmail(email, password, finalSlug);
       
       if (emailResult.success) {
         setStatus({ type: 'success', message: `Usuario ${email} creado y email enviado correctamente.` });
@@ -1633,7 +1642,7 @@ export default function SuperAdmin() {
                   </div>
                   <div className="space-y-2">
                     <div className="flex justify-between items-center">
-                      <label className="text-[10px] font-bold uppercase tracking-widest text-white/40">URL Amigable / ID Único</label>
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-white/40">Identificador Único</label>
                       <button
                         type="button"
                         onClick={() => {
@@ -1644,7 +1653,7 @@ export default function SuperAdmin() {
                         }}
                         className="text-[9px] font-bold uppercase tracking-widest text-purple-400 hover:text-purple-300 transition-all"
                       >
-                        Generar ID Único
+                        Generar Auto
                       </button>
                     </div>
                     <input
@@ -1652,7 +1661,7 @@ export default function SuperAdmin() {
                       value={slug}
                       onChange={(e) => setSlug(e.target.value)}
                       className="w-full h-[46px] rounded-xl border border-white/10 bg-[#0d0d0d] px-4 text-xs focus:border-white/20 focus:outline-none"
-                      placeholder="ej: HUE1024 o sierra-servicios"
+                      placeholder="Generado auto al crear o haz clic en Generar"
                     />
                   </div>
                 </div>
