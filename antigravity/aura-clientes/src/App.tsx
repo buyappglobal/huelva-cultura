@@ -10,7 +10,10 @@ import {
   AlertCircle,
   MapPin,
   Sparkles,
-  Loader2
+  Loader2,
+  Volume2,
+  VolumeX,
+  Music
 } from "lucide-react";
 
 interface Ticket {
@@ -57,6 +60,34 @@ export default function App() {
   const [chatLoading, setChatLoading] = useState(false);
   
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // Radio state
+  const [isRadioPlaying, setIsRadioPlaying] = useState(false);
+  const radioAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Toggle live radio
+  const toggleRadio = () => {
+    if (!radioAudioRef.current) {
+      radioAudioRef.current = new Audio("https://a5.asurahosting.com:8730/radio.mp3");
+    }
+
+    if (isRadioPlaying) {
+      radioAudioRef.current.pause();
+      setIsRadioPlaying(false);
+    } else {
+      radioAudioRef.current.play().catch(e => console.error("Radio play failed", e));
+      setIsRadioPlaying(true);
+    }
+  };
+
+  // Cleanup radio on unmount
+  useEffect(() => {
+    return () => {
+      if (radioAudioRef.current) {
+        radioAudioRef.current.pause();
+      }
+    };
+  }, []);
 
   // Register PWA Service Worker
   useEffect(() => {
@@ -377,6 +408,39 @@ export default function App() {
                 <Tv size={14} />
                 Ver Transmisión en Vivo
               </a>
+
+              {/* Live Audio Stream Player */}
+              <div className="pt-4 border-t border-white/5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-white/40 block">Escuchar Música en Vivo</span>
+                  <button
+                    onClick={toggleRadio}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[9px] font-bold uppercase tracking-widest border transition-all ${
+                      isRadioPlaying 
+                        ? "bg-green-500/10 text-green-400 border-green-500/20" 
+                        : "bg-white/5 text-white/60 border-white/10 hover:bg-white/10"
+                    }`}
+                  >
+                    {isRadioPlaying ? (
+                      <>
+                        <Volume2 size={10} className="animate-pulse" />
+                        <span>Sonando</span>
+                      </>
+                    ) : (
+                      <>
+                        <VolumeX size={10} />
+                        <span>Silencio</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+                <div className="p-3 bg-white/[0.02] border border-white/5 rounded-xl flex gap-2.5">
+                  <Music size={14} className="text-white/30 flex-shrink-0 mt-0.5" />
+                  <p className="text-[9px] text-white/40 leading-normal uppercase tracking-wider">
+                    Esta música sigue el ritmo del día (lista circadiana) y no es configurable desde este panel.
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
 
