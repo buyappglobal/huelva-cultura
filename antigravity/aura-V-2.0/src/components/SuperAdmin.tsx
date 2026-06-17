@@ -1642,7 +1642,7 @@ export default function SuperAdmin() {
                   </div>
                   <div className="space-y-2">
                     <div className="flex justify-between items-center">
-                      <label className="text-[10px] font-bold uppercase tracking-widest text-white/40">Identificador Único</label>
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-white/40">Código de Cuenta (ID Cliente)</label>
                       <button
                         type="button"
                         onClick={() => {
@@ -1661,7 +1661,7 @@ export default function SuperAdmin() {
                       value={slug}
                       onChange={(e) => setSlug(e.target.value)}
                       className="w-full h-[46px] rounded-xl border border-white/10 bg-[#0d0d0d] px-4 text-xs focus:border-white/20 focus:outline-none"
-                      placeholder="Generado auto al crear o haz clic en Generar"
+                      placeholder="ej: HUE1024"
                     />
                   </div>
                 </div>
@@ -2139,7 +2139,7 @@ export default function SuperAdmin() {
                       {/* Inputs Group */}
                       <div className="flex flex-wrap items-center gap-6 flex-1">
                         <div className="flex items-center gap-2 flex-1 min-w-[220px]">
-                          <span className="text-[9px] font-bold uppercase tracking-widest text-white/20">Identificador Único:</span>
+                          <span className="text-[9px] font-bold uppercase tracking-widest text-white/20">Código de Cuenta (ID Cliente):</span>
                           <input 
                             type="text"
                             id={`slug-input-${u.id}`}
@@ -2151,7 +2151,7 @@ export default function SuperAdmin() {
                               }
                             }}
                             className="flex-1 bg-transparent border-b border-white/10 text-[10px] font-bold uppercase tracking-widest text-white/60 focus:outline-none focus:border-white/30 p-1"
-                            placeholder="sin-identificador"
+                            placeholder="ej: HUE1024"
                           />
                           <button
                             type="button"
