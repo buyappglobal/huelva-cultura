@@ -2139,7 +2139,7 @@ export default function SuperAdmin() {
                       {/* Inputs Group */}
                       <div className="flex flex-wrap items-center gap-6 flex-1">
                         <div className="flex items-center gap-2 flex-1 min-w-[220px]">
-                          <span className="text-[9px] font-bold uppercase tracking-widest text-white/20">ID Único (Slug):</span>
+                          <span className="text-[9px] font-bold uppercase tracking-widest text-white/20">Identificador Único:</span>
                           <input 
                             type="text"
                             id={`slug-input-${u.id}`}
@@ -2151,7 +2151,7 @@ export default function SuperAdmin() {
                               }
                             }}
                             className="flex-1 bg-transparent border-b border-white/10 text-[10px] font-bold uppercase tracking-widest text-white/60 focus:outline-none focus:border-white/30 p-1"
-                            placeholder="sin-id-unico"
+                            placeholder="sin-identificador"
                           />
                           <button
                             type="button"
@@ -2168,8 +2168,34 @@ export default function SuperAdmin() {
                               handleUpdatePermission(u.id, 'slug', generatedSlug);
                             }}
                             className="text-[9px] font-bold uppercase tracking-widest text-purple-400 hover:text-purple-300 transition-all border border-purple-500/30 rounded px-1.5 py-0.5 bg-purple-500/5 hover:bg-purple-500/15"
+                            title="Generar Identificador Único"
                           >
                             Generar
+                          </button>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (!u.slug) {
+                                alert("Primero debes asignar y guardar un Identificador Único a este cliente.");
+                                return;
+                              }
+                              if (!confirm(`¿Enviar email con credenciales y recordatorio a ${u.email}?`)) return;
+                              try {
+                                const res = await sendWelcomeEmail(u.email, "*(Usa tu contraseña actual o solicita una nueva si no la recuerdas)*", u.slug);
+                                if (res.success) {
+                                  alert("¡Email enviado con éxito!");
+                                } else {
+                                  alert("Error al enviar email: " + (res.error || "Error desconocido"));
+                                }
+                              } catch (err) {
+                                alert("Error de red al enviar el email.");
+                              }
+                            }}
+                            className="text-[9px] font-bold uppercase tracking-widest text-emerald-400 hover:text-emerald-300 transition-all border border-emerald-500/30 rounded px-2.5 py-1.5 bg-emerald-500/5 hover:bg-emerald-500/15 flex items-center gap-1.5"
+                          >
+                            ✉️ Enviar Credenciales
                           </button>
                         </div>
                         <div className="flex items-center gap-2 flex-1 min-w-[150px]">
