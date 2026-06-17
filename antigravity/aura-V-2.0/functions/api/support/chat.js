@@ -28,9 +28,13 @@ export async function onRequest(context) {
       return new Response(JSON.stringify({ error: "GEMINI_API_KEY is not configured" }), { status: 500, headers: corsHeaders });
     }
 
-    // Retrieve display information
+    // Retrieve display and client user information
     const display = await env.DB.prepare(
-      "SELECT establishmentName, monthlyChangesLimit, changesUsedThisMonth FROM displays WHERE id = ?"
+      `SELECT d.establishmentName, d.monthlyChangesLimit, d.changesUsedThisMonth, 
+              u.status, u.trialEndsAt, u.isDemoAccount 
+       FROM displays d
+       LEFT JOIN users u ON d.id = u.id
+       WHERE d.id = ?`
     )
     .bind(displayId)
     .first();
@@ -41,10 +45,31 @@ export async function onRequest(context) {
 
     const limitReached = display.changesUsedThisMonth >= display.monthlyChangesLimit;
 
+    // Check trial and subscription status
+    let trialInfo = "";
+    if (display.isDemoAccount) {
+      trialInfo = "El cliente tiene una cuenta DEMO/Demostración comercial.";
+    } else if (display.status === 'trial') {
+      if (display.trialEndsAt) {
+        const daysLeft = Math.ceil((display.trialEndsAt - Date.now()) / (1000 * 60 * 60 * 24));
+        if (daysLeft > 0) {
+          trialInfo = `El cliente está en período de PRUEBA de Aura. Le quedan ${daysLeft} días de prueba (finaliza el ${new Date(display.trialEndsAt).toLocaleDateString('es-ES')}).`;
+        } else {
+          trialInfo = "El período de prueba de Aura del cliente ha EXPIRADO.";
+        }
+      } else {
+        trialInfo = "El cliente está en período de PRUEBA de Aura.";
+      }
+    } else if (display.status === 'active') {
+      trialInfo = "El cliente es de PAGO/Activo (suscripción activa).";
+    } else if (display.status === 'suspended') {
+      trialInfo = "La cuenta del cliente está SUSPENDIDA.";
+    }
+
     // Build contents for Gemini system instructions
     const systemInstruction = `Eres Aura Assistant, el agente de soporte inteligente de Aura Display.
 Tu función es ayudar al cliente de la pantalla "${display.establishmentName}" a solicitar cambios en su pantalla (cartelería, ofertas, música, etc.).
-El cliente tiene un límite de ${display.monthlyChangesLimit} cambios al mes, y lleva usados ${display.changesUsedThisMonth} cambios.
+${trialInfo ? `${trialInfo}\n` : ""}El cliente tiene un límite de ${display.monthlyChangesLimit} cambios al mes, y lleva usados ${display.changesUsedThisMonth} cambios.
 ${limitReached ? "IMPORTANTE: El cliente ha alcanzado su límite mensual de cambios. Debes informarle amablemente que no puede crear nuevos tickets hasta el próximo mes o contactando con su Partner." : ""}
 
 Debes guiar al cliente para concretar lo que quiere:
