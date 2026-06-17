@@ -2129,10 +2129,11 @@ export default function SuperAdmin() {
 
                       {/* Inputs Group */}
                       <div className="flex flex-wrap items-center gap-6 flex-1">
-                        <div className="flex items-center gap-2 flex-1 min-w-[150px]">
+                        <div className="flex items-center gap-2 flex-1 min-w-[220px]">
                           <span className="text-[9px] font-bold uppercase tracking-widest text-white/20">ID Único (Slug):</span>
                           <input 
                             type="text"
+                            id={`slug-input-${u.id}`}
                             defaultValue={u.slug || ''}
                             onBlur={(e) => {
                               const newSlug = e.target.value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
@@ -2143,6 +2144,24 @@ export default function SuperAdmin() {
                             className="flex-1 bg-transparent border-b border-white/10 text-[10px] font-bold uppercase tracking-widest text-white/60 focus:outline-none focus:border-white/30 p-1"
                             placeholder="sin-id-unico"
                           />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const base = u.city?.trim() ? u.city.trim().substring(0, 3).toUpperCase() : "AUR";
+                              const cleanBase = base.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Z]/gi, 'A');
+                              const num = Math.floor(1000 + Math.random() * 9000);
+                              const generatedSlug = `${cleanBase}${num}`.toLowerCase();
+                              
+                              const inputEl = document.getElementById(`slug-input-${u.id}`) as HTMLInputElement;
+                              if (inputEl) {
+                                inputEl.value = generatedSlug;
+                              }
+                              handleUpdatePermission(u.id, 'slug', generatedSlug);
+                            }}
+                            className="text-[9px] font-bold uppercase tracking-widest text-purple-400 hover:text-purple-300 transition-all border border-purple-500/30 rounded px-1.5 py-0.5 bg-purple-500/5 hover:bg-purple-500/15"
+                          >
+                            Generar
+                          </button>
                         </div>
                         <div className="flex items-center gap-2 flex-1 min-w-[150px]">
                           <span className="text-[9px] font-bold uppercase tracking-widest text-white/20">URL Stream:</span>
