@@ -323,13 +323,13 @@ export default function App() {
             </div>
 
             <div>
-              <label className="text-[10px] font-bold uppercase tracking-widest text-white/40 block mb-1.5">Identificador (CIF / DNI)</label>
+              <label className="text-[10px] font-bold uppercase tracking-widest text-white/40 block mb-1.5">Código de Cuenta (ID Único)</label>
               <input
                 type="text"
                 required
                 value={clientIdentifier}
                 onChange={(e) => setClientIdentifier(e.target.value)}
-                placeholder="B12345678 o 12345678X"
+                placeholder="ej: HUE1024"
                 className="w-full px-4 py-3 rounded-xl bg-[#141414] border border-white/10 focus:border-white/20 focus:outline-none text-sm text-white placeholder-white/20 transition-all"
               />
             </div>
