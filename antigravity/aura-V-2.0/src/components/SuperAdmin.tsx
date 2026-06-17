@@ -2015,8 +2015,8 @@ export default function SuperAdmin() {
                         )}
                       </div>
                       <div className="mt-3 flex flex-wrap items-center gap-4">
-                        <p className="text-[9px] text-white/20 uppercase tracking-widest flex items-center gap-1.5">
-                          <Monitor size={10} className="opacity-50" /> ID: {u.id.substring(0, 8)}...
+                        <p className="text-[9px] text-white/20 uppercase tracking-widest flex items-center gap-1.5 font-bold">
+                          <Monitor size={10} className="opacity-50" /> ID: {u.slug ? u.slug.toUpperCase() : 'SIN ID'}
                         </p>
                         <p className={`text-[9px] uppercase tracking-widest flex items-center gap-1.5 ${isOnline(u.displayMetrics?.lastSeen) ? 'text-green-500/60 font-bold' : 'text-white/20'}`}>
                           <Activity size={10} className="opacity-50" /> {getRelativeTime(u.displayMetrics?.lastSeen)}
