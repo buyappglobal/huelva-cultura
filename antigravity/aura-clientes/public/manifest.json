@@ -1,0 +1,17 @@
+{
+  "short_name": "Aura Clientes",
+  "name": "Aura Display - Portal de Clientes",
+  "icons": [
+    {
+      "src": "https://solonet.es/wp-content/uploads/2026/03/LOGO-AURA-BUSINESS-512-x-512-px.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "display": "standalone",
+  "orientation": "portrait"
+}

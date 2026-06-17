@@ -1,19 +1,14 @@
 import React, { useState, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
 import { 
   Tv, 
-  MessageSquare, 
   Send, 
   Clock, 
   CheckCircle, 
   XCircle, 
-  HelpCircle, 
   LogOut, 
   User, 
   AlertCircle,
-  TrendingUp,
   MapPin,
-  Calendar,
   Sparkles,
   Loader2
 } from "lucide-react";
@@ -34,9 +29,9 @@ interface Message {
   timestamp: number;
 }
 
-export default function ClientStatusPage() {
-  const navigate = useNavigate();
-  
+const API_BASE = "https://app.aurabusiness.es";
+
+export default function App() {
   // Auth state
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [clientEmail, setClientEmail] = useState("");
@@ -62,6 +57,15 @@ export default function ClientStatusPage() {
   const [chatLoading, setChatLoading] = useState(false);
   
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // Register PWA Service Worker
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js')
+        .then(reg => console.log('PWA SW registered:', reg.scope))
+        .catch(err => console.log('PWA SW error:', err));
+    }
+  }, []);
 
   // Check existing session on load
   useEffect(() => {
@@ -90,14 +94,14 @@ export default function ClientStatusPage() {
     setDataLoading(true);
     try {
       // Fetch display configuration
-      const displayRes = await fetch(`/api/displays/${clientInfo.id}`);
+      const displayRes = await fetch(`${API_BASE}/api/displays/${clientInfo.id}`);
       if (displayRes.ok) {
         const data = await displayRes.json();
         setDisplayInfo(data.display || {});
       }
 
       // Fetch tickets
-      const ticketsRes = await fetch(`/api/tickets?displayId=${clientInfo.id}`);
+      const ticketsRes = await fetch(`${API_BASE}/api/tickets?displayId=${clientInfo.id}`);
       if (ticketsRes.ok) {
         const ticketsData = await ticketsRes.json();
         setTickets(ticketsData || []);
@@ -118,7 +122,7 @@ export default function ClientStatusPage() {
     setAuthLoading(true);
     setAuthError("");
     try {
-      const res = await fetch("/api/auth/client-login", {
+      const res = await fetch(`${API_BASE}/api/auth/client-login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: clientEmail, identifier: clientIdentifier })
@@ -171,7 +175,7 @@ export default function ClientStatusPage() {
 
     try {
       // Send chat request to Pages Function
-      const res = await fetch("/api/support/chat", {
+      const res = await fetch(`${API_BASE}/api/support/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -195,7 +199,6 @@ export default function ClientStatusPage() {
         ]);
 
         if (data.ticketCreated) {
-          // Play sound or show feedback
           fetchClientData(); // Reload tickets to show the new ticket
         }
       } else {
@@ -239,7 +242,7 @@ export default function ClientStatusPage() {
             <p className="text-xs text-white/40 mt-1">Acceso a Ficha de Cliente / Estado</p>
           </div>
 
-          <form onSubmit={handleLogin} className="space-y-4">
+          <form onSubmit={handleLogin} className="space-y-4 text-left">
             <div>
               <label className="text-[10px] font-bold uppercase tracking-widest text-white/40 block mb-1.5">Email de la Cuenta</label>
               <input
@@ -323,7 +326,7 @@ export default function ClientStatusPage() {
         <div className="w-full lg:w-1/3 flex flex-col gap-6">
           
           {/* Display Card */}
-          <div className="bg-[#0c0c0c] border border-white/5 rounded-2xl p-6 space-y-6">
+          <div className="bg-[#0c0c0c] border border-white/5 rounded-2xl p-6 space-y-6 text-left">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-bold uppercase tracking-widest text-white/40">Mi Pantalla</span>
               <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-green-500/15 text-green-400 text-[9px] font-bold uppercase tracking-widest border border-green-500/10">
@@ -366,7 +369,7 @@ export default function ClientStatusPage() {
 
               {/* View Display Link */}
               <a
-                href={`/tv/${clientInfo.slug || clientInfo.id}`}
+                href={`https://app.aurabusiness.es/tv/${clientInfo.slug || clientInfo.id}`}
                 target="_blank"
                 rel="noreferrer"
                 className="w-full py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl font-bold text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2 text-white/80"
@@ -378,7 +381,7 @@ export default function ClientStatusPage() {
           </div>
 
           {/* Tickets List Card */}
-          <div className="bg-[#0c0c0c] border border-white/5 rounded-2xl p-6 flex-1 flex flex-col">
+          <div className="bg-[#0c0c0c] border border-white/5 rounded-2xl p-6 flex-1 flex flex-col text-left">
             <span className="text-[10px] font-bold uppercase tracking-widest text-white/40 block mb-4">Solicitudes Recientes</span>
             
             {dataLoading ? (
@@ -430,12 +433,12 @@ export default function ClientStatusPage() {
         <div className="w-full lg:w-2/3 bg-[#0c0c0c] border border-white/5 rounded-2xl flex flex-col h-[600px] overflow-hidden">
           
           {/* Chat Header */}
-          <div className="border-b border-white/5 px-6 py-4 bg-black/40 flex items-center justify-between">
+          <div className="border-b border-white/5 px-6 py-4 bg-black/40 flex items-center justify-between text-left">
             <div className="flex items-center gap-2">
               <div className="p-1.5 rounded-lg bg-white/10 text-white">
                 <Sparkles size={16} />
               </div>
-              <div className="text-left">
+              <div>
                 <span className="text-xs font-bold uppercase tracking-widest text-white/90 block">Soporte Inteligente</span>
                 <span className="text-[10px] text-white/40 block">IA asistente para cambios</span>
               </div>
@@ -450,7 +453,7 @@ export default function ClientStatusPage() {
                 className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 <div 
-                  className={`max-w-[80%] rounded-2xl px-4 py-3 text-xs leading-relaxed ${
+                  className={`max-w-[80%] rounded-2xl px-4 py-3 text-xs leading-relaxed text-left ${
                     msg.role === 'user' 
                       ? 'bg-white text-black rounded-tr-none' 
                       : msg.role === 'system'

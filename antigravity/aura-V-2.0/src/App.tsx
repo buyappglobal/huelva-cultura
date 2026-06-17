@@ -12,7 +12,6 @@ import HubResolver from './components/HubResolver';
 import AssociationLanding from './components/AssociationLanding';
 import LandingPage from './components/LandingPage';
 import VisualizerUploader from './components/VisualizerUploader';
-import ClientStatusPage from './components/ClientStatusPage';
 
 export default function App() {
   return (
@@ -36,9 +35,6 @@ export default function App() {
           <Route path="/admin/super" element={<SuperAdmin />} />
           <Route path="/admin/changelog" element={<Changelog />} />
           <Route path="/admin/visualizer" element={<VisualizerUploader />} />
-
-          {/* Client Status Page */}
-          <Route path="/cliente" element={<ClientStatusPage />} />
 
           {/* Hub Slugs */}
           <Route path="/hub/:slug" element={<HubResolver />} />
