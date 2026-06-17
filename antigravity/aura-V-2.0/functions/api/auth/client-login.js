@@ -29,7 +29,7 @@ export async function onRequest(context) {
 
     // Find the client user matching email and slug (DNI/CIF)
     const user = await env.DB.prepare(
-      "SELECT * FROM users WHERE LOWER(email) = ? AND (UPPER(slug) = ? OR UPPER(id) = ?) AND role = 'client'"
+      "SELECT * FROM users WHERE LOWER(email) = ? AND (UPPER(slug) = ? OR UPPER(id) = ?) AND role IN ('client', 'admin', 'superadmin')"
     )
     .bind(cleanEmail, cleanId, cleanId)
     .first();
