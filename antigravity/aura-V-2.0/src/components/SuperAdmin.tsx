@@ -2129,8 +2129,8 @@ export default function SuperAdmin() {
 
                       {/* Inputs Group */}
                       <div className="flex flex-wrap items-center gap-6 flex-1">
-                        <div className="flex items-center gap-2 flex-1 min-w-[120px]">
-                          <span className="text-[9px] font-bold uppercase tracking-widest text-white/20">Slug:</span>
+                        <div className="flex items-center gap-2 flex-1 min-w-[150px]">
+                          <span className="text-[9px] font-bold uppercase tracking-widest text-white/20">ID Único (Slug):</span>
                           <input 
                             type="text"
                             defaultValue={u.slug || ''}
@@ -2141,7 +2141,7 @@ export default function SuperAdmin() {
                               }
                             }}
                             className="flex-1 bg-transparent border-b border-white/10 text-[10px] font-bold uppercase tracking-widest text-white/60 focus:outline-none focus:border-white/30 p-1"
-                            placeholder="sin-slug"
+                            placeholder="sin-id-unico"
                           />
                         </div>
                         <div className="flex items-center gap-2 flex-1 min-w-[150px]">
