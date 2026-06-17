@@ -61,6 +61,42 @@ export default function App() {
   
   const chatEndRef = useRef<HTMLDivElement>(null);
 
+  // PWA installation state
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [showAndroidInstallBtn, setShowAndroidInstallBtn] = useState(false);
+  const [showIOSInstallTip, setShowIOSInstallTip] = useState(false);
+
+  useEffect(() => {
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone;
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+    
+    if (isIOS && !isStandalone) {
+      setShowIOSInstallTip(true);
+    }
+
+    const handleBeforeInstallPrompt = (e: any) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setShowAndroidInstallBtn(true);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    };
+  }, []);
+
+  const installPWA = () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    deferredPrompt.userChoice.then((choiceResult: any) => {
+      if (choiceResult.outcome === 'accepted') {
+        setShowAndroidInstallBtn(false);
+      }
+      setDeferredPrompt(null);
+    });
+  };
+
   // Radio state
   const [isRadioPlaying, setIsRadioPlaying] = useState(false);
   const radioAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -313,6 +349,29 @@ export default function App() {
               {authLoading ? <Loader2 size={16} className="animate-spin" /> : "Entrar a mi Ficha"}
             </button>
           </form>
+
+          {/* PWA Install Promo */}
+          {showAndroidInstallBtn && (
+            <div className="mt-6 pt-6 border-t border-white/5 text-center">
+              <button
+                onClick={installPWA}
+                className="w-full py-2.5 bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-400 font-bold text-[10px] uppercase tracking-widest rounded-xl border border-yellow-500/20 transition-all"
+              >
+                Instalar Aplicación (Acceso Rápido)
+              </button>
+            </div>
+          )}
+
+          {showIOSInstallTip && (
+            <div className="mt-6 pt-6 border-t border-white/5 text-center text-xs text-white/50">
+              <p className="mb-2">Para instalar esta app en tu iPhone:</p>
+              <div className="inline-flex flex-col items-center gap-1.5 bg-white/5 border border-white/10 p-3 rounded-xl text-[10px] text-white/70 w-full">
+                <span>Pulsa el botón de <b>Compartir</b></span>
+                <span className="text-white/40 font-mono text-[9px] uppercase tracking-wider">y luego selecciona:</span>
+                <span className="bg-white/10 px-2.5 py-1 rounded text-white font-bold uppercase tracking-wider text-[9px]">Añadir a pantalla de inicio</span>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -335,6 +394,14 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-4">
+            {showAndroidInstallBtn && (
+              <button
+                onClick={installPWA}
+                className="px-2.5 py-1.5 bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-400 border border-yellow-500/20 rounded-xl font-bold text-[9px] uppercase tracking-widest transition-all"
+              >
+                Instalar App
+              </button>
+            )}
             <div className="hidden sm:flex items-center gap-2 bg-white/5 border border-white/10 px-3 py-1 rounded-full text-xs text-white/60">
               <User size={12} />
               <span>{clientInfo.email}</span>
