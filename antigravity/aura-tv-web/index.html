@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/png" href="https://solonet.es/wp-content/uploads/2026/03/LOGO-AURA-BUSINESS-512-x-512-px.png" />
+    <meta name="theme-color" content="#000000" />
+    
+    <!-- iOS support -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Aura TV" />
+    <link rel="apple-touch-icon" href="https://solonet.es/wp-content/uploads/2026/03/LOGO-AURA-BUSINESS-512-x-512-px.png" />
+    
+    <!-- Smart TV / Browser optimization -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="application-name" content="Aura TV" />
+    <meta name="msapplication-TileColor" content="#000000" />
+    
+    <title>Aura Business | TV Screen Player</title>
+    <script>
+      // FIX For old Smart TVs (WebOS/Tizen) - Make fetch writable so polyfills don't crash
+      if (typeof window.fetch !== 'undefined') {
+        try {
+          window.fetch = window.fetch;
+        } catch(e) {
+          console.warn("[Aura] fetch is not writable, applying defineProperty fix...");
+          try {
+            var originalFetch = window.fetch;
+            Object.defineProperty(window, 'fetch', {
+              configurable: true,
+              writable: true,
+              value: originalFetch
+            });
+          } catch(err) {}
+        }
+      }
+    </script>
+  </head>
+  <body style="background-color: #000000; margin: 0; overflow: hidden;">
+    <!-- SVG Filter to remove white backgrounds from images -->
+    <svg style="width:0;height:0;position:absolute;" aria-hidden="true" focusable="false">
+      <filter id="remove-white" color-interpolation-filters="sRGB">
+        <feColorMatrix type="matrix" values="
+          1 0 0 0 0
+          0 1 0 0 0
+          0 0 1 0 0
+          -2 -2 -2 0 5.8
+        " />
+      </filter>
+    </svg>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
