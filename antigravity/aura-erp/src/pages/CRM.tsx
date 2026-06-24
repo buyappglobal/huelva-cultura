@@ -615,6 +615,40 @@ export default function CRM() {
               </div>
 
             </div>
+            
+            <div className="p-6 bg-slate-900 border-t border-slate-800 text-xs text-slate-400 flex justify-between items-center">
+              <span>¿Necesitas que el cliente reciba sus instrucciones?</span>
+              <button 
+                onClick={async () => {
+                  if (!editingClient.email) return alert("El cliente no tiene un email configurado.");
+                  const btn = document.getElementById("btn-send-welcome-email") as HTMLButtonElement;
+                  if (btn) btn.innerText = "Enviando...";
+                  try {
+                    const res = await fetch("https://app.aurabusiness.es/api/send-welcome-email", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        email: editingClient.email,
+                        slug: editingClient.id
+                      })
+                    });
+                    if (res.ok) {
+                      alert("Email con credenciales enviado correctamente.");
+                    } else {
+                      alert("Error al enviar el email. Comprueba que el API Key de Resend esté activo.");
+                    }
+                  } catch (e) {
+                    alert("Error de red al intentar enviar el correo.");
+                  } finally {
+                    if (btn) btn.innerText = "Enviar Email Acceso";
+                  }
+                }}
+                id="btn-send-welcome-email"
+                className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-3 py-1.5 rounded-lg transition-colors"
+              >
+                Enviar Email Acceso
+              </button>
+            </div>
 
             <div className="p-6 border-t border-slate-800 bg-slate-950/50 flex gap-4">
               <button 
