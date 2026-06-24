@@ -20,7 +20,10 @@ export async function onRequest(context) {
 
   try {
     const { results } = await env.DB.prepare(
-      "SELECT id, email, role, hasAdsPanel, hasImpulses, isDemoAccount, whatsapp, city, slug, createdAt FROM users"
+      `SELECT u.id, u.email, u.role, u.hasAdsPanel, u.hasImpulses, u.isDemoAccount, u.whatsapp, u.city, u.slug, u.status, u.createdAt, COUNT(t.id) as pendingTicketsCount 
+       FROM users u 
+       LEFT JOIN tickets t ON u.id = t.displayId AND t.status = 'pending' 
+       GROUP BY u.id`
     ).all();
 
     const parsedUsers = results.map(u => ({
@@ -34,6 +37,10 @@ export async function onRequest(context) {
       headers: { ...corsHeaders, "Content-Type": "application/json" }
     });
   } catch (err) {
+    // Report error to Sentinel
+    const { reportBackendError } = await import("./support/sentinel.js");
+    await reportBackendError(err, context);
+
     return new Response(JSON.stringify({ error: "Failed to load users", details: err.message }), {
       status: 500,
       headers: corsHeaders
