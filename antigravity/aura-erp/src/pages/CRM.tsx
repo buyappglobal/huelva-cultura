@@ -90,10 +90,19 @@ export default function CRM() {
     const nombre = prompt("Introduce el nombre comercial / empresa:");
     if (!nombre) return;
 
-    const provincia = prompt("Introduce la provincia / ciudad (ej. Valencia, Madrid):", "Valencia");
+    const provincia = prompt("Introduce la provincia / ciudad (ej. Valencia, Madrid):", "Valencia") || "Valencia";
     
-    // generate a random simple ID
-    const id = "ACC-" + Math.floor(Math.random() * 10000);
+    // Generate unified ID: 3 letters of province in uppercase + 4 random digits
+    const cleanProvince = provincia
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "") // Remove accents
+      .replace(/[^a-zA-Z]/g, "") // Only letters
+      .substring(0, 3)
+      .toUpperCase();
+    
+    const prefix = cleanProvince.length >= 3 ? cleanProvince : (cleanProvince + "GEN").substring(0, 3);
+    const randomDigits = Math.floor(1000 + Math.random() * 9000);
+    const id = `${prefix}${randomDigits}`;
 
     try {
       const res = await fetch('https://app.aurabusiness.es/api/erp/clients', {
@@ -103,7 +112,7 @@ export default function CRM() {
           id, 
           email,
           nombre,
-          city: provincia || 'Valencia',
+          city: provincia,
           status: 'trial',
           isDemoAccount: true,
           hasAdsPanel: true

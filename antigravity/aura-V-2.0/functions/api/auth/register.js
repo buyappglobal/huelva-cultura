@@ -41,33 +41,62 @@ export async function onRequest(context) {
   }
 
   try {
-    const { email, password, role, hasAdsPanel, hasImpulses, city, slug, whatsapp, partnerId } = await request.json();
-    if (!email || !password) {
-      return new Response(JSON.stringify({ error: "Email and password are required" }), { status: 400, headers: corsHeaders });
+    const { email, establecimiento, telefono, provincia } = await request.json();
+    if (!email) {
+      return new Response(JSON.stringify({ error: "Email es requerido" }), { status: 400, headers: corsHeaders });
     }
 
-    const passHash = await hashPassword(password);
-    const userId = "user_" + Math.random().toString(36).substring(2, 12);
+    // Passwords are no longer used for clients, using random string just for schema compatibility
+    const passHash = await hashPassword(Math.random().toString(36));
     
-    // Fallback if slug is not provided
-    const finalSlug = slug ? slug.trim().toLowerCase() : email.split("@")[0].toLowerCase().replace(/[^a-z0-9-]/g, "");
+    // Generate unified ID: 3 letters of province in uppercase + 4 random digits
+    const cleanProvince = (provincia || "GEN")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "") // Remove accents
+      .replace(/[^a-zA-Z]/g, "") // Only letters
+      .substring(0, 3)
+      .toUpperCase();
+    
+    const prefix = cleanProvince.length >= 3 ? cleanProvince : (cleanProvince + "GEN").substring(0, 3);
+    const randomDigits = Math.floor(1000 + Math.random() * 9000); // 4 digits
+    const userId = `${prefix}${randomDigits}`;
+    const finalSlug = userId;
+    
+    // Set 21 days trial
+    const now = Date.now();
+    const trialEndsAt = now + (21 * 24 * 60 * 60 * 1000); // 21 days in ms
 
     // Insert user into D1
     await env.DB.prepare(
-      `INSERT INTO users (id, email, passwordHash, role, hasAdsPanel, hasImpulses, city, slug, whatsapp, partnerId, createdAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(userId, email, passHash, role || "client", hasAdsPanel ? 1 : 0, hasImpulses ? 1 : 0, city || "", finalSlug, whatsapp || "", partnerId || null, Date.now()).run();
+      `INSERT INTO users (id, email, passwordHash, role, city, whatsapp, slug, status, trialEndsAt, createdAt)
+       VALUES (?, ?, ?, 'client', ?, ?, ?, 'trial', ?, ?)`
+    ).bind(userId, email, passHash, provincia || "", telefono || "", finalSlug, trialEndsAt, now).run();
+
+    // Auto-Assign Logic: Look for an admin in the same city/province
+    const adminMatch = await env.DB.prepare(
+      `SELECT id FROM users WHERE role IN ('admin', 'sales', 'superadmin') AND LOWER(city) = LOWER(?) LIMIT 1`
+    ).bind(provincia || "").first();
+
+    const parentAdminId = adminMatch ? adminMatch.id : null;
+
+    // Insert into client_hierarchy
+    await env.DB.prepare(
+      `INSERT INTO client_hierarchy (clientId, parentAdminId, subscriptionStatus) VALUES (?, ?, 'trial')`
+    ).bind(userId, parentAdminId).run();
 
     // Initialize display config for user
     await env.DB.prepare(
       `INSERT INTO displays (id, establishmentName, adminTitle, location, theme, volume, isZenMode, isNoDistractionsMode, isRemoteControl, performanceMode)
        VALUES (?, ?, ?, ?, 'classic', 0.7, 0, 0, 0, 'high')`
-    ).bind(userId, email.split("@")[0].toUpperCase(), email.split("@")[0].toUpperCase() + " Display", city || "").run();
+    ).bind(userId, email.split("@")[0].toUpperCase(), email.split("@")[0].toUpperCase() + " Display", provincia || "").run();
 
     return new Response(JSON.stringify({ success: true, userId, slug: finalSlug }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" }
     });
   } catch (err) {
+    if (err.message && err.message.includes('UNIQUE constraint failed')) {
+      return new Response(JSON.stringify({ error: "Este email ya está registrado" }), { status: 409, headers: corsHeaders });
+    }
     return new Response(JSON.stringify({ error: "Registration failed", details: err.message }), { status: 500, headers: corsHeaders });
   }
 }
