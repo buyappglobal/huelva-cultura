@@ -78,6 +78,33 @@ export async function onRequest(context) {
 
       return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
+    if (request.method === "DELETE") {
+      const url = new URL(request.url);
+      const id = url.searchParams.get("id");
+      if (!id) {
+        return new Response(JSON.stringify({ error: "Missing client id" }), { status: 400, headers: corsHeaders });
+      }
+
+      // Execute SQL deletions across all tables for this client
+      await env.DB.batch([
+        env.DB.prepare("DELETE FROM users WHERE id = ?").bind(id),
+        env.DB.prepare("DELETE FROM displays WHERE id = ?").bind(id),
+        env.DB.prepare("DELETE FROM contents WHERE userId = ?").bind(id),
+        env.DB.prepare("DELETE FROM quotes WHERE userId = ?").bind(id),
+        env.DB.prepare("DELETE FROM tickets WHERE displayId = ?").bind(id),
+        env.DB.prepare("DELETE FROM pairingCodes WHERE linkedClientId = ?").bind(id)
+      ]);
+
+      // Purge playout caches, active status, update signals in KV
+      const kv = env.AURA_KV || env.AURA_STATE;
+      if (kv) {
+        await kv.delete(`manifest:${id}`).catch(() => {});
+        await kv.delete(`update:${id}`).catch(() => {});
+        await kv.delete(`online:${id}`).catch(() => {});
+      }
+
+      return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
 
     return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: corsHeaders });
   } catch (err) {

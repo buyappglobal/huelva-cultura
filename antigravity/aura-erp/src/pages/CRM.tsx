@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Search, Filter, ShieldCheck, UserCheck, PlaySquare, AlertTriangle, MonitorX, MoreVertical, CreditCard, MapPin, Hash, User, Building, Mail, Phone, Home, X, Save, UserPlus, Clock, Zap } from 'lucide-react';
+import { Search, Filter, ShieldCheck, UserCheck, PlaySquare, AlertTriangle, MonitorX, MoreVertical, CreditCard, MapPin, Hash, User, Building, Mail, Phone, Home, X, Save, UserPlus, Clock, Zap, Trash2 } from 'lucide-react';
 
 export default function CRM() {
   const [activeTab, setActiveTab] = useState<'clientes' | 'leads'>('clientes');
@@ -8,6 +8,9 @@ export default function CRM() {
   const [filterEstado, setFilterEstado] = useState('Todos');
   const [filterConexion, setFilterConexion] = useState<'Todos' | 'Online' | 'Offline'>('Todos');
   const [editingClient, setEditingClient] = useState<any>(null);
+  const [deletingClient, setDeletingClient] = useState<any>(null);
+  const [confirmDeleteInput, setConfirmDeleteInput] = useState('');
+  const [deletingLoading, setDeletingLoading] = useState(false);
   
   const [admins, setAdmins] = useState<any[]>([]);
   const [assigningLeadId, setAssigningLeadId] = useState<string | null>(null);
@@ -101,6 +104,27 @@ export default function CRM() {
       }
     } catch (e) {
       alert('Error de red al intentar guardar.');
+    }
+  };
+
+  const deleteClient = async (clientId: string) => {
+    setDeletingLoading(true);
+    try {
+      const res = await fetch(`https://app.aurabusiness.es/api/erp/clients?id=${clientId}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        setClientes(clientes.filter(c => c.id !== clientId));
+        setDeletingClient(null);
+        setConfirmDeleteInput('');
+        alert('Cliente y todos sus datos asociados fueron eliminados correctamente.');
+      } else {
+        alert('Error al eliminar el cliente de la base de datos.');
+      }
+    } catch (e) {
+      alert('Error de red al intentar eliminar el cliente.');
+    } finally {
+      setDeletingLoading(false);
     }
   };
 
@@ -369,6 +393,7 @@ export default function CRM() {
                   </div>
                 </div>
               </div>
+              <div className="flex items-center gap-2">
                 <button 
                   onClick={() => setEditingClient(c)}
                   className="bg-slate-700 hover:bg-slate-600 p-2 rounded-lg text-white transition-colors"
@@ -376,7 +401,18 @@ export default function CRM() {
                 >
                   <MoreVertical className="w-5 h-5" />
                 </button>
+                <button 
+                  onClick={() => {
+                    setDeletingClient(c);
+                    setConfirmDeleteInput('');
+                  }}
+                  className="bg-red-950/40 hover:bg-red-900 border border-red-500/30 hover:border-red-500 p-2 rounded-lg text-red-400 hover:text-white transition-all duration-200"
+                  title="Eliminar Cuenta"
+                >
+                  <Trash2 className="w-5 h-5" />
+                </button>
               </div>
+            </div>
             {/* </div> This was the extra closing div! */}
 
             {/* Cuerpo de la Ficha */}
@@ -744,6 +780,72 @@ export default function CRM() {
                 className="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-medium py-3 rounded-xl transition-colors flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20"
               >
                 <Save className="w-5 h-5" /> Guardar Cambios
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Eliminar Cliente */}
+      {deletingClient && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-red-500/20 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
+            <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-red-950/20">
+              <h2 className="text-xl font-bold text-red-400 flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-red-500" /> ¡Atención!
+              </h2>
+              <button 
+                onClick={() => setDeletingClient(null)} 
+                className="text-slate-400 hover:text-white transition-colors"
+                disabled={deletingLoading}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-4">
+              <p className="text-white font-medium text-sm">
+                ¿Estás seguro de que deseas eliminar la cuenta de <span className="text-red-400 font-bold">{deletingClient.nombre}</span> ({deletingClient.id})?
+              </p>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Esta acción es <span className="text-red-400 font-bold">irreversible</span>. Se borrarán de forma permanente todos los datos relacionados:
+              </p>
+              <ul className="list-disc list-inside text-xs text-slate-400 space-y-1">
+                <li>Configuración del visualizador.</li>
+                <li>Imágenes y contenidos subidos.</li>
+                <li>Mensajes y frases del mural.</li>
+                <li>Tickets de soporte técnico.</li>
+                <li>Cachés y estados activos de reproducción.</li>
+              </ul>
+              <div className="space-y-2 pt-2">
+                <label className="block text-xs text-slate-400">
+                  Escribe la palabra <span className="text-red-400 font-bold font-mono">ELIMINAR</span> para confirmar:
+                </label>
+                <input 
+                  type="text" 
+                  value={confirmDeleteInput}
+                  onChange={(e) => setConfirmDeleteInput(e.target.value)}
+                  placeholder="ELIMINAR"
+                  disabled={deletingLoading}
+                  className="w-full bg-slate-800 border border-slate-700 text-white font-bold tracking-widest text-center py-2.5 rounded-lg focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                />
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-slate-800 bg-slate-950/50 flex gap-4">
+              <button 
+                onClick={() => setDeletingClient(null)}
+                disabled={deletingLoading}
+                className="flex-1 bg-slate-800 hover:bg-slate-700 text-white font-medium py-2.5 rounded-xl transition-colors disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={() => deleteClient(deletingClient.id)}
+                disabled={confirmDeleteInput !== 'ELIMINAR' || deletingLoading}
+                className="flex-1 bg-red-600 hover:bg-red-500 disabled:bg-red-950/40 disabled:text-red-500/50 disabled:border-red-500/10 text-white font-medium py-2.5 rounded-xl transition-all border border-red-500 shadow-lg shadow-red-500/10 flex items-center justify-center gap-1.5 active:scale-[0.98]"
+              >
+                {deletingLoading ? 'Eliminando...' : 'Eliminar'}
               </button>
             </div>
           </div>
