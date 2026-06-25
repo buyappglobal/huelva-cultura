@@ -3,7 +3,10 @@ import { Search, Filter, ShieldCheck, UserCheck, PlaySquare, AlertTriangle, Moni
 
 export default function CRM() {
   const [activeTab, setActiveTab] = useState<'clientes' | 'leads'>('clientes');
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchTerm, setSearchTerm] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('search') || '';
+  });
   const [filterProvincia, setFilterProvincia] = useState('Todas');
   const [filterEstado, setFilterEstado] = useState('Todos');
   const [filterConexion, setFilterConexion] = useState<'Todos' | 'Online' | 'Offline'>('Todos');

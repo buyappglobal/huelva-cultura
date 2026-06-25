@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Loader2, Ticket, CheckCircle2, XCircle, AlertCircle, Image as ImageIcon, Send, X } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Loader2, Ticket, CheckCircle2, XCircle, AlertCircle, ExternalLink, Image as ImageIcon, Send, X } from 'lucide-react';
 
 export default function Tickets() {
   const [tickets, setTickets] = useState<any[]>([]);
@@ -219,6 +219,20 @@ export default function Tickets() {
                 <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 block">Solicitud del cliente</span>
                 <p className="italic leading-relaxed">"{selectedTicket.text}"</p>
               </div>
+
+              {(() => {
+                const client = clientsMap[selectedTicket.displayId];
+                return client ? (
+                  <a 
+                    href={`/crm?search=${client.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full py-3 bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 border border-blue-500/20 hover:border-blue-500/40 rounded-xl font-bold text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-lg text-center"
+                  >
+                    <ExternalLink size={14} /> Configurar TV del Cliente
+                  </a>
+                ) : null;
+              })()}
 
               <form onSubmit={handleResolveTicket} className="space-y-4">
                 <div className="space-y-1.5">
