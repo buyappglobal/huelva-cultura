@@ -773,6 +773,17 @@ export default function CRM() {
 
             <div className="p-6 border-t border-slate-800 bg-slate-950/50 flex gap-4">
               <button 
+                type="button"
+                onClick={() => {
+                  setDeletingClient(editingClient);
+                  setConfirmDeleteInput('');
+                  setEditingClient(null);
+                }}
+                className="bg-red-950/40 hover:bg-red-900 border border-red-500/30 hover:border-red-500 text-red-400 hover:text-white font-medium px-4 py-3 rounded-xl transition-all duration-200 flex items-center justify-center gap-2"
+              >
+                <Trash2 className="w-5 h-5" /> Eliminar Cuenta
+              </button>
+              <button 
                 onClick={() => setEditingClient(null)}
                 className="flex-1 bg-slate-800 hover:bg-slate-700 text-white font-medium py-3 rounded-xl transition-colors"
               >
