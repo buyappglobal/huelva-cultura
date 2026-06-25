@@ -627,7 +627,7 @@ export default function CRM() {
                   </div>
                   <div className="space-y-1">
                     <span className="text-xs text-slate-500 uppercase tracking-widest font-bold">Estado</span>
-                    <p className="text-amber-400 font-bold flex items-center gap-2"><PlaySquare className="w-4 h-4" /> 7 Días de Prueba</p>
+                    <p className="text-amber-400 font-bold flex items-center gap-2"><PlaySquare className="w-4 h-4" /> 21 Días de Prueba</p>
                   </div>
                 </div>
               </div>

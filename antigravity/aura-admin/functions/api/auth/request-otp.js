@@ -19,7 +19,7 @@ export async function onRequest(context) {
   }
 
   try {
-    const { email, roleRequired } = await request.json();
+    const { email } = await request.json();
     if (!email) {
       return new Response(JSON.stringify({ error: "Email is required" }), { status: 400, headers: corsHeaders });
     }
@@ -29,16 +29,6 @@ export async function onRequest(context) {
 
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
     const otpExpiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes validity
-
-    // Role Enforcement
-    if (roleRequired && Array.isArray(roleRequired)) {
-      if (!user) {
-        return new Response(JSON.stringify({ error: "Acceso denegado. No tienes permisos para acceder a esta aplicación." }), { status: 403, headers: corsHeaders });
-      }
-      if (!roleRequired.includes(user.role)) {
-        return new Response(JSON.stringify({ error: "Acceso exclusivo. Tu nivel de cuenta no tiene permisos para entrar aquí." }), { status: 403, headers: corsHeaders });
-      }
-    }
 
     if (!user) {
       // Auto-register new trial user
@@ -151,7 +141,7 @@ export async function onRequest(context) {
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Código de verificación Aura Business</title>
+          <title>Código de verificación Aura</title>
         </head>
         <body style="margin: 0; padding: 0; background-color: #050505; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #ffffff; -webkit-font-smoothing: antialiased;">
           <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #050505;">
