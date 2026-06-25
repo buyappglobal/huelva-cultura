@@ -117,7 +117,10 @@ const AuthGate = ({ children }: { children: React.ReactNode }) => {
 
     if (authFromUrl) {
       localStorage.setItem('aura_erp_token', authFromUrl);
-      navigate(location.pathname, { replace: true });
+      searchParams.delete('auth');
+      searchParams.delete('token');
+      const queryStr = searchParams.toString();
+      navigate(location.pathname + (queryStr ? '?' + queryStr : ''), { replace: true });
       setIsAuthenticated(true);
     } else {
       const storedToken = localStorage.getItem('aura_erp_token');
