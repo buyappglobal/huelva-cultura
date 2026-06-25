@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="manifest" href="/manifest.json?v=2" />
+    <link rel="icon" type="image/png" sizes="512x512" href="https://solonet.es/wp-content/uploads/2026/03/LOGO-AURA-BUSINESS-512-x-512-px.png" />
+    <meta name="theme-color" content="#000000" />
+    
+    <!-- iOS support -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Aura Business" />
+    <link rel="apple-touch-icon" href="https://solonet.es/wp-content/uploads/2026/03/LOGO-AURA-BUSINESS-512-x-512-px.png" />
+    
+    <!-- Smart TV / Browser optimization -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="application-name" content="Aura Business" />
+    <meta name="msapplication-TileColor" content="#000000" />
+    <meta name="msapplication-tap-highlight" content="no" />
+    
+    <!-- LCP Optimization: Font Preload -->
+    <link rel="preload" href="/fonts/aura-elegant.woff2" as="font" type="font/woff2" crossorigin>
+
+    <title>Aura Business | Multimedia Hub</title>
+    <script>
+      // FIX For old Smart TVs (WebOS/Tizen) - Make fetch writable so polyfills don't crash
+      if (typeof window.fetch !== 'undefined') {
+        try {
+          window.fetch = window.fetch;
+        } catch(e) {
+          console.warn("[Aura] fetch is not writable, applying defineProperty fix...");
+          try {
+            var originalFetch = window.fetch;
+            Object.defineProperty(window, 'fetch', {
+              configurable: true,
+              writable: true,
+              value: originalFetch
+            });
+          } catch(err) {}
+        }
+      }
+
+      // Clear session storage on initial load to ensure fresh start for the session
+      if (!sessionStorage.getItem('aura_session_started')) {
+        sessionStorage.clear();
+        sessionStorage.setItem('aura_session_started', 'true');
+      }
+
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then(reg => console.log('SW registered:', reg))
+            .catch(err => console.log('SW error:', err));
+        });
+      }
+    </script>
+  </head>
+  <body>
+    <!-- SVG Filter to remove white backgrounds from images -->
+    <svg style="width:0;height:0;position:absolute;" aria-hidden="true" focusable="false">
+      <filter id="remove-white" color-interpolation-filters="sRGB">
+        <feColorMatrix type="matrix" values="
+          1 0 0 0 0
+          0 1 0 0 0
+          0 0 1 0 0
+          -2 -2 -2 0 5.8
+        " />
+      </filter>
+    </svg>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // Intercept Unhandled Rejections to determine the origin of AbortError
+      window.addEventListener('unhandledrejection', function(event) {
+        if (event.reason && event.reason.name === 'AbortError') {
+          console.error('[Aura Debug] AbortError Stack Trace:', event.reason.stack || event.reason);
+          // If it is from a video element
+          if (event.reason instanceof DOMException) {
+            console.error('[Aura Debug] DOMException details:', event.reason.message);
+          }
+        }
+      });
+    </script>
+  </body>
+</html>
+

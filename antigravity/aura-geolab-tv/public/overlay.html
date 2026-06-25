@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OBS Overlay - Directo Aura</title>
+  <style>
+    :root {
+      --accent-blue: #00f2fe;
+      --accent-purple: #9d4edd;
+      --text-white: #ffffff;
+      --bg-dark-trans: rgba(10, 10, 15, 0.85);
+      --font-mono: 'Space Mono', 'Courier New', Courier, monospace;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: transparent; /* Transparent background for OBS overlay */
+      position: relative;
+    }
+
+    /* TOP WIDGET: Status bar info */
+    #status-widget {
+      position: absolute;
+      top: 30px;
+      right: 30px;
+      background: var(--bg-dark-trans);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 16px;
+      padding: 18px 26px;
+      max-width: 500px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+      transition: all 0.5s cubic-bezier(0.19, 1, 0.22, 1);
+      transform: translateY(-20px);
+      opacity: 0;
+    }
+
+    #status-widget.visible {
+      transform: translateY(0);
+      opacity: 1;
+    }
+
+    .widget-tag {
+      font-size: 12px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: #ff3333;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .widget-dot {
+      width: 10px;
+      height: 10px;
+      background-color: #ff3333;
+      border-radius: 50%;
+      animation: pulse-red 2s infinite;
+      display: inline-block;
+    }
+
+    #status-text {
+      color: var(--text-white);
+      font-size: 18px;
+      font-weight: 500;
+      line-height: 1.4;
+    }
+
+    /* BOTTOM LEFT WIDGET: Micro-Changelog info */
+    #changelog-widget {
+      position: absolute;
+      bottom: 120px; /* Aligned above typical playout bottom bars */
+      left: 30px;
+      background: var(--bg-dark-trans);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 16px;
+      padding: 18px 26px;
+      max-width: 550px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+      transition: all 0.5s cubic-bezier(0.19, 1, 0.22, 1);
+      transform: translateY(20px);
+      opacity: 0;
+    }
+
+    #changelog-widget.visible {
+      transform: translateY(0);
+      opacity: 1;
+    }
+
+    .changelog-title {
+      font-size: 12px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: var(--accent-purple);
+      margin-bottom: 10px;
+    }
+
+    #changelog-list {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      font-family: var(--font-mono);
+      font-size: 14px;
+      color: rgba(255, 255, 255, 0.9);
+      line-height: 1.6;
+    }
+
+    /* FULLSCREEN OVERLAYS: Maintenance / Deploy screen */
+    #maintenance-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(8, 8, 12, 0.92);
+      backdrop-filter: blur(25px);
+      -webkit-backdrop-filter: blur(25px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.8s ease;
+    }
+
+    #maintenance-overlay.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .maintenance-card {
+      text-align: center;
+      max-width: 500px;
+      padding: 40px;
+      animation: float 4s ease-in-out infinite;
+    }
+
+    .gear-icon {
+      font-size: 60px;
+      margin-bottom: 20px;
+      animation: spin 10s linear infinite;
+      display: inline-block;
+    }
+
+    .maintenance-title {
+      font-size: 24px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 4px;
+      margin-bottom: 12px;
+      background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .maintenance-text {
+      color: rgba(255, 255, 255, 0.6);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    @keyframes spin {
+      100% { transform: rotate(360deg); }
+    }
+
+    @keyframes float {
+      0%, 100% { transform: translateY(0px); }
+      50% { transform: translateY(-10px); }
+    }
+
+    @keyframes pulse-red {
+      0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(255, 51, 51, 0.7); }
+      70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(255, 51, 51, 0); }
+      100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(255, 51, 51, 0); }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Status Widget -->
+  <div id="status-widget">
+    <div class="widget-tag">
+      <div class="widget-dot"></div>
+      <span>AURA LAB EN VIVO</span>
+    </div>
+    <div id="status-text">Cargando estado...</div>
+  </div>
+
+  <!-- Bottom Left Changelog -->
+  <div id="changelog-widget">
+    <div class="changelog-title">📋 Hitos del Directo</div>
+    <ul id="changelog-list">
+      <!-- Injected list -->
+    </ul>
+  </div>
+
+  <!-- Fullscreen Maintenance / Deploy screen -->
+  <div id="maintenance-overlay">
+    <div class="maintenance-card">
+      <div class="gear-icon">⚙️</div>
+      <div class="maintenance-title">Despliegue en Curso</div>
+      <p class="maintenance-text">Compilando nueva release e indexando base de datos. El servicio experimentará micro-cortes temporales de retransmisión.</p>
+    </div>
+  </div>
+
+  <!-- Placeholder helper for regular browsers -->
+  <div id="placeholder-helper" style="display: none; position: absolute; inset: 0; flex-direction: column; align-items: center; justify-content: center; color: rgba(255, 255, 255, 0.4); font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 14px; text-transform: uppercase; letter-spacing: 3px; text-align: center; padding: 20px; pointer-events: none; z-index: 1;">
+    <span style="font-size: 24px; margin-bottom: 15px; display: block;">🔴</span>
+    <b>AURA OVERLAY ACTIVO</b>
+    <span style="font-size: 10px; color: rgba(255, 255, 255, 0.2); margin-top: 8px; display: block; letter-spacing: 1px;">
+      Esperando actualización desde el Panel de Control...
+    </span>
+  </div>
+
+  <script>
+    let isTimerVisible = true;
+
+    function updateState(data = {}) {
+      // Apply background color based on environment
+      if (window.obsstudio) {
+        document.body.style.backgroundColor = 'transparent';
+      } else {
+        document.body.style.backgroundColor = '#08080c'; // Dark preview background for regular browsers
+      }
+
+      // 1. Update Status Widget
+      const statusText = data.statusText !== undefined ? data.statusText : (localStorage.getItem('obs_live_status') || '');
+      const statusWidget = document.getElementById('status-widget');
+      const statusSpan = document.getElementById('status-text');
+      
+      if (statusText && statusText.trim() && isTimerVisible) {
+        statusSpan.innerText = statusText;
+        statusWidget.classList.add('visible');
+      } else {
+        statusWidget.classList.remove('visible');
+      }
+
+      // 2. Update Changelog Widget
+      const changelog = data.changelog !== undefined ? data.changelog : (localStorage.getItem('obs_live_changelog') || '');
+      const changelogWidget = document.getElementById('changelog-widget');
+      const changelogList = document.getElementById('changelog-list');
+      
+      if (changelog && changelog.trim() && isTimerVisible) {
+        changelogList.innerHTML = changelog
+          .split('\n')
+          .map(line => `<li>${line}</li>`)
+          .join('');
+        changelogWidget.classList.add('visible');
+      } else {
+        changelogWidget.classList.remove('visible');
+      }
+
+      // 3. Update Screen Overlay
+      const screenType = data.screenType !== undefined ? data.screenType : (localStorage.getItem('obs_live_screen') || 'none');
+      const maintenanceOverlay = document.getElementById('maintenance-overlay');
+      
+      if (screenType === 'mantenimiento') {
+        maintenanceOverlay.classList.add('active');
+      } else {
+        maintenanceOverlay.classList.remove('active');
+      }
+
+      // 4. Update Placeholder Helper
+      const hasContent = (statusText && statusText.trim()) || (changelog && changelog.trim()) || screenType === 'mantenimiento';
+      const placeholder = document.getElementById('placeholder-helper');
+      if (!hasContent && !window.obsstudio) {
+        placeholder.style.display = 'flex';
+      } else {
+        placeholder.style.display = 'none';
+      }
+    }
+
+    async function fetchServerState() {
+      try {
+        const res = await fetch('/api/admin/directo-overlay?t=' + Date.now());
+        if (res.ok) {
+          const data = await res.json();
+          updateState(data);
+        } else {
+          updateState();
+        }
+      } catch (e) {
+        console.error("Error fetching state from server:", e);
+        updateState();
+      }
+    }
+
+    // Listen to changes in localStorage triggered by the controller
+    window.addEventListener('storage', (e) => {
+      fetchServerState();
+    });
+
+    // Run initial state update
+    window.onload = function() {
+      fetchServerState();
+      
+      // Polling: Check updates every 1.5 seconds
+      setInterval(fetchServerState, 1500);
+
+      // Visibility cycle: Show for 2 minutes, hide for 13 minutes (15 min cycle)
+      const SHOW_TIME = 120000; // 2 minutes
+      const HIDE_TIME = 780000; // 13 minutes
+      
+      function runTimerCycle() {
+        setTimeout(() => {
+          isTimerVisible = !isTimerVisible;
+          fetchServerState(); // Refresh state with new visibility
+          runTimerCycle();
+        }, isTimerVisible ? SHOW_TIME : HIDE_TIME);
+      }
+      runTimerCycle();
+    };
+  </script>
+</body>
+</html>

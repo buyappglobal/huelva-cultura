@@ -1,12 +1,13 @@
 // Cloudflare Pages Function for Edge Playout & Session Management
 // Path: functions/api/session/[[clientId]].js
 
+import { QUOTES_DB } from './quotes.js';
 const DEFAULT_SCHEDULE = [
-  { start: 0, end: 8, folder: "midnight", quote: "El silencio de la noche cobija la calma. Es momento de apagar el ruido exterior y restaurar tu equilibrio interno.", category: "NIGHT" },
-  { start: 8, end: 12, folder: "aperitivo", quote: "Activa tu mañana con armonía. Cada hora es una nueva oportunidad para crear valor y compartir inspiración.", category: "SOCIAL" },
-  { start: 12, end: 17, folder: "active", quote: "Enfoque absoluto y rendimiento premium. Sintoniza tu productividad con el ritmo de tus metas más altas.", category: "BUSINESS" },
-  { start: 17, end: 20, folder: "sunset", quote: "El atardecer invita a la pausa y a la desconexión consciente. Disfruta de la atmósfera de transición hacia el descanso.", category: "LOUNGE" },
-  { start: 20, end: 24, folder: "sunset", quote: "Sinfonía nocturna para mentes creativas. La sofisticación del sonido eleva la boveda de tus pensamientos.", category: "PREMIUM" }
+  { start: 0, end: 8, folder: "midnight", quote: '"La noche es la mitad de la vida, y la mejor mitad." - Johann Wolfgang von Goethe', category: "NIGHT" },
+  { start: 8, end: 12, folder: "aperitivo", quote: '"Cuando te levantes por la mañana, piensa en el precioso privilegio de estar vivo." - Marco Aurelio', category: "SOCIAL" },
+  { start: 12, end: 17, folder: "active", quote: '"La simplicidad es la máxima sofisticación." - Leonardo da Vinci', category: "BUSINESS" },
+  { start: 17, end: 20, folder: "sunset", quote: '"No es que tengamos poco tiempo, sino que perdemos mucho." - Séneca', category: "LOUNGE" },
+  { start: 20, end: 24, folder: "sunset", quote: '"Estamos hechos de la misma materia que los sueños." - William Shakespeare', category: "PREMIUM" }
 ];
 
 const FOLDER_TRACKS = {
@@ -277,8 +278,16 @@ async function computeAuraManifest(env, clientId, skip, exclude, skipCount, forc
   const defaultSlot = DEFAULT_SCHEDULE.find(s => hour >= s.start && hour < s.end) || DEFAULT_SCHEDULE[3];
   const folder = forcedFolder || slot.folder || defaultSlot.folder;
   const manifestFolder = folder === 'live' ? 'sunset' : folder;
-  const quote = forcedQuote || (isGlobal ? "BIENVENIDO AL ECOSISTEMA AURA" : slot.quote || defaultSlot.quote);
   const category = forcedCategory || (isGlobal ? "MODO GLOBAL ACTIVO" : slot.category || defaultSlot.category);
+  
+  // Use category to pick a group from QUOTES_DB, fallback to SOCIAL if category is missing
+  const quotesGroup = QUOTES_DB[category] || QUOTES_DB.SOCIAL || [slot.quote || defaultSlot.quote];
+  // We need a stable random seed based on slot + skip logic so the quote rotates naturally but stays consistent across fast refresh
+  const rotationSeed = (currentSlotIndex * 7) + (skipCount * 13) + (manifestFolder.length * 31);
+  const quoteIndex = rotationSeed % quotesGroup.length;
+  const dynamicQuote = quotesGroup[quoteIndex];
+
+  const quote = forcedQuote || dynamicQuote;
 
   // Fetch from R2 with support for comma-separated folders
   const folders = manifestFolder.split(',').map(f => f.trim());
@@ -305,7 +314,6 @@ async function computeAuraManifest(env, clientId, skip, exclude, skipCount, forc
   }
 
   let selectedTrack;
-  const rotationSeed = (currentSlotIndex * 7) + (skipCount * 13) + (manifestFolder.length * 31);
 
   if (skip) {
     let tracksToPickFrom = availableTracks;
@@ -393,6 +401,7 @@ async function computeAuraManifest(env, clientId, skip, exclude, skipCount, forc
       backgroundUrl: BACKGROUNDS[bgIndex],
       backgroundType: "image",
       quote: quote,
+      quotes: quotesGroup,
       category: category,
       ticker: []
     },

@@ -69,7 +69,7 @@ export async function onRequest(context) {
     // Build contents for Gemini system instructions
     const systemInstruction = `Eres Aura Assistant, el agente de soporte inteligente de Aura Display.
 Tu función es ayudar al cliente de la pantalla "${display.establishmentName}" a solicitar cambios en su pantalla (cartelería, ofertas, música, etc.).
-${trialInfo ? `${trialInfo}\n` : ""}El cliente tiene un límite de ${display.monthlyChangesLimit} cambios al mes, y lleva usados ${display.changesUsedThisMonth} cambios.
+${trialInfo ? `${trialInfo}\n` : ""}El cliente tiene un límite de ${display.monthlyChangesLimit} cambios al mes, y lleva usados ${display.changesUsedThisMonth} cambios (le quedan ${display.monthlyChangesLimit - display.changesUsedThisMonth} disponibles).
 ${limitReached ? "IMPORTANTE: El cliente ha alcanzado su límite mensual de cambios. Debes informarle amablemente que no puede crear nuevos tickets hasta el próximo mes o contactando con su Partner." : ""}
 
 Debes guiar al cliente para concretar lo que quiere:
@@ -77,11 +77,13 @@ Debes guiar al cliente para concretar lo que quiere:
 2. O si es un cartel publicitario, menú complejo o creatividad visual que requiere diseño gráfico -> Tipo: GRAPHIC_SLIDE.
 
 Cuando el cliente especifique claramente el cambio y confirmes que tiene saldo de cambios:
-Debes responder con normalidad en español, pero al final de tu respuesta, DEBES adjuntar una única línea con un objeto JSON exacto para que el sistema cree el ticket de forma automatizada:
+Debes responder con normalidad en español, confirmando la petición. En tu respuesta DEBES incluir un breve resumen de lo que has entendido que el cliente quiere, e INFORMARLE EXPRESAMENTE de que este cambio le consumirá 1 solicitud de su límite mensual de ${display.monthlyChangesLimit}.
+Además, al final de tu respuesta (oculto para la base de datos), DEBES adjuntar una única línea con un objeto JSON exacto para que el sistema cree el ticket de forma automatizada:
 {"create_ticket": true, "formatType": "TEXT_FLASH" o "GRAPHIC_SLIDE", "text": "Mensaje resumido con los detalles del cambio solicitado"}
 
-Ejemplo de JSON al final si pide cambiar el texto de 2x1 en cañas:
-{"create_ticket": true, "formatType": "TEXT_FLASH", "text": "Oferta Flash: 2x1 en cañas de 18:00 a 20:00"}
+Ejemplo de respuesta si pide cambiar el texto de 2x1 en cañas:
+"¡Perfecto! He tomado nota. Resumen: Solicitas actualizar la oferta de la pantalla para mostrar un 2x1 en cañas de 18:00 a 20:00. Te informo que esta petición consumirá 1 solicitud de tu límite mensual. Nuestro equipo lo gestionará pronto.
+{"create_ticket": true, "formatType": "TEXT_FLASH", "text": "Oferta Flash: 2x1 en cañas de 18:00 a 20:00"}"
 
 Mantén una actitud premium, profesional y servicial.`;
 
@@ -140,42 +142,12 @@ Mantén una actitud premium, profesional y servicial.`;
       }
     }
 
-    // If a ticket needs to be created, invoke the ticket creation logic
-    let createdTicketId = null;
-    if (ticketData && ticketData.create_ticket) {
-      try {
-        const ticketId = "ticket_" + Math.random().toString(36).substring(2, 15);
-        const createdAt = Date.now();
-        const displayInfo = await env.DB.prepare("SELECT partnerId FROM displays WHERE id = ?").bind(displayId).first();
-        const partnerId = displayInfo?.partnerId || null;
-
-        await env.DB.prepare(
-          "INSERT INTO tickets (id, displayId, partnerId, text, formatType, status, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)"
-        )
-        .bind(
-          ticketId,
-          displayId,
-          partnerId,
-          ticketData.text,
-          ticketData.formatType || "TEXT_FLASH",
-          "pending_action",
-          createdAt
-        )
-        .run();
-
-        createdTicketId = ticketId;
-      } catch (dbErr) {
-        console.error("Failed to save auto-created ticket to DB:", dbErr);
-      }
-    }
-
+    // Do NOT create the ticket automatically. Just return the proposed data so the frontend can ask for confirmation with buttons.
     return new Response(JSON.stringify({
       success: true,
       reply: cleanReply,
-      ticketCreated: !!createdTicketId,
-      ticketId: createdTicketId,
-      ticketText: ticketData?.text || null,
-      ticketType: ticketData?.formatType || null
+      ticketProposed: !!ticketData,
+      ticketData: ticketData || null
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" }
     });

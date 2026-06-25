@@ -1,0 +1,17 @@
+{
+  "short_name": "Aura Admin",
+  "name": "Aura Business Administration",
+  "icons": [
+    {
+      "src": "https://solonet.es/wp-content/uploads/2026/03/LOGO-AURA-BUSINESS-512-x-512-px.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#050505",
+  "theme_color": "#a855f7",
+  "display": "standalone",
+  "orientation": "portrait"
+}

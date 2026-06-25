@@ -1,0 +1,23 @@
+#:schema node_modules/wrangler/config-schema.json
+name = "aura-admin"
+compatibility_date = "2026-05-03"
+pages_build_output_dir = "dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "aura-db"
+database_id = "fcb4aad9-7498-416d-8aaf-e96e3e58a9c0"
+
+[[r2_buckets]]
+binding = "AUDIO_BUCKET"
+bucket_name = "aura-media-library"
+
+[[kv_namespaces]]
+binding = "AURA_STATE"
+id = "ac663a226b06431c8ccc7768965fa4a5"
+
+[vars]
+RESEND_API_KEY = "re_XnRX1CiQ_6RVh629WzWpegsUcLEA3zJaZ"
+AURA_SECRET_KEY = "aura_live_v2_8f3d91a27e4b6c5d1f0e9b8a7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1R"
+GOOGLE_CLOUD_URL = "https://aura-v-2-0-136354148420.us-west1.run.app"
+GEMINI_API_KEY = "AIzaSyDn7dDN_5IQzATn3c7NikBqaraSymt6Pf4"
