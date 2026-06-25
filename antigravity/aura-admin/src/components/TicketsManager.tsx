@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { Loader2, Ticket, CheckCircle2, XCircle, AlertCircle, ExternalLink, Image as ImageIcon, Send, X } from 'lucide-react';
+import { Loader2, Ticket, CheckCircle2, XCircle, AlertCircle, ExternalLink, Image as ImageIcon, Send, X, MessageSquare } from 'lucide-react';
 
 interface TicketsManagerProps {
   currentUser: any;
   users: any[];
+  onRedirectToAds: (clientId: string) => void;
 }
 
-export default function TicketsManager({ currentUser, users }: TicketsManagerProps) {
+export default function TicketsManager({ currentUser, users, onRedirectToAds }: TicketsManagerProps) {
   const [tickets, setTickets] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   
@@ -225,16 +226,28 @@ export default function TicketsManager({ currentUser, users }: TicketsManagerPro
               {(() => {
                 const client = usersMap[selectedTicket.displayId];
                 if (!client) return null;
-                const authStr = btoa(JSON.stringify(currentUser));
+                const clientPayload = btoa(JSON.stringify(client));
                 return (
-                  <a 
-                    href={`https://erp.aurabusiness.es/crm?search=${client.id}&auth=${authStr}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="w-full py-3 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 border border-purple-500/20 hover:border-purple-500/40 rounded-xl font-bold text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-lg text-center"
-                  >
-                    <ExternalLink size={14} /> Configurar TV del Cliente (ERP)
-                  </a>
+                  <div className="flex flex-col gap-2">
+                    <button 
+                      type="button"
+                      onClick={() => {
+                        onRedirectToAds(client.id);
+                        setSelectedTicket(null); // Close resolution modal
+                      }}
+                      className="w-full py-3 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 border border-purple-500/20 hover:border-purple-500/40 rounded-xl font-bold text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-lg"
+                    >
+                      <MessageSquare size={14} /> Gestionar Publicidad / Textos (Admin)
+                    </button>
+                    <a 
+                      href={`https://clientes.aurabusiness.es?impersonate=${clientPayload}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full py-3 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 hover:border-emerald-500/40 rounded-xl font-bold text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-lg text-center"
+                    >
+                      <ExternalLink size={14} /> Abrir Panel TV del Cliente (Modo Circadiano, etc.)
+                    </a>
+                  </div>
                 );
               })()}
 

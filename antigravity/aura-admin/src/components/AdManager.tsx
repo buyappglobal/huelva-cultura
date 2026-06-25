@@ -3,6 +3,8 @@ import { Plus, Trash2, ShieldAlert, Monitor, Film, Image as ImageIcon, Loader2, 
 
 interface AdManagerProps {
   users: any[];
+  defaultSelectedClientId?: string;
+  onClearDefaultClientId?: () => void;
 }
 
 const DAYS_OF_WEEK = [
@@ -15,7 +17,7 @@ const DAYS_OF_WEEK = [
   { label: 'S', value: 6 }
 ];
 
-export default function AdManager({ users }: AdManagerProps) {
+export default function AdManager({ users, defaultSelectedClientId, onClearDefaultClientId }: AdManagerProps) {
   const [selectedClientId, setSelectedClientId] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [clientAds, setClientAds] = useState<any[]>([]);
@@ -92,6 +94,15 @@ export default function AdManager({ users }: AdManagerProps) {
       setLoadingQuotes(false);
     }
   };
+
+  useEffect(() => {
+    if (defaultSelectedClientId) {
+      setSelectedClientId(defaultSelectedClientId);
+      if (onClearDefaultClientId) {
+        onClearDefaultClientId();
+      }
+    }
+  }, [defaultSelectedClientId]);
 
   useEffect(() => {
     if (selectedClientId) {

@@ -23,6 +23,7 @@ export default function App() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [selectedClientIdForAds, setSelectedClientIdForAds] = useState('');
 
   // Check auth session on mount
   useEffect(() => {
@@ -219,8 +220,23 @@ export default function App() {
                 onCreateClientClick={() => setShowCreateModal(true)}
               />
             )}
-            {activeTab === 'ads' && <AdManager users={users} />}
-            {activeTab === 'tickets' && <TicketsManager currentUser={currentUser} users={users} />}
+            {activeTab === 'ads' && (
+              <AdManager 
+                users={users} 
+                defaultSelectedClientId={selectedClientIdForAds} 
+                onClearDefaultClientId={() => setSelectedClientIdForAds('')}
+              />
+            )}
+            {activeTab === 'tickets' && (
+              <TicketsManager 
+                currentUser={currentUser} 
+                users={users} 
+                onRedirectToAds={(clientId) => {
+                  setSelectedClientIdForAds(clientId);
+                  setActiveTab('ads');
+                }}
+              />
+            )}
             {activeTab === 'docs' && <Docs />}
             {activeTab === 'baker' && <VisualizerBaker />}
             {activeTab === 'directo' && currentUser?.role === 'superadmin' && <DirectoOBS />}
