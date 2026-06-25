@@ -19,7 +19,7 @@ export async function onRequest(context) {
   }
 
   try {
-    const { email } = await request.json();
+    const { email, roleRequired } = await request.json();
     if (!email) {
       return new Response(JSON.stringify({ error: "Email is required" }), { status: 400, headers: corsHeaders });
     }
@@ -29,6 +29,16 @@ export async function onRequest(context) {
 
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
     const otpExpiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes validity
+
+    // Role Enforcement
+    if (roleRequired && Array.isArray(roleRequired)) {
+      if (!user) {
+        return new Response(JSON.stringify({ error: "Acceso denegado. No tienes permisos para acceder a esta aplicación." }), { status: 403, headers: corsHeaders });
+      }
+      if (!roleRequired.includes(user.role)) {
+        return new Response(JSON.stringify({ error: "Acceso exclusivo. Tu nivel de cuenta no tiene permisos para entrar aquí." }), { status: 403, headers: corsHeaders });
+      }
+    }
 
     if (!user) {
       // Auto-register new trial user
@@ -82,7 +92,7 @@ export async function onRequest(context) {
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Bienvenido a Aura Display</title>
+          <title>Bienvenido a Aura Business</title>
         </head>
         <body style="margin: 0; padding: 0; background-color: #050505; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #ffffff; -webkit-font-smoothing: antialiased;">
           <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #050505;">
@@ -97,7 +107,7 @@ export async function onRequest(context) {
                   <tr>
                     <td align="center" style="padding: 40px 40px 20px 40px;">
                       <h1 style="margin: 0; font-size: 26px; font-weight: 300; letter-spacing: 6px; text-transform: uppercase; color: #ffffff;">AURA</h1>
-                      <div style="font-size: 9px; font-weight: bold; letter-spacing: 4px; text-transform: uppercase; color: #d4af37; margin-top: 8px;">Sensory Playout System</div>
+                      <div style="font-size: 9px; font-weight: bold; letter-spacing: 4px; text-transform: uppercase; color: #d4af37; margin-top: 8px;">Business Portal</div>
                     </td>
                   </tr>
                   <!-- Body -->
@@ -105,7 +115,7 @@ export async function onRequest(context) {
                     <td style="padding: 20px 40px 40px 40px; font-size: 15px; line-height: 1.6; color: #b3b3b8; text-align: left;">
                       <p style="margin: 0 0 20px 0; font-size: 16px; color: #ffffff; font-weight: 500; text-align: center;">¡Te damos la bienvenida a la revolución sensorial!</p>
                       
-                      <p style="margin: 0 0 16px 0;">Gracias por registrarte en <strong>Aura Display</strong>. Tu cuenta de prueba gratuita de <strong>7 días</strong> ya está activa.</p>
+                      <p style="margin: 0 0 16px 0;">Gracias por registrarte en <strong>Aura Business</strong>. Tu cuenta de prueba gratuita de <strong>7 días</strong> para el sistema de reproducción sensorial <strong>Aura Display</strong> ya está activa.</p>
                       
                       <p style="margin: 0 0 24px 0; font-size: 14px; leading-relaxed: 1.5;">Aura sincroniza música reactiva y contenido visual circadiano en tiempo real para optimizar la atmósfera de tu local, logrando mejorar la experiencia del cliente e incrementar tus ventas hasta en un 22%.</p>
                       
@@ -141,7 +151,7 @@ export async function onRequest(context) {
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Código de verificación Aura</title>
+          <title>Código de verificación Aura Business</title>
         </head>
         <body style="margin: 0; padding: 0; background-color: #050505; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #ffffff; -webkit-font-smoothing: antialiased;">
           <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #050505;">
@@ -188,9 +198,9 @@ export async function onRequest(context) {
             "Authorization": `Bearer ${env.RESEND_API_KEY}`
           },
           body: JSON.stringify({
-            from: "Aura Display <noreply@aurabusiness.es>",
+            from: "Aura Business <noreply@aurabusiness.es>",
             to: [cleanEmail],
-            subject: isNewUser ? "¡Bienvenido a Aura! Tu acceso y periodo de prueba" : `${otpCode} es tu código de verificación Aura`,
+            subject: isNewUser ? "¡Bienvenido a Aura Business! Tu acceso y periodo de prueba" : `${otpCode} es tu código de verificación Aura Business`,
             html: emailHtml
           })
         });

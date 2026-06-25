@@ -46,7 +46,7 @@ export async function onRequest(context) {
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Tu Identificador de Cliente - Aura</title>
+          <title>Tu Identificador de Cliente - Aura Business</title>
         </head>
         <body style="margin: 0; padding: 0; background-color: #050505; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #ffffff; -webkit-font-smoothing: antialiased;">
           <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #050505;">
@@ -94,9 +94,9 @@ export async function onRequest(context) {
             "Authorization": `Bearer ${env.RESEND_API_KEY}`
           },
           body: JSON.stringify({
-            from: "Aura Display <noreply@aurabusiness.es>",
+            from: "Aura Business <noreply@aurabusiness.es>",
             to: [cleanEmail],
-            subject: "Tu Identificador de Cliente - Aura",
+            subject: "Tu Identificador de Cliente - Aura Business",
             html: emailHtml
           })
         });
