@@ -6,6 +6,7 @@ export default function CRM() {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterProvincia, setFilterProvincia] = useState('Todas');
   const [filterEstado, setFilterEstado] = useState('Todos');
+  const [filterConexion, setFilterConexion] = useState<'Todos' | 'Online' | 'Offline'>('Todos');
   const [editingClient, setEditingClient] = useState<any>(null);
   
   const [admins, setAdmins] = useState<any[]>([]);
@@ -18,12 +19,32 @@ export default function CRM() {
 
   // Real data for Orphan Leads
   const [leads, setLeads] = useState<any[]>([]);
+  const [onlineClients, setOnlineClients] = useState<string[]>([]);
+  const [loadingOnline, setLoadingOnline] = useState(false);
 
   useEffect(() => {
     fetchClients();
     fetchLeads();
     fetchAdmins();
+    checkOnlineDisplays();
   }, []);
+
+  const checkOnlineDisplays = async () => {
+    setLoadingOnline(true);
+    try {
+      const res = await fetch('https://app.aurabusiness.es/api/erp/clients?checkOnline=true');
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setOnlineClients(data);
+        }
+      }
+    } catch (e) {
+      console.error("Error fetching online displays", e);
+    } finally {
+      setLoadingOnline(false);
+    }
+  };
 
   const fetchClients = async () => {
     try {
@@ -250,12 +271,12 @@ export default function CRM() {
         <>
       {/* Buscador Super Avanzado */}
       <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 mb-8 shadow-lg">
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-          <div className="relative col-span-1 lg:col-span-2">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+          <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
             <input 
               type="text" 
-              placeholder="Buscar por Empresa, Cód. Cuenta, ID Pantalla, Admin Padre..."
+              placeholder="Buscar por Empresa..."
               className="w-full bg-slate-900 border border-slate-700 text-white pl-10 pr-4 py-3 rounded-xl focus:outline-none focus:border-blue-500 transition-colors"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -287,12 +308,47 @@ export default function CRM() {
               <option value="Suspendido">Suspendidos / Impagos</option>
             </select>
           </div>
+          <div className="relative">
+            <PlaySquare className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
+            <select 
+              className="w-full bg-slate-900 border border-slate-700 text-white pl-10 pr-4 py-3 rounded-xl focus:outline-none focus:border-blue-500 appearance-none"
+              value={filterConexion}
+              onChange={(e) => setFilterConexion(e.target.value as any)}
+            >
+              <option value="Todos">Todas las Conexiones</option>
+              <option value="Online">Solo Online (Activas)</option>
+              <option value="Offline">Solo Offline (Apagadas)</option>
+            </select>
+          </div>
+          <button
+            onClick={checkOnlineDisplays}
+            disabled={loadingOnline}
+            className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800 disabled:text-slate-400 text-white py-3 px-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-all border border-blue-500 shadow-md active:scale-[0.98]"
+          >
+            <Zap className={`w-5 h-5 text-amber-400 ${loadingOnline ? 'animate-spin' : ''}`} />
+            {loadingOnline ? 'Comprobando...' : 'Comprobar TVs'}
+          </button>
         </div>
       </div>
 
       {/* Fichas de Clientes */}
       <div className="space-y-6">
-        {clientes.map(c => (
+        {clientes.filter(c => {
+          const isOnline = onlineClients.includes(c.id);
+          const matchSearch = searchTerm.trim() === "" || 
+            c.nombre.toLowerCase().includes(searchTerm.toLowerCase()) || 
+            c.id.toLowerCase().includes(searchTerm.toLowerCase()) || 
+            c.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (c.provincia && c.provincia.toLowerCase().includes(searchTerm.toLowerCase()));
+          
+          const matchProvincia = filterProvincia === "Todas" || (c.provincia && c.provincia.toLowerCase() === filterProvincia.toLowerCase());
+          const matchEstado = filterEstado === "Todos" || c.estado === filterEstado;
+          const matchConexion = filterConexion === "Todos" || 
+            (filterConexion === "Online" && isOnline) || 
+            (filterConexion === "Offline" && !isOnline);
+          
+          return matchSearch && matchProvincia && matchEstado && matchConexion;
+        }).map(c => (
           <div key={c.id} className="bg-slate-800 rounded-2xl border border-slate-700 overflow-hidden shadow-xl hover:border-slate-600 transition-colors">
             
             {/* Header de la Ficha */}
@@ -340,13 +396,19 @@ export default function CRM() {
                   </div>
                   
                   <div className="mt-4">
-                    <span className="text-slate-400 mb-2 block">Dispositivos Activos ({c.pantallas.length}):</span>
+                    <span className="text-slate-400 mb-2 block">Dispositivos ({onlineClients.includes(c.id) ? 1 : 0}):</span>
                     <div className="flex flex-wrap gap-2">
-                      {c.pantallas.map((p: string) => (
-                        <span key={p} className="bg-slate-900 border border-slate-700 text-slate-300 text-xs px-2 py-1 rounded flex items-center gap-1">
-                          <PlaySquare className="w-3 h-3 text-blue-400" /> {p}
+                      {onlineClients.includes(c.id) ? (
+                        <span className="bg-emerald-950/40 border border-emerald-500/30 text-emerald-400 text-xs px-2.5 py-1 rounded-xl flex items-center gap-1.5 shadow-sm font-medium">
+                          <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse inline-block" />
+                          <PlaySquare className="w-3.5 h-3.5" /> TV Principal (Activa)
                         </span>
-                      ))}
+                      ) : (
+                        <span className="bg-slate-900/60 border border-slate-800 text-slate-500 text-xs px-2.5 py-1 rounded-xl flex items-center gap-1.5 font-medium">
+                          <span className="w-2 h-2 bg-slate-700 rounded-full inline-block" />
+                          Ninguna TV Online
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -421,6 +483,26 @@ export default function CRM() {
             </div>
           </div>
         ))}
+        {clientes.filter(c => {
+          const isOnline = onlineClients.includes(c.id);
+          const matchSearch = searchTerm.trim() === "" || 
+            c.nombre.toLowerCase().includes(searchTerm.toLowerCase()) || 
+            c.id.toLowerCase().includes(searchTerm.toLowerCase()) || 
+            c.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (c.provincia && c.provincia.toLowerCase().includes(searchTerm.toLowerCase()));
+          
+          const matchProvincia = filterProvincia === "Todas" || (c.provincia && c.provincia.toLowerCase() === filterProvincia.toLowerCase());
+          const matchEstado = filterEstado === "Todos" || c.estado === filterEstado;
+          const matchConexion = filterConexion === "Todos" || 
+            (filterConexion === "Online" && isOnline) || 
+            (filterConexion === "Offline" && !isOnline);
+          
+          return matchSearch && matchProvincia && matchEstado && matchConexion;
+        }).length === 0 && (
+          <div className="text-center py-12 bg-slate-900/40 rounded-xl border border-slate-800 text-slate-500 text-sm">
+            Ningún cliente coincide con los filtros aplicados.
+          </div>
+        )}
       </div>
       </>
       )}

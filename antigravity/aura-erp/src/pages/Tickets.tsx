@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Loader2, Ticket, CheckCircle2, XCircle, AlertCircle, ExternalLink, Image as ImageIcon, Send, X } from 'lucide-react';
+import { Loader2, Ticket, CheckCircle2, XCircle, AlertCircle, Image as ImageIcon, Send, X } from 'lucide-react';
 
 export default function Tickets() {
   const [tickets, setTickets] = useState<any[]>([]);

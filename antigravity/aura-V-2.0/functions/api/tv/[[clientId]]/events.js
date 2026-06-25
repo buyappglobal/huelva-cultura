@@ -66,6 +66,15 @@ export async function onRequest(context) {
   let isClosed = false;
   let lastTimestamp = "";
 
+  const updateOnlineStatus = async () => {
+    if (isClosed) return;
+    try {
+      await kv.put(`online:${resolvedClientId}`, Date.now().toString(), { expirationTtl: 60 });
+    } catch (e) {
+      console.error("Failed to update online status in KV:", e);
+    }
+  };
+
   // Start checking for updates in KV
   const checkUpdates = async () => {
     if (isClosed) return;
@@ -151,6 +160,7 @@ export async function onRequest(context) {
     if (isClosed) return;
     try {
       await writer.write(encoder.encode(`event: ping\ndata: {}\n\n`));
+      await updateOnlineStatus();
     } catch (e) {
       cleanup();
     }
@@ -172,6 +182,7 @@ export async function onRequest(context) {
 
   // Initial push
   checkUpdates();
+  context.waitUntil(updateOnlineStatus());
 
   return new Response(readable, {
     headers: corsHeaders

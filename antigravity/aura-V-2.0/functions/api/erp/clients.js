@@ -16,6 +16,19 @@ export async function onRequest(context) {
 
   try {
     if (request.method === "GET") {
+      const url = new URL(request.url);
+      if (url.searchParams.get("checkOnline") === "true") {
+        const kv = env.AURA_KV || env.AURA_STATE;
+        let onlineIds = [];
+        if (kv) {
+          const list = await kv.list({ prefix: "online:" });
+          onlineIds = list.keys.map(k => k.name.replace("online:", ""));
+        }
+        return new Response(JSON.stringify(onlineIds), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        });
+      }
+
       // Get all clients (role = 'client')
       const { results } = await env.DB.prepare(
         `SELECT u.id, u.email, u.role, u.hasAdsPanel, u.hasImpulses, u.isDemoAccount, u.whatsapp, u.city, u.slug, u.status, u.createdAt, u.stripeCustomerId, u.stripeSubscriptionId, u.plan
