@@ -30,17 +30,23 @@ interface Message {
   role: "user" | "model" | "system";
   content: string;
   timestamp: number;
+  proposedTicket?: any;
+  ticketConfirmed?: boolean;
 }
 
 const API_BASE = "https://app.aurabusiness.es";
 
 export default function App() {
   // Auth state
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [clientEmail, setClientEmail] = useState("");
   const [clientIdentifier, setClientIdentifier] = useState(""); // DNI/CIF (slug)
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
+
+  // Register Form Data
+  const [regData, setRegData] = useState({ establecimiento: '', telefono: '', provincia: '' });
 
   // Client Data state
   const [clientInfo, setClientInfo] = useState<any>(null);
@@ -138,6 +144,23 @@ export default function App() {
 
   // Check existing session on load
   useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    const impersonatePayload = searchParams.get('impersonate');
+
+    if (impersonatePayload) {
+      try {
+        const user = JSON.parse(atob(impersonatePayload));
+        localStorage.setItem("aura_client_session", JSON.stringify(user));
+        setClientInfo(user);
+        setIsAuthenticated(true);
+        // Clean URL
+        window.history.replaceState({}, document.title, window.location.pathname);
+        return;
+      } catch (e) {
+        console.error("Invalid impersonation payload");
+      }
+    }
+
     const savedClient = localStorage.getItem("aura_client_session");
     if (savedClient) {
       try {
@@ -212,6 +235,52 @@ export default function App() {
     }
   };
 
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!clientEmail || !regData.establecimiento || !regData.telefono || !regData.provincia) {
+      setAuthError("Por favor, rellena todos los campos.");
+      return;
+    }
+    setAuthLoading(true);
+    setAuthError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: clientEmail, ...regData })
+      });
+      
+      const data = await res.json();
+      if (res.ok && data.success) {
+        // Automatically set the new slug as identifier and login
+        setClientIdentifier(data.slug);
+        
+        // Trigger login sequence
+        const loginRes = await fetch(`${API_BASE}/api/auth/client-login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: clientEmail, identifier: data.slug })
+        });
+        
+        const loginData = await loginRes.json();
+        if (loginRes.ok && loginData.success) {
+          localStorage.setItem("aura_client_session", JSON.stringify(loginData.user));
+          setClientInfo(loginData.user);
+          setIsAuthenticated(true);
+        } else {
+          setAuthMode('login');
+          setAuthError(`Registrado con éxito. Tu Código de Cuenta es: ${data.slug}. Intenta iniciar sesión.`);
+        }
+      } else {
+        setAuthError(data.error || "Error al registrar la cuenta.");
+      }
+    } catch (err) {
+      setAuthError("Error al conectar con el servidor.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
   const handleLogout = () => {
     localStorage.removeItem("aura_client_session");
     setIsAuthenticated(false);
@@ -253,11 +322,10 @@ export default function App() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, chatLoading]);
 
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!chatInput.trim() || chatLoading) return;
+  const sendMessage = async (text: string) => {
+    if (!text.trim() || chatLoading) return;
 
-    const userMessageText = chatInput.trim();
+    const userMessageText = text.trim();
     setChatInput("");
 
     // Append user message
@@ -291,12 +359,13 @@ export default function App() {
           {
             role: "model",
             content: data.reply || "He procesado tu solicitud.",
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            proposedTicket: data.ticketProposed ? data.ticketData : undefined
           }
         ]);
 
         if (data.ticketCreated) {
-          fetchClientData(); // Reload tickets to show the new ticket
+          fetchClientData(); // Reload tickets to show the new ticket (legacy compatibility)
         }
       } else {
         const errorData = await res.json();
@@ -323,6 +392,70 @@ export default function App() {
     }
   };
 
+  const handleSendMessage = (e: React.FormEvent) => {
+    e.preventDefault();
+    sendMessage(chatInput);
+  };
+
+  const handleConfirmTicket = async (ticketData: any, messageIndex: number) => {
+    setChatLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/tickets`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          displayId: clientInfo.id,
+          text: ticketData.text,
+          formatType: ticketData.formatType || "TEXT_FLASH"
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.limitReached) {
+          setMessages(prev => [...prev, {
+            role: "system",
+            content: "Has alcanzado el límite mensual de peticiones. Esta solicitud no pudo ser procesada.",
+            timestamp: Date.now()
+          }]);
+        } else {
+          // Mark ticket as confirmed in UI
+          setMessages(prev => {
+            const newMessages = [...prev];
+            newMessages[messageIndex] = { ...newMessages[messageIndex], ticketConfirmed: true };
+            return newMessages;
+          });
+          setMessages(prev => [...prev, {
+            role: "system",
+            content: "✅ Petición confirmada y enviada a los administradores. (Se ha descontado 1 solicitud de tu cuota).",
+            timestamp: Date.now()
+          }]);
+          fetchClientData();
+        }
+      } else {
+        const errData = await res.json();
+        alert(errData.error || "Error al confirmar la petición.");
+      }
+    } catch (err) {
+      alert("Error de red al conectar con el servidor.");
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
+  const handleCancelTicket = (messageIndex: number) => {
+    setMessages(prev => {
+      const newMessages = [...prev];
+      newMessages[messageIndex] = { ...newMessages[messageIndex], ticketConfirmed: true }; // hide buttons
+      return newMessages;
+    });
+    setMessages(prev => [...prev, {
+      role: "system",
+      content: "❌ Petición cancelada. No se ha descontado ninguna solicitud.",
+      timestamp: Date.now()
+    }]);
+  };
+
   // Login view
   if (!isAuthenticated) {
     return (
@@ -336,10 +469,10 @@ export default function App() {
               A
             </div>
             <h1 className="text-xl font-bold tracking-tight uppercase text-white/90">Aura Display</h1>
-            <p className="text-xs text-white/40 mt-1">Acceso a Ficha de Cliente / Estado</p>
+            <p className="text-xs text-white/40 mt-1">{authMode === 'login' ? 'Acceso a Ficha de Cliente' : 'Activa tus 7 Días Gratis'}</p>
           </div>
 
-          <form onSubmit={handleLogin} className="space-y-4 text-left">
+          <form onSubmit={authMode === 'login' ? handleLogin : handleRegister} className="space-y-4 text-left">
             <div>
               <label htmlFor="client-email" className="text-[10px] font-bold uppercase tracking-widest text-white/40 block mb-1.5">Email de la Cuenta</label>
               <input
@@ -354,35 +487,136 @@ export default function App() {
               />
             </div>
 
-            <div>
-              <label htmlFor="client-identifier" className="text-[10px] font-bold uppercase tracking-widest text-white/40 block mb-1.5">Código de Cuenta (ID Único)</label>
-              <input
-                id="client-identifier"
-                name="identifier"
-                type="text"
-                required
-                value={clientIdentifier}
-                onChange={(e) => setClientIdentifier(e.target.value)}
-                placeholder="ej: HUE1024"
-                className="w-full px-4 py-3 rounded-xl bg-[#141414] border border-white/10 focus:border-white/20 focus:outline-none text-sm text-white placeholder-white/20 transition-all"
-              />
-            </div>
+            {authMode === 'login' ? (
+              <div>
+                <div className="flex justify-between items-center mb-1.5">
+                  <label htmlFor="client-identifier" className="text-[10px] font-bold uppercase tracking-widest text-white/40 block">Código de Cuenta (ID Único)</label>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!clientEmail) {
+                        setAuthError("Por favor, introduce tu email primero para recuperar el identificador.");
+                        return;
+                      }
+                      try {
+                        const res = await fetch(`${API_BASE}/api/support/recover-slug`, {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ email: clientEmail })
+                        });
+                        if (res.ok) {
+                          alert(`Te hemos enviado un recordatorio de tu código a ${clientEmail} (si existe en nuestra base de datos).`);
+                        } else {
+                          setAuthError("No se pudo enviar el recordatorio.");
+                        }
+                      } catch(e) {
+                        setAuthError("Error de red.");
+                      }
+                    }}
+                    className="text-[9px] font-bold uppercase tracking-widest text-white bg-white/10 hover:bg-white/20 px-2 py-0.5 rounded transition-all"
+                  >
+                    ¿Olvidaste tu código?
+                  </button>
+                </div>
+                <input
+                  id="client-identifier"
+                  name="identifier"
+                  type="text"
+                  required
+                  value={clientIdentifier}
+                  onChange={(e) => setClientIdentifier(e.target.value)}
+                  placeholder="ej: HUE1024"
+                  className="w-full px-4 py-3 rounded-xl bg-[#141414] border border-white/10 focus:border-white/20 focus:outline-none text-sm text-white placeholder-white/20 transition-all uppercase"
+                />
+              </div>
+            ) : (
+              <>
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-white/40 block mb-1.5">Nombre del Local</label>
+                    <input
+                      type="text"
+                      required
+                      value={regData.establecimiento}
+                      onChange={(e) => setRegData({...regData, establecimiento: e.target.value})}
+                      placeholder="Ej. Restaurante El Puerto"
+                      className="w-full px-4 py-3 rounded-xl bg-[#141414] border border-white/10 focus:border-white/20 focus:outline-none text-sm text-white placeholder-white/20 transition-all"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-white/40 block mb-1.5">Teléfono</label>
+                      <input
+                        type="tel"
+                        required
+                        value={regData.telefono}
+                        onChange={(e) => setRegData({...regData, telefono: e.target.value})}
+                        placeholder="600 123 456"
+                        className="w-full px-4 py-3 rounded-xl bg-[#141414] border border-white/10 focus:border-white/20 focus:outline-none text-sm text-white placeholder-white/20 transition-all"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-white/40 block mb-1.5">Provincia</label>
+                      <input
+                        type="text"
+                        required
+                        value={regData.provincia}
+                        onChange={(e) => setRegData({...regData, provincia: e.target.value})}
+                        placeholder="Ej. Madrid"
+                        className="w-full px-4 py-3 rounded-xl bg-[#141414] border border-white/10 focus:border-white/20 focus:outline-none text-sm text-white placeholder-white/20 transition-all"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
 
             {authError && (
-              <div className="flex items-center gap-2 text-red-400 text-xs bg-red-500/10 p-3 rounded-xl border border-red-500/20">
-                <AlertCircle size={16} />
-                <span>{authError}</span>
+              <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-xl text-xs flex flex-col gap-3">
+                <div className="flex items-center gap-2">
+                  <AlertCircle size={14} className="shrink-0" />
+                  <span className="leading-tight">{authError}</span>
+                </div>
+                {authError.includes("ya está registrado") && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode('login');
+                      setAuthError("");
+                    }}
+                    className="w-full py-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-lg font-bold text-[10px] uppercase tracking-widest transition-all"
+                  >
+                    Recordar mi código / Iniciar Sesión
+                  </button>
+                )}
               </div>
             )}
 
             <button
               type="submit"
               disabled={authLoading}
-              className="w-full py-3 bg-white text-black hover:bg-white/95 rounded-xl font-bold text-xs uppercase tracking-widest transition-all mt-2 flex items-center justify-center gap-2 disabled:opacity-50"
+              className="w-full py-3 bg-white text-black hover:bg-white/95 rounded-xl font-bold text-xs uppercase tracking-widest transition-all mt-2 flex items-center justify-center gap-2 disabled:opacity-50 shadow-xl"
             >
-              {authLoading ? <Loader2 size={16} className="animate-spin" /> : "Entrar a mi Ficha"}
+              {authLoading ? <Loader2 size={16} className="animate-spin" /> : (authMode === 'login' ? "Entrar a mi Ficha" : "Comenzar Prueba Gratis")}
             </button>
           </form>
+
+          <div className="mt-8 text-center flex flex-col items-center gap-3">
+            <div className="w-full h-px bg-gradient-to-r from-transparent via-white/10 to-transparent mb-2"></div>
+            <p className="text-[10px] text-white/40 uppercase tracking-widest font-bold">
+              {authMode === 'login' ? '¿Aún no eres cliente?' : '¿Ya tienes una cuenta activa?'}
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode(authMode === 'login' ? 'register' : 'login');
+                setAuthError("");
+              }}
+              className="px-6 py-2.5 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 hover:text-white text-white/70 font-bold text-[11px] uppercase tracking-widest transition-all hover:scale-105 active:scale-95 shadow-xl flex items-center gap-2"
+            >
+              {authMode === 'login' ? "Prueba Gratis 7 Días" : "Iniciar Sesión"}
+            </button>
+          </div>
 
           {/* PWA Install Promo */}
           {showAndroidInstallBtn && (
@@ -440,6 +674,16 @@ export default function App() {
               <User size={12} />
               <span>{clientInfo.email}</span>
             </div>
+            {(clientInfo.role === 'admin' || clientInfo.role === 'superadmin') && (
+              <a
+                href="https://admin.aurabusiness.es"
+                target="_blank"
+                rel="noreferrer"
+                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 border border-purple-500/20 rounded-xl font-bold text-[9px] uppercase tracking-widest transition-all"
+              >
+                Panel Admin
+              </a>
+            )}
             <button
               onClick={handleLogout}
               className="p-2 text-white/40 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl transition-all"
@@ -454,6 +698,36 @@ export default function App() {
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col lg:flex-row gap-8 relative z-10">
         
+        {/* Trial Banner */}
+        {clientInfo?.status === 'trial' && (
+          <div className="w-full lg:col-span-2 lg:absolute top-0 left-0 lg:-translate-y-full lg:mt-0 mt-4 mb-4 lg:mb-0 lg:px-8 z-20">
+            <div className="bg-gradient-to-r from-emerald-500/10 to-teal-500/5 border border-emerald-500/20 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xl shadow-emerald-500/5">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 bg-emerald-500/20 rounded-xl flex items-center justify-center text-emerald-400 shrink-0">
+                  <Clock size={20} className="animate-pulse" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-2">
+                    Período de Prueba Activo
+                    <span className="bg-emerald-500/20 text-emerald-300 text-[9px] px-1.5 py-0.5 rounded font-black">
+                      {clientInfo.trialEndsAt ? Math.max(0, Math.ceil((clientInfo.trialEndsAt - Date.now()) / (1000 * 60 * 60 * 24))) : 7} DÍAS RESTANTES
+                    </span>
+                  </h3>
+                  <p className="text-xs text-white/60 mt-1 leading-relaxed">
+                    Disfruta de Aura sin límites. Un agente comercial de tu zona te contactará pronto para resolver tus dudas y ofrecerte el mejor plan para tu local una vez termine la prueba.
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => alert("Hemos notificado a tu asesor comercial para que se ponga en contacto contigo lo antes posible.")}
+                className="shrink-0 px-4 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-emerald-500/20"
+              >
+                Contactar a mi Asesor
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Left column: Status & metrics */}
         <div className="w-full lg:w-1/3 flex flex-col gap-6">
           
@@ -552,9 +826,9 @@ export default function App() {
                         type="text"
                         maxLength={6}
                         value={pairingPin}
-                        onChange={(e) => setPairingPin(e.target.value.replace(/[^0-9]/g, ''))}
+                        onChange={(e) => setPairingPin(e.target.value.replace(/[^0-9A-Za-z]/g, '').toUpperCase())}
                         placeholder="Código PIN"
-                        className="flex-1 bg-[#141414] border border-white/10 rounded-xl px-3 py-2 text-xs focus:outline-none text-white font-mono text-center tracking-widest"
+                        className="flex-1 bg-[#141414] border border-white/10 rounded-xl px-3 py-2 text-xs focus:outline-none text-white font-mono text-center tracking-widest uppercase"
                       />
                       <button
                         type="submit"
@@ -662,7 +936,7 @@ export default function App() {
         </div>
 
         {/* Right column: Chat Agent */}
-        <div className="w-full lg:w-2/3 bg-[#0c0c0c] border border-white/5 rounded-2xl flex flex-col h-[600px] overflow-hidden">
+        <div className="w-full lg:w-2/3 bg-[#0c0c0c] border border-white/5 rounded-2xl flex flex-col overflow-hidden">
           
           {/* Chat Header */}
           <div className="border-b border-white/5 px-6 py-4 bg-black/40 flex items-center justify-between text-left">
@@ -678,7 +952,7 @@ export default function App() {
           </div>
 
           {/* Chat History */}
-          <div className="flex-1 p-6 overflow-y-auto space-y-4 bg-black/10">
+          <div className="p-6 overflow-y-auto space-y-4 bg-black/10 max-h-[400px]">
             {messages.map((msg, i) => (
               <div 
                 key={i} 
@@ -694,6 +968,29 @@ export default function App() {
                   }`}
                 >
                   {msg.content}
+                  
+                  {/* Proposed ticket confirmation buttons */}
+                  {msg.proposedTicket && !msg.ticketConfirmed && (
+                    <div className="mt-4 pt-3 border-t border-white/10 flex flex-col gap-2">
+                      <p className="text-[10px] uppercase tracking-widest font-bold text-yellow-500 mb-1">
+                        ¿Confirmar y enviar petición?
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleConfirmTicket(msg.proposedTicket, i)}
+                          className="flex-1 bg-[#22c55e] hover:bg-[#16a34a] text-black font-bold uppercase tracking-widest text-[9px] py-2 px-3 rounded-lg transition-colors flex items-center justify-center gap-1 shadow-lg shadow-green-500/20"
+                        >
+                          <CheckCircle size={12} /> Confirmar
+                        </button>
+                        <button
+                          onClick={() => handleCancelTicket(i)}
+                          className="flex-1 bg-slate-800 hover:bg-slate-700 text-white font-bold uppercase tracking-widest text-[9px] py-2 px-3 rounded-lg border border-slate-750 transition-colors flex items-center justify-center gap-1"
+                        >
+                          <XCircle size={12} /> Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
@@ -708,17 +1005,36 @@ export default function App() {
             <div ref={chatEndRef} />
           </div>
 
-          {/* Chat Input */}
-          <form onSubmit={handleSendMessage} className="p-4 border-t border-white/5 bg-black/40">
-            <div className="flex gap-2">
+          {/* Chat Input & Quick Actions */}
+          <div className="border-t border-white/5 bg-black/40 p-4">
+            {messages.length <= 1 && (
+              <div className="flex overflow-x-auto gap-2 pb-3 mb-1">
+                {[
+                  "Añade un 2x1 en cócteles esta noche",
+                  "Cambia el precio del menú a 15€",
+                  "Pon un cartel de cerrado mañana",
+                  "Idea un cartel para atraer más clientes",
+                ].map((faq, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => sendMessage(faq)}
+                    className="flex-shrink-0 px-3 py-1.5 rounded-full border border-white/10 bg-white/5 text-[10px] text-white/70 hover:bg-white/10 hover:text-white transition-all whitespace-nowrap"
+                  >
+                    {faq}
+                  </button>
+                ))}
+              </div>
+            )}
+            <form onSubmit={handleSendMessage} className="flex gap-2">
               <input
                 id="chat-input"
                 name="chatInput"
                 type="text"
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
-                placeholder="Pregunta o pide un cambio... (ej: Añade un 2x1 en cócteles esta noche)"
-                className="flex-1 bg-[#151515] border border-white/10 focus:border-white/20 rounded-xl px-4 py-3 text-xs focus:outline-none text-white placeholder-white/30"
+                placeholder="ESCRIBE AQUÍ TU PETICIÓN... (ej: Crea un anuncio nuevo)"
+                className="flex-1 bg-[#1a1a1a] border border-white/20 focus:border-white/40 rounded-xl px-4 py-3 text-xs focus:outline-none text-white placeholder-white/50"
               />
               <button
                 type="submit"
@@ -727,8 +1043,8 @@ export default function App() {
               >
                 <Send size={16} />
               </button>
-            </div>
-          </form>
+            </form>
+          </div>
         </div>
 
       </main>
