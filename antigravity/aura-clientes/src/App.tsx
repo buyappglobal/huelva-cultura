@@ -838,15 +838,13 @@ export default function App() {
                         {pairingLoading ? <Loader2 size={12} className="animate-spin" /> : "Vincular"}
                       </button>
                     </div>
-                    <div className="mt-3 p-3 bg-white/[0.02] border border-white/5 rounded-xl space-y-2 text-[10px] text-white/60">
-                      <span className="font-bold text-white uppercase tracking-wider block">¿Cómo conectar tu TV?</span>
-                      <ol className="list-decimal list-inside space-y-1 text-white/40 text-[9px] leading-relaxed">
-                        <li>Enciende tu televisión inteligente y abre el navegador.</li>
-                        <li>Visita la dirección: <span className="text-purple-400 font-mono font-bold">app.aurabusiness.es/tv</span></li>
-                        <li>La pantalla te mostrará un código PIN de 6 dígitos.</li>
-                        <li>Introduce ese código arriba y pulsa <span className="text-white font-semibold">"Vincular"</span>.</li>
-                      </ol>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowPairingModal(true)}
+                      className="w-full mt-2 py-2 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 border border-purple-500/20 rounded-xl font-bold text-[9px] uppercase tracking-widest transition-all flex items-center justify-center gap-1.5"
+                    >
+                      <Info size={12} /> Ver Métodos de Vinculación
+                    </button>
                   </form>
                 )}
               </div>
@@ -1048,6 +1046,81 @@ export default function App() {
         </div>
 
       </main>
+
+      {/* Pairing Methods Modal Dialog */}
+      {showPairingModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 overflow-y-auto">
+          <div className="w-full max-w-lg rounded-3xl border border-white/10 bg-[#0d0d0f] p-6 sm:p-8 space-y-6 relative text-left shadow-2xl my-8">
+            <div className="flex justify-between items-start">
+              <div>
+                <span className="text-[9px] font-black uppercase tracking-widest text-purple-400 block mb-1">Configuración de Pantalla</span>
+                <h3 className="text-lg font-bold text-white">Métodos de Vinculación</h3>
+              </div>
+              <button 
+                onClick={() => setShowPairingModal(false)}
+                className="p-2 text-white/40 hover:text-white bg-white/5 rounded-xl border border-white/5"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-6">
+              {/* Option 1: Screen Mirroring */}
+              <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 space-y-3">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                    <Cast size={18} />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-white uppercase tracking-wider">Método 1: Modo Espejo (Cast)</h4>
+                    <p className="text-[10px] text-white/40 uppercase tracking-widest font-semibold mt-0.5">Ideal para Smart TVs Antiguas u obsoletas</p>
+                  </div>
+                </div>
+                <p className="text-[11px] text-white/60 leading-relaxed">
+                  Procesa los visualizadores y la música en tu móvil o tablet modernos y duplica la pantalla a la televisión. Así evitarás tirones y retardos.
+                </p>
+                <div className="pt-2 flex flex-col sm:flex-row gap-3">
+                  <a 
+                    href={`https://app.aurabusiness.es/tv/${clientInfo.slug || clientInfo.id}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex-1 py-2.5 bg-white text-black hover:bg-zinc-200 rounded-xl text-center text-[10px] font-bold uppercase tracking-widest transition-all"
+                  >
+                    Abrir Reproductor Móvil
+                  </a>
+                </div>
+                <ol className="list-decimal list-inside space-y-1 text-white/40 text-[10px] leading-relaxed border-t border-white/5 pt-2 mt-1">
+                  <li>Haz clic arriba para abrir el reproductor en este móvil.</li>
+                  <li>Despliega el menú del navegador y selecciona <b>"Enviar" (Cast)</b>, o activa la duplicación nativa de tu dispositivo (AirPlay en iPhone / Smart View en Samsung).</li>
+                  <li>Selecciona tu TV en la lista y ¡listo!</li>
+                </ol>
+              </div>
+
+              {/* Option 2: Direct Smart TV Link */}
+              <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 space-y-3">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                    <Monitor size={18} />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-white uppercase tracking-wider">Método 2: Vinculación Directa (Nativa)</h4>
+                    <p className="text-[10px] text-white/40 uppercase tracking-widest font-semibold mt-0.5">Para Smart TVs Modernas y potentes</p>
+                  </div>
+                </div>
+                <p className="text-[11px] text-white/60 leading-relaxed">
+                  Carga la aplicación directamente en la televisión. El móvil quedará libre para recibir tus peticiones de cartelería.
+                </p>
+                <ol className="list-decimal list-inside space-y-1.5 text-white/40 text-[10px] leading-relaxed border-t border-white/5 pt-2 mt-1">
+                  <li>Enciende tu televisión inteligente y abre su navegador web interno.</li>
+                  <li>Visita la dirección: <span className="text-purple-400 font-mono font-bold">app.aurabusiness.es/tv</span></li>
+                  <li>La pantalla te mostrará un código PIN de 6 dígitos.</li>
+                  <li>Cierra esta ventana, introduce ese código arriba en el panel y pulsa <b>"Vincular"</b>.</li>
+                </ol>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
