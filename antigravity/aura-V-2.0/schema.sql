@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS users (
   trialEndsAt INTEGER,
   otpCode TEXT,
   otpExpiresAt INTEGER,
+  permissions TEXT,
   createdAt INTEGER NOT NULL
 );
 
@@ -36,8 +37,10 @@ CREATE TABLE IF NOT EXISTS displays (
   vjConfig TEXT,
   textSize REAL DEFAULT 1.0,
   promoFlashText TEXT,
-  promoFlashExpiresAt INTEGER,
-  updatedAt INTEGER
+  updatedAt INTEGER,
+  textRotationInterval INTEGER DEFAULT 20,
+  visualizerRotationInterval INTEGER DEFAULT 18,
+  adTextDuration INTEGER DEFAULT 30
 );
 
 CREATE TABLE IF NOT EXISTS contents (
@@ -102,6 +105,7 @@ CREATE TABLE IF NOT EXISTS partners (
   parentId TEXT, -- Who captured this partner (e.g. DCZ id) for residual commissions
   stripeAccountId TEXT,
   contactEmail TEXT,
+  permissions TEXT,
   createdAt INTEGER NOT NULL
 );
 
@@ -123,5 +127,37 @@ CREATE TABLE IF NOT EXISTS ad_sales (
   amount REAL NOT NULL, -- Must be >= 20
   stripePaymentIntentId TEXT,
   status TEXT DEFAULT 'pending',
+  createdAt INTEGER NOT NULL
+);
+
+-- Advertising Clients (Cross-Advertising CRM)
+CREATE TABLE IF NOT EXISTS ad_clients (
+  id TEXT PRIMARY KEY,
+  fiscalName TEXT,
+  taxId TEXT,
+  address TEXT,
+  email TEXT,
+  phone TEXT,
+  establishmentName TEXT,
+  motto TEXT,
+  bottomText TEXT,
+  qrUrl TEXT,
+  status TEXT DEFAULT 'pending_creative',
+  createdAt INTEGER NOT NULL
+);
+
+-- Target Scraper leads (Aura Target Scraper V2 leads)
+CREATE TABLE IF NOT EXISTS target_leads (
+  id TEXT PRIMARY KEY,
+  companyName TEXT NOT NULL,
+  contactPerson TEXT,
+  phone TEXT,
+  email TEXT,
+  webUrl TEXT,
+  latitude REAL,
+  longitude REAL,
+  province TEXT NOT NULL,
+  category TEXT NOT NULL,
+  status TEXT DEFAULT 'pending_validation',
   createdAt INTEGER NOT NULL
 );

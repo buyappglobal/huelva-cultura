@@ -45,6 +45,23 @@ function createTables(): Promise<void> {
     );
   `;
 
+  const targetLeadsTable = `
+    CREATE TABLE IF NOT EXISTS target_leads (
+      id TEXT PRIMARY KEY,
+      companyName TEXT NOT NULL,
+      contactPerson TEXT,
+      phone TEXT,
+      email TEXT,
+      webUrl TEXT,
+      latitude REAL,
+      longitude REAL,
+      province TEXT NOT NULL,
+      category TEXT NOT NULL,
+      status TEXT DEFAULT 'pending_validation',
+      createdAt INTEGER NOT NULL
+    );
+  `;
+
   const displaysTable = `
     CREATE TABLE IF NOT EXISTS displays (
       id TEXT PRIMARY KEY,
@@ -110,6 +127,7 @@ function createTables(): Promise<void> {
 
   return Promise.all([
     dbRun(usersTable),
+    dbRun(targetLeadsTable),
     dbRun(displaysTable),
     dbRun(contentsTable),
     dbRun(quotesTable),

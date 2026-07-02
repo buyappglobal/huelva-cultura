@@ -72,6 +72,8 @@ interface AuraBackgroundPlayerProps {
     superposicion?: string;
     particulas?: string;
   };
+  shaders?: any[];
+  visualizerRotationInterval?: number;
 }
 
 export const AuraBackgroundPlayer: React.FC<AuraBackgroundPlayerProps> = ({
@@ -81,11 +83,91 @@ export const AuraBackgroundPlayer: React.FC<AuraBackgroundPlayerProps> = ({
   currentImageIndex,
   category,
   isPlaying = true,
-  composicionVisual
+  composicionVisual,
+  shaders = [],
+  visualizerRotationInterval = 18
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const animFrameRef = useRef<number>(0);
   const [isVideoVisible, setIsVideoVisible] = useState(performanceMode === 'high');
   const [fallbackThemeIndex, setFallbackThemeIndex] = useState<number>(0);
+  const [activeShaderIndex, setActiveShaderIndex] = useState<number>(0);
+
+  const showVisualizer = !activeImages[currentImageIndex]?.url;
+  const cycle = getCircadianCycle(category);
+
+  // Rotate shader index in sync with visualizer rotation
+  useEffect(() => {
+    if (!shaders || shaders.length <= 1) return;
+    const timer = setInterval(() => {
+      setActiveShaderIndex((prev) => (prev + 1) % shaders.length);
+    }, visualizerRotationInterval * 1000);
+    return () => clearInterval(timer);
+  }, [shaders, visualizerRotationInterval]);
+
+  // WebGL shader renderer
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const activeShader = shaders?.[activeShaderIndex];
+    if (!canvas || !activeShader?.fragmentShader || !showVisualizer) return;
+
+    const gl = canvas.getContext('webgl');
+    if (!gl) return;
+
+    // Vertex shader (fullscreen quad)
+    const vsSource = `
+      attribute vec4 position;
+      void main() { gl_Position = position; }
+    `;
+    const fs = activeShader.fragmentShader;
+
+    const compile = (type: number, src: string) => {
+      const s = gl.createShader(type)!;
+      gl.shaderSource(s, src);
+      gl.compileShader(s);
+      return s;
+    };
+
+    const prog = gl.createProgram()!;
+    gl.attachShader(prog, compile(gl.VERTEX_SHADER, vsSource));
+    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fs));
+    gl.linkProgram(prog);
+    gl.useProgram(prog);
+
+    // Fullscreen quad
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+    const posLoc = gl.getAttribLocation(prog, 'position');
+    gl.enableVertexAttribArray(posLoc);
+    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+    const timeLoc = gl.getUniformLocation(prog, 'time');
+    const resLoc = gl.getUniformLocation(prog, 'resolution');
+
+    let start = performance.now();
+    const render = () => {
+      const w = canvas.clientWidth;
+      const h = canvas.clientHeight;
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+        gl.viewport(0, 0, w, h);
+      }
+      const t = (performance.now() - start) / 1000;
+      gl.uniform1f(timeLoc, t);
+      gl.uniform2f(resLoc, w, h);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      animFrameRef.current = requestAnimationFrame(render);
+    };
+    animFrameRef.current = requestAnimationFrame(render);
+
+    return () => {
+      cancelAnimationFrame(animFrameRef.current);
+      gl.deleteProgram(prog);
+    };
+  }, [shaders, activeShaderIndex, showVisualizer]);
 
   const getVisualizerVideoUrl = () => {
     const cycle = getCircadianCycle(category);
@@ -118,7 +200,7 @@ export const AuraBackgroundPlayer: React.FC<AuraBackgroundPlayerProps> = ({
     }
   }, [isVideoVisible, currentImageIndex]);
 
-  // Rotate fallback visualizer templates every 30 seconds with smart shuffle
+  // Rotate fallback visualizer templates every visualizerRotationInterval seconds with smart shuffle
   useEffect(() => {
     if (!isPlaying) return;
     const themeTimer = setInterval(() => {
@@ -129,12 +211,10 @@ export const AuraBackgroundPlayer: React.FC<AuraBackgroundPlayerProps> = ({
         }
         return next;
       });
-    }, 30000);
+    }, visualizerRotationInterval * 1000);
     return () => clearInterval(themeTimer);
-  }, [isPlaying]);
+  }, [isPlaying, visualizerRotationInterval]);
 
-  const showVisualizer = !activeImages[currentImageIndex]?.url;
-  const cycle = getCircadianCycle(category);
 
   const renderFallbackTheme = () => {
     const primaryColor = CIRCADIAN_THEME_COLORS[cycle]?.primary || '#ffb703';
@@ -1270,23 +1350,39 @@ export const AuraBackgroundPlayer: React.FC<AuraBackgroundPlayerProps> = ({
           inset: 0,
           width: '100%',
           height: '100%',
-          background: CIRCADIAN_GRADIENTS[cycle]?.bg || CIRCADIAN_GRADIENTS.mediodia.bg,
+          background: shaders?.length ? 'black' : (CIRCADIAN_GRADIENTS[cycle]?.bg || CIRCADIAN_GRADIENTS.mediodia.bg),
           backgroundSize: '200% 200%',
-          animation: 'pulseGradient 15s ease infinite',
+          animation: shaders?.length ? 'none' : 'pulseGradient 15s ease infinite',
           zIndex: 0,
           overflow: 'hidden'
         }}>
-          {/* Base Ambient Overlay */}
-          <div style={{
-            position: 'absolute',
-            inset: 0,
-            background: 'radial-gradient(circle at center, transparent 30%, rgba(0,0,0,0.3) 100%)',
-            pointerEvents: 'none',
-            zIndex: 1
-          }} />
+          {/* WebGL Shader Canvas (priority when shaders are available) */}
+          {shaders?.length > 0 && shaders[activeShaderIndex]?.fragmentShader ? (
+            <canvas
+              ref={canvasRef}
+              style={{
+                position: 'absolute',
+                inset: 0,
+                width: '100%',
+                height: '100%',
+                zIndex: 2
+              }}
+            />
+          ) : (
+            <>
+              {/* Base Ambient Overlay */}
+              <div style={{
+                position: 'absolute',
+                inset: 0,
+                background: 'radial-gradient(circle at center, transparent 30%, rgba(0,0,0,0.3) 100%)',
+                pointerEvents: 'none',
+                zIndex: 1
+              }} />
 
-          {/* Dynamic Theme Playout */}
-          {composicionVisual ? renderCompositeLayers() : renderFallbackTheme()}
+              {/* Dynamic Theme Playout */}
+              {composicionVisual ? renderCompositeLayers() : renderFallbackTheme()}
+            </>
+          )}
 
           {/* Real-time visualizer theme name indicator for testing */}
           <div 
@@ -1307,18 +1403,21 @@ export const AuraBackgroundPlayer: React.FC<AuraBackgroundPlayerProps> = ({
               userSelect: 'none'
             }}
           >
-            EFFECT: {[
-              "Sonar Rings & Bars (Classic)",
-              "Aurora Stream Wave",
-              "Orbiting Flares",
-              "Twinkling Cosmic Stars",
-              "Corona Spinner Eclipse",
-              "Calming Zen Ripples",
-              "Mirrored Equalizer Bars",
-              "Neo-Cyber Grid Scroll",
-              "Oscillating Helix Dots",
-              "Bokeh Nebula Drift"
-            ][fallbackThemeIndex % 10] || "Custom Shader"} (V-{Math.floor(fallbackThemeIndex / 10)})
+            {shaders?.length > 0
+              ? `SHADER: ${shaders[activeShaderIndex]?.name || 'WebGL'}`
+              : `EFFECT: ${[
+                  "Sonar Rings & Bars (Classic)",
+                  "Aurora Stream Wave",
+                  "Orbiting Flares",
+                  "Twinkling Cosmic Stars",
+                  "Corona Spinner Eclipse",
+                  "Calming Zen Ripples",
+                  "Mirrored Equalizer Bars",
+                  "Neo-Cyber Grid Scroll",
+                  "Oscillating Helix Dots",
+                  "Bokeh Nebula Drift"
+                ][fallbackThemeIndex % 10] || "Custom Shader"} (V-${Math.floor(fallbackThemeIndex / 10)})`
+            }
           </div>
         </div>
       ) : (

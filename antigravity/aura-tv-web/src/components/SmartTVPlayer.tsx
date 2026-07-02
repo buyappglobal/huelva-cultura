@@ -51,6 +51,8 @@ const CIRCADIAN_THEME_COLORS: Record<TimeOfDay, { primary: string; secondary: st
   }
 };
 
+const API_BASE = "https://aura-business.pages.dev";
+
 const getCircadianCycle = (category?: string): TimeOfDay => {
   if (!category) return 'mediodia';
   const cat = category.toLowerCase().trim();
@@ -66,11 +68,20 @@ export default function SmartTVPlayer() {
   const { slug } = useParams();
   const [searchParams] = useSearchParams();
   const isDemoMode = searchParams.get('demo') === 'true';
-  const [clientId, setClientId] = useState<string | null>(
-    isDemoMode ? 'demo' : (slug || searchParams.get('id') || localStorage.getItem('aura_tv_client_id'))
-  );
+  const isCleanFeed = searchParams.get('clean') === 'true';
+  const [clientId, setClientId] = useState<string | null>(() => {
+    if (isDemoMode) return 'demo';
+    const urlId = slug || searchParams.get('id');
+    const cachedId = localStorage.getItem('aura_tv_client_id');
+    const cachedSlug = localStorage.getItem('aura_tv_resolved_slug');
+    if (cachedId && (!slug || slug.toLowerCase() === cachedSlug?.toLowerCase())) {
+      return cachedId;
+    }
+    return urlId || null;
+  });
   
   const [pairingCode, setPairingCode] = useState<string | null>(null);
+  const isPublicPreview = searchParams.get('public') === 'true' || searchParams.get('preview') === 'true';
   const [manifest, setManifest] = useState<any>(null);
   const [config, setConfig] = useState<any>({ volume: 0.8, showTicker: true });
   const [envelopeData, setEnvelopeData] = useState<any>(null); // Pre‑calculated audio envelope
@@ -91,7 +102,7 @@ export default function SmartTVPlayer() {
       if (envelopeCache.current[trackId]) {
         setEnvelopeData(envelopeCache.current[trackId]);
       } else {
-        fetch(`/cdn/envelopes/${trackId}.json`)
+        fetch(`${API_BASE}/cdn/envelopes/${trackId}.json`)
           .then(res => {
             if (!res.ok) throw new Error('Network response not ok');
             return res.json();
@@ -113,9 +124,17 @@ export default function SmartTVPlayer() {
   // Resolve slug to UID if slug is present in URL
   useEffect(() => {
     if (!slug) return;
+    
+    // If we already resolved this slug and loaded client ID, skip refetching
+    const cachedSlug = localStorage.getItem('aura_tv_resolved_slug');
+    const cachedId = localStorage.getItem('aura_tv_client_id');
+    if (cachedId && cachedSlug?.toLowerCase() === slug.toLowerCase()) {
+      return;
+    }
+
     async function resolveSlug() {
       try {
-        const res = await fetch('/api/users');
+        const res = await fetch(`${API_BASE}/api/users`);
         if (res.ok) {
           const data = await res.json();
           const users = Array.isArray(data) ? data : (data.users || []);
@@ -123,7 +142,9 @@ export default function SmartTVPlayer() {
           if (foundUser) {
             const resolvedUid = foundUser.uid || foundUser.id;
             setClientId(resolvedUid);
-            console.log(`[SmartTVPlayer] Resolved slug ${slug} to clientId ${resolvedUid}`);
+            localStorage.setItem('aura_tv_client_id', resolvedUid);
+            localStorage.setItem('aura_tv_resolved_slug', slug);
+            console.log(`[SmartTVPlayer] Resolved slug ${slug} to clientId ${resolvedUid} and persisted`);
           }
         }
       } catch (err) {
@@ -146,19 +167,32 @@ export default function SmartTVPlayer() {
   const [isShowingAd, setIsShowingAd] = useState<boolean>(false);
   const [currentAdIndex, setCurrentAdIndex] = useState<number>(0);
   const [currentBackgroundIndex, setCurrentBackgroundIndex] = useState<number>(0);
+  // Dedicated quote index — rotates independently of track changes
+  const [currentQuoteIndex, setCurrentQuoteIndex] = useState<number>(0);
 
-  // Manage Background slides rotation (15 seconds per slide)
+  // Manage Background slides rotation (uses textRotationInterval from config, default 20s)
   useEffect(() => {
-    const slides = getActiveSlides();
+    const slides = getActiveSlides('ambient');
     if (slides.length <= 1) {
       setCurrentBackgroundIndex(0);
       return;
     }
+    const rotationMs = (config.textRotationInterval || 20) * 1000;
     const interval = setInterval(() => {
       setCurrentBackgroundIndex((prev) => (prev + 1) % slides.length);
-    }, 15000);
+    }, rotationMs);
     return () => clearInterval(interval);
-  }, [config.signageGallery, config.signageUrl, config.contents, config.quotes]);
+  }, [config.signageGallery, config.signageUrl, config.contents, config.quotes, config.textRotationInterval]);
+
+  // Dedicated quote text rotation — always advances every textRotationInterval seconds,
+  // regardless of track changes or how many slides exist.
+  useEffect(() => {
+    const rotationMs = (config.textRotationInterval || 20) * 1000;
+    const quoteTimer = setInterval(() => {
+      setCurrentQuoteIndex((prev) => prev + 1);
+    }, rotationMs);
+    return () => clearInterval(quoteTimer);
+  }, [config.textRotationInterval]);
 
   // Fallback Visualizer Themes index (rotate every 30s)
   const [fallbackThemeIndex, setFallbackThemeIndex] = useState<number>(0);
@@ -169,11 +203,12 @@ export default function SmartTVPlayer() {
     return () => clearInterval(timer);
   }, []);
 
-  // Rotate fallback visualizer templates every 30 seconds with smart shuffle
+  // Rotate fallback visualizer templates (uses visualizerRotationInterval from config, default 18s)
   useEffect(() => {
     const isVideo = currentTrackUrl?.match(/\.(mp4|webm)$/i);
     if (isVideo || !currentTrackUrl || isShowingAd) return;
     
+    const rotationMs = (config.visualizerRotationInterval || 18) * 1000;
     const themeTimer = setInterval(() => {
       setFallbackThemeIndex((prev) => {
         let next = prev;
@@ -186,14 +221,28 @@ export default function SmartTVPlayer() {
         }
         return next;
       });
-    }, 30000);
+    }, rotationMs);
     
     return () => clearInterval(themeTimer);
-  }, [currentTrackUrl, isShowingAd, clientId]);
+  }, [currentTrackUrl, isShowingAd, clientId, config.visualizerRotationInterval]);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [consecutiveErrors, setConsecutiveErrors] = useState(0);
+
+  // Muted Autoplay Bypass for Kiosk Mode
+  useEffect(() => {
+    console.log("Aura Boot: Inicializando modo desatendido (No-Click)...");
+    if (audioRef.current) audioRef.current.muted = true;
+    if (videoRef.current) videoRef.current.muted = true;
+    
+    setTimeout(() => {
+      if (audioRef.current) audioRef.current.muted = false;
+      if (videoRef.current) videoRef.current.muted = false;
+      console.log("Aura Boot: Pipeline liberado a 60 FPS.");
+    }, 100);
+  }, []);
+
   const errorTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -227,7 +276,7 @@ export default function SmartTVPlayer() {
 
   // Initialize Pairing if no client ID using KV-backed deviceId PIN flow
   useEffect(() => {
-    if (isDemoMode) return;
+    if (isDemoMode || isPublicPreview) return;
     
     // Resolve device ID
     let devId = localStorage.getItem('aura_tv_device_id');
@@ -238,7 +287,7 @@ export default function SmartTVPlayer() {
 
     const checkPairingStatus = async () => {
       try {
-        const res = await fetch(`/api/tv/pairing?deviceId=${devId}`);
+        const res = await fetch(`${API_BASE}/api/tv/pairing?deviceId=${devId}`);
         if (res.ok) {
           const data = await res.json();
           if (data.paired) {
@@ -288,7 +337,7 @@ export default function SmartTVPlayer() {
       
       let res;
       try {
-        res = await fetch(`/api/session/${clientId}${skipParam}`, {
+        res = await fetch(`${API_BASE}/api/session/${clientId}${skipParam}`, {
           signal: controller.signal
         });
       } finally {
@@ -382,7 +431,7 @@ export default function SmartTVPlayer() {
     
     const fetchInitialConfig = async () => {
       try {
-        const res = await fetch(`/api/displays/${clientId}?t=${Date.now()}`, { cache: 'no-cache' });
+        const res = await fetch(`${API_BASE}/api/displays/${clientId}?t=${Date.now()}`, { cache: 'no-cache' });
         if (res.ok) {
           const data = await res.json();
           const displayData = data.display || (data.success ? data : null);
@@ -423,12 +472,12 @@ export default function SmartTVPlayer() {
         const lastSent = localStorage.getItem(`aura_heartbeat_${clientId}`);
         if (lastSent !== windowKey) {
           try {
-            const res = await fetch(`/api/displays/${clientId}?t=${Date.now()}`, { cache: 'no-cache' });
+            const res = await fetch(`${API_BASE}/api/displays/${clientId}?t=${Date.now()}`, { cache: 'no-cache' });
             const data = res.ok ? await res.json() : {};
             data.lastSeen = now.toISOString();
             data.status = 'online';
             data.clientId = clientId;
-            const postRes = await fetch(`/api/displays/${clientId}`, {
+            const postRes = await fetch(`${API_BASE}/api/displays/${clientId}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(data)
@@ -445,7 +494,7 @@ export default function SmartTVPlayer() {
 
     const initialHeartbeat = async () => {
       try {
-        const res = await fetch(`/api/displays/${clientId}?t=${Date.now()}`, { cache: 'no-cache' });
+        const res = await fetch(`${API_BASE}/api/displays/${clientId}?t=${Date.now()}`, { cache: 'no-cache' });
         const data = res.ok ? await res.json() : {};
         if (res.ok && data) {
           setConfig((prev: any) => ({ ...prev, ...data }));
@@ -457,7 +506,7 @@ export default function SmartTVPlayer() {
         data.lastSeen = new Date().toISOString();
         data.status = 'online';
         data.clientId = clientId;
-        await fetch(`/api/displays/${clientId}`, {
+        await fetch(`${API_BASE}/api/displays/${clientId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(data)
@@ -510,17 +559,17 @@ export default function SmartTVPlayer() {
   // Load HLS stream in TV player
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !manifest?.track?.url) return;
-    const isHls = manifest.track.url.endsWith('.m3u8');
+    if (!video || !currentTrackUrl) return;
+    const isHls = currentTrackUrl.endsWith('.m3u8');
     if (!isHls) return;
 
-    let hls = null;
+    let hls: Hls | null = null;
     if (Hls.isSupported()) {
       hls = new Hls({
         maxMaxBufferLength: 10,
         liveSyncDuration: 4
       });
-      hls.loadSource(manifest.track.url);
+      hls.loadSource(currentTrackUrl);
       hls.attachMedia(video);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         if (isPlaying) video.play().catch(e => console.warn(e));
@@ -549,7 +598,7 @@ export default function SmartTVPlayer() {
         hls.destroy();
       }
     };
-  }, [manifest?.track?.url, isPlaying]);
+  }, [currentTrackUrl, isPlaying]);
 
   const initAudioAnalyser = (element: HTMLMediaElement, isVideo: boolean) => {
     try {
@@ -751,7 +800,8 @@ export default function SmartTVPlayer() {
     return currentTime >= startTime && currentTime <= endTime;
   };
 
-  const getActiveSlides = () => {
+  const getActiveSlides = (mode: 'ambient' | 'ad' = 'ad') => {
+    if (slug === 'public' || clientId === 'demo') return [];
     const list: any[] = [];
 
     // 0. Add custom client signage published billboard and gallery
@@ -914,8 +964,20 @@ export default function SmartTVPlayer() {
       normalQuotes.forEach(q => list.push(q));
     }
 
-    // 4. Fallback: If no custom elements are scheduled, use legacy signageGallery or default Aura slides
-    if (list.length === 0) {
+    // Filter by schedule
+    const filtered = list.filter(slide => isScheduled(slide.schedule));
+
+    if (mode === 'ambient') {
+      // Modo ambiente: Solo queremos mostrar frases encima del visualizador, NADA de imágenes de publicidad.
+      const ambientSlides = filtered.filter(slide => slide.type === 'quote');
+      if (ambientSlides.length > 0) {
+        ambientSlides.push({ type: 'generic_quote' });
+      }
+      return ambientSlides;
+    }
+
+    // Modo publicidad (ad)
+    if (filtered.length === 0) {
       if (config.signageGallery && config.signageGallery.length > 0) {
         return config.signageGallery.map((item: any) => ({
           url: item.url,
@@ -934,18 +996,6 @@ export default function SmartTVPlayer() {
         { url: "https://media.auradisplay.es/ads/default/slide_gestion.png", type: 'image' }
       ];
     }
-
-    // Filter by schedule
-    const filtered = list.filter(slide => isScheduled(slide.schedule));
-    
-    // If everything is filtered out, fall back to default slides to prevent empty screen
-    if (filtered.length === 0) {
-      return [
-        { url: "https://media.auradisplay.es/ads/default/slide_sensorial.png", type: 'image' },
-        { url: "https://media.auradisplay.es/ads/default/slide_circadian.png", type: 'image' },
-        { url: "https://media.auradisplay.es/ads/default/slide_gestion.png", type: 'image' }
-      ];
-    }
     
     return filtered;
   };
@@ -954,7 +1004,7 @@ export default function SmartTVPlayer() {
   useEffect(() => {
     if (!isShowingAd) return;
 
-    const slides = getActiveSlides();
+    const slides = getActiveSlides('ad');
     if (slides.length === 0) {
       setIsShowingAd(false);
       return;
@@ -988,7 +1038,7 @@ export default function SmartTVPlayer() {
       const intervalMins = config.user?.adIntervalMins || config.adIntervalMins || 10;
       const elapsedMs = Date.now() - lastAdTime;
       if (elapsedMs >= intervalMins * 60 * 1000) {
-        const slides = getActiveSlides();
+        const slides = getActiveSlides('ad');
         if (slides.length > 0) {
           setIsShowingAd(true);
           setLastAdTime(Date.now());
@@ -1054,6 +1104,7 @@ export default function SmartTVPlayer() {
           ref={videoRef}
           src={currentTrackUrl.endsWith('.m3u8') ? undefined : currentTrackUrl}
           autoPlay={isPlaying}
+          loop
           style={{ 
             position: 'absolute', 
             inset: 0, 
@@ -1094,17 +1145,19 @@ export default function SmartTVPlayer() {
         <AuraBackgroundPlayer
           performanceMode={config.performanceMode || 'high'}
           isZenMode={config.isZenMode || false}
-          activeImages={getActiveSlides()}
+          activeImages={getActiveSlides('ambient')}
           currentImageIndex={currentBackgroundIndex}
           category={manifest?.visuals?.category}
           isPlaying={isPlaying}
           composicionVisual={config.composicionVisual}
+          visualizerRotationInterval={config.visualizerRotationInterval || 18}
+          shaders={config.shaders || []}
         />
       )}
 
       {/* Full-Screen Advertising Slides Slideshow Overlay */}
       {isShowingAd && (() => {
-        const slides = getActiveSlides();
+        const slides = getActiveSlides('ad');
         const currentSlide = slides[currentAdIndex];
         if (!currentSlide) return null;
 
@@ -1263,7 +1316,7 @@ export default function SmartTVPlayer() {
       })()}
 
       {/* Top Branding Header */}
-      {!config.isZenMode && !isShowingAd && (
+      {!config.isZenMode && !isShowingAd && !isCleanFeed && (
         <div style={{ position: 'absolute', top: '40px', left: '50px', right: '50px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', zIndex: 30, color: 'white', textShadow: '0 2px 8px rgba(0,0,0,0.8)' }}>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             <span style={{ fontSize: '2vw', fontWeight: 300, letterSpacing: '4px', textTransform: 'uppercase' }}>
@@ -1290,22 +1343,113 @@ export default function SmartTVPlayer() {
       )}
 
       {/* Main Quote / Client details */}
-      {!isShowingAd && (() => {
-        const slides = getActiveSlides();
-        const activeSlide = slides[currentBackgroundIndex];
+      {!isShowingAd && !isCleanFeed && (() => {
+        // Collect client-specific quotes (including external ads of type quote)
+        const clientQuotes: any[] = [];
+        if (config.quotes && Array.isArray(config.quotes)) {
+          config.quotes.forEach((item: any) => {
+            if (isScheduled(item.schedule)) {
+              clientQuotes.push({
+                text: item.text,
+                category: item.category || 'OFERTA CLIENTE'
+              });
+            }
+          });
+        }
+        if (config.externalAds && Array.isArray(config.externalAds)) {
+          config.externalAds.forEach((item: any) => {
+            if (item.type === 'quote' && isScheduled(item.schedule)) {
+              clientQuotes.push({
+                text: item.text,
+                category: item.category || 'PUBLICIDAD'
+              });
+            }
+          });
+        }
+
+        // Parse/Collect promo flash offers
+        const flashOffers: string[] = [];
+        const rawFlashText = config.promoFlashText || manifest?.promoFlash?.text;
+        const rawFlashExpires = config.promoFlashExpiresAt || manifest?.promoFlash?.expiresAt;
         
-        let quoteText = manifest?.visuals?.quote || "SISTEMA AURA";
-        let quoteCategory = manifest?.visuals?.category !== "NIGHT" ? "AURA DIGITAL PLAYOUT" : manifest?.visuals?.category;
-        
-        if (activeSlide && activeSlide.type === 'quote') {
-          quoteText = activeSlide.text;
-          quoteCategory = activeSlide.category || quoteCategory;
+        if (rawFlashText && rawFlashText.trim().startsWith("[")) {
+          try {
+            const parsed = JSON.parse(rawFlashText);
+            if (Array.isArray(parsed)) {
+              const nowMs = Date.now();
+              parsed.forEach((offer) => {
+                const isBoost = offer.instantBoostExpiresAt && nowMs < offer.instantBoostExpiresAt;
+                const isScheduledActive = offer.scheduleEnabled && (() => {
+                  const now = new Date();
+                  const day = now.getDay();
+                  if (offer.scheduleDays && Array.isArray(offer.scheduleDays) && !offer.scheduleDays.includes(day)) return false;
+                  const currentTime = now.getHours() * 60 + now.getMinutes();
+                  const [sh, sm] = (offer.scheduleStartTime || "00:00").split(':').map(Number);
+                  const [eh, em] = (offer.scheduleEndTime || "23:59").split(':').map(Number);
+                  return currentTime >= (sh * 60 + sm) && currentTime <= (eh * 60 + em);
+                })();
+                if (offer.text && offer.text.trim() && (isBoost || offer.active && (!offer.scheduleEnabled || isScheduledActive))) {
+                  flashOffers.push(offer.text);
+                }
+              });
+            }
+          } catch (e) {
+            console.error("Error parsing flashOffers in quote renderer:", e);
+          }
+        } else if (rawFlashText && rawFlashExpires && Date.now() < rawFlashExpires) {
+          flashOffers.push(rawFlashText);
+        }
+
+        // Generic / Curated Quote from the playlist manifest (changes with each song or general fallback)
+        const genericQuote = {
+          text: manifest?.visuals?.quote || "SISTEMA AURA",
+          category: manifest?.visuals?.category !== "NIGHT" ? "AURA DIGITAL PLAYOUT" : manifest?.visuals?.category
+        };
+
+        // Combine client-specific quotes + flash offers
+        const clientPool: any[] = [...clientQuotes];
+        flashOffers.forEach(text => {
+          clientPool.push({
+            text,
+            category: 'OFERTA FLASH'
+          });
+        });
+
+        // Interleave generic quotes and client quotes: e.g. [Generic, Client (or Generic if no Client), Generic, ...]
+        // We build a logical sequence that rotates.
+        const pool: any[] = [];
+        if (clientPool.length > 0) {
+          // If we have client quotes, interleave: 1 generic, 1 client, 1 generic, 1 client...
+          const maxLen = Math.max(2, clientPool.length * 2);
+          for (let i = 0; i < maxLen; i++) {
+            if (i % 2 === 0) {
+              pool.push(genericQuote);
+            } else {
+              pool.push(clientPool[Math.floor(i / 2) % clientPool.length]);
+            }
+          }
+        } else {
+          // If no client quotes, only generic quotes
+          pool.push(genericQuote);
+        }
+
+        const activeSlide = pool[currentQuoteIndex % pool.length];
+
+        let quoteText = activeSlide?.text || genericQuote.text;
+        let quoteCategory = activeSlide?.category || genericQuote.category;
+
+        if (!isPlaying) {
+          quoteText = "Haz click en OK en tu mando para sincronizar el sonido";
+          quoteCategory = "ESPERANDO SINCRONIZACIÓN";
         }
 
         const scale = config.textSize !== undefined && config.textSize !== null ? config.textSize : 1.0;
 
         return (
-          <div style={{ position: 'absolute', top: '40%', left: 0, width: '100%', textAlign: 'center', zIndex: 10 }}>
+          <div
+            key={currentQuoteIndex}
+            style={{ position: 'absolute', top: '40%', left: 0, width: '100%', textAlign: 'center', zIndex: 10, animation: 'quoteFadeIn 1s ease' }}
+          >
             <h2 style={{ fontSize: `${4 * scale}vw`, color: 'white', letterSpacing: '0.1em', fontWeight: 'bold', margin: 0, textTransform: 'uppercase', textShadow: '0 2px 10px rgba(0,0,0,0.6)', padding: '0 40px', transition: 'font-size 0.5s ease' }}>
               {quoteText}
             </h2>
@@ -1317,7 +1461,7 @@ export default function SmartTVPlayer() {
       })()}
 
       {/* Now Playing Widget */}
-      {!config.isZenMode && !isShowingAd && manifest?.track?.title && (
+      {!config.isZenMode && !isShowingAd && !isCleanFeed && manifest?.track?.title && (
         <div style={{
           position: 'absolute',
           bottom: (isDemoMode && config.showTicker !== false && manifest?.visuals?.ticker) ? '90px' : '40px',
@@ -1347,7 +1491,7 @@ export default function SmartTVPlayer() {
       )}
 
       {/* Ticker Bottom */}
-      {isDemoMode && config.showTicker !== false && manifest?.visuals?.ticker && !isShowingAd && (
+      {isDemoMode && config.showTicker !== false && manifest?.visuals?.ticker && !isShowingAd && !isCleanFeed && (
         <div style={{ position: 'absolute', bottom: 0, width: '100%', background: 'rgba(0,0,0,0.85)', color: 'white', padding: '16px 0', overflow: 'hidden', whiteSpace: 'nowrap', zIndex: 20 }}>
           <div style={{ display: 'inline-block', animation: 'marquee 40s linear infinite', fontSize: '2vw', letterSpacing: '4px', textTransform: 'uppercase' }}>
             {manifest.visuals.ticker.join(' • ')} • {manifest.visuals.ticker.join(' • ')}
@@ -1414,6 +1558,10 @@ export default function SmartTVPlayer() {
           @keyframes fadeIn {
             from { opacity: 0; }
             to { opacity: 1; }
+          }
+          @keyframes quoteFadeIn {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
           }
           @keyframes pulseGradient {
             0% { background-position: 0% 50%; }
