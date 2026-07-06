@@ -1418,10 +1418,11 @@ export default function SmartTVPlayer() {
         // If the backend provided a specific quote for the song, use it. But we also want to rotate!
         // So we will rotate through PREMIUM_QUOTES if there is no client pool, or interleave the song quote.
         const songQuote = manifest?.visuals?.quote;
-        const currentPremium = PREMIUM_QUOTES[currentQuoteIndex % PREMIUM_QUOTES.length];
+        const genericTextPool = songQuote ? [songQuote, ...PREMIUM_QUOTES] : PREMIUM_QUOTES;
+        const currentGenericText = genericTextPool[currentQuoteIndex % genericTextPool.length];
 
         const genericQuote = {
-          text: songQuote ? (currentQuoteIndex % 2 === 0 ? songQuote : currentPremium) : currentPremium,
+          text: currentGenericText,
           category: manifest?.visuals?.category !== "NIGHT" ? "AURA DIGITAL PLAYOUT" : manifest?.visuals?.category
         };
 
