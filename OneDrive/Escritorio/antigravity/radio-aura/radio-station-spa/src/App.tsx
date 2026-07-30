@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Music, Loader2, Play, Search, X, Lock, Radio, Heart, RefreshCw, CheckCircle2, LogOut, Shield, User, Users, Mic, Clock, Share2, Instagram, Facebook, Twitter, Globe, MessageCircle, Video, Info } from 'lucide-react';
+import { Music, Loader2, Play, Search, X, Lock, Radio, Heart, RefreshCw, CheckCircle2, LogOut, Shield, User, Users, Mic, Clock, Share2, Instagram, Facebook, Twitter, Globe, MessageCircle, Video, Info, Sparkles } from 'lucide-react';
 import { triggerHaptic } from './lib/haptics';
 import { Song, API_CONFIG, CATEGORIES, Category, VisualBanner, AudioAd, SpecialBanner, WelcomeJingle, CircadianBlock, TenantConfig } from './types';
 import { audioEngine } from './lib/AudioEngine';
@@ -16,6 +16,7 @@ import Player from './components/Player';
 import ColorModal from './components/ColorModal';
 import Widget from './components/Widget';
 import MiniVisualizer from './components/MiniVisualizer';
+import LiveView from './components/LiveView';
 import AdminPanel from './components/AdminPanel';
 import ProfilePage from './components/ProfilePage';
 import TenantSalesPage from './components/TenantSalesPage';
@@ -24,7 +25,6 @@ import { useAuth } from './contexts/AuthContext';
 import WelcomeModal from './components/WelcomeModal';
 import { InterstitialAd } from './components/InterstitialAdModal';
 import { LiveMarquee } from './components/LiveMarquee';
-import { VideoClipGenerator } from './components/VideoClipGenerator';
 import { SongSponsorModal } from './components/SongSponsorModal';
 
 // Deterministic random title generator for music files to make them look premium/epic
@@ -672,6 +672,8 @@ export default function App() {
   const [currentSong, setCurrentSong] = useState<Song | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isZenMode, setIsZenMode] = useState(false);
+  const [showLiveView, setShowLiveView] = useState(false);
+  const [showTutorialModal, setShowTutorialModal] = useState(false);
   const [isAdOpen, setIsAdOpen] = useState(false);
   const [showWelcome, setShowWelcome] = useState(() => {
     const params = new URLSearchParams(window.location.search);
@@ -3311,6 +3313,34 @@ export default function App() {
             <span>Zen</span>
           </button>
 
+          {/* Visualizador Button */}
+          <button
+            onClick={() => {
+              triggerHaptic(10);
+              setShowLiveView(true);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-accent/20 to-purple-500/20 hover:from-accent/30 hover:to-purple-500/30 border border-accent/30 text-[10px] font-black uppercase tracking-wider text-white transition-all rounded-full shrink-0 active:scale-95 cursor-pointer shadow-[0_0_10px_rgba(99,102,241,0.2)]"
+            title="Abrir Visualizador Interactivo en Vivo"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-accent" />
+            <span>Visualizador</span>
+          </button>
+
+          {/* Aprende Cantando (Tutorial) Button */}
+          {activeTenantConfig?.tutorialConfig?.enabled && (
+            <button
+              onClick={() => {
+                triggerHaptic(10);
+                setShowTutorialModal(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 hover:text-white rounded-full text-[10px] font-black uppercase tracking-wider transition-all shrink-0 cursor-pointer shadow-[0_0_10px_rgba(245,158,11,0.2)] active:scale-95"
+              title="Aprende a usar la app a ritmo musical"
+            >
+              <Music className="w-3.5 h-3.5" />
+              <span>Aprende Cantando</span>
+            </button>
+          )}
+
         </div>
 
         {/* Row 3: Full Width Search Input */}
@@ -3802,6 +3832,7 @@ export default function App() {
         onOpenSponsor={() => setIsSponsorModalOpen(true)}
         sponsor={currentSong ? songSponsors[currentSong.id] : null}
         stationName={stationName}
+        onOpenVisualizer={() => setShowLiveView(true)}
       />
 
       <ColorModal 
@@ -4332,14 +4363,6 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
-      
-      {videoClipSong && (
-        <VideoClipGenerator
-          song={videoClipSong}
-          tenantConfig={activeTenantConfig}
-          onClose={() => setVideoClipSong(null)}
-        />
-      )}
 
       <SongSponsorModal
         isOpen={isSponsorModalOpen}
@@ -4453,6 +4476,33 @@ export default function App() {
           );
         })()}
       </AnimatePresence>
+
+      {/* Fullscreen Interactive Visualizer View */}
+      <AnimatePresence>
+        {showLiveView && (
+          <LiveView
+            currentSong={currentSong}
+            isPlaying={isPlaying}
+            onTogglePlay={() => audioEngine.toggle()}
+            favorites={favorites}
+            onToggleFavorite={toggleFavorite}
+            accentColor={accentColor}
+            onShare={(e) => handleShare(currentSong?.id || '', e)}
+            customMetadata={activeTenantConfig?.customSongNames?.[currentSong?.id || '']}
+            onExitToCatalog={() => setShowLiveView(false)}
+            circadianQuotes={activeTenantConfig?.circadianQuotes || []}
+            customVisualizers={activeTenantConfig?.customVisualizers || []}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Musical Tutorial Modal */}
+      {showTutorialModal && activeTenantConfig?.tutorialConfig && (
+        <TutorialModal 
+          config={activeTenantConfig.tutorialConfig} 
+          onClose={() => setShowTutorialModal(false)} 
+        />
+      )}
     </div>
   );
 }
