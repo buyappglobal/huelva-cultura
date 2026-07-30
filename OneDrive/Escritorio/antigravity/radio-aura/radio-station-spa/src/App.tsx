@@ -587,7 +587,6 @@ export default function App() {
         const adminCats = JSON.parse(saved);
         if (Array.isArray(adminCats) && adminCats.length > 0) {
           const baseCats = [
-            { id: 'all', name: 'AuraMix', r2_folder: '' },
             { id: 'popular', name: 'Populares', r2_folder: '' },
             { id: 'favorites', name: 'Favoritos' },
             { id: 'podcasts', name: 'Podcasts', r2_folder: '' },
@@ -601,21 +600,17 @@ export default function App() {
               name: cat.name || cat.alias || 'Sin nombre'
             }));
           
-          const allCat = adminCats.find((c: any) => c.id === 'all');
-          if (allCat) {
-            baseCats[0] = { ...baseCats[0], ...allCat };
-          }
           const popularCat = adminCats.find((c: any) => c.id === 'popular');
           if (popularCat) {
-            baseCats[1] = { ...baseCats[1], ...popularCat };
+            baseCats[0] = { ...baseCats[0], ...popularCat };
           }
           const favCat = adminCats.find((c: any) => c.id === 'favorites');
           if (favCat) {
-            baseCats[2] = { ...baseCats[2], ...favCat };
+            baseCats[1] = { ...baseCats[1], ...favCat };
           }
           const podcastsCat = adminCats.find((c: any) => c.id === 'podcasts');
           if (podcastsCat) {
-            baseCats[3] = { ...baseCats[3], ...podcastsCat };
+            baseCats[2] = { ...baseCats[2], ...podcastsCat };
           }
           
           return [...baseCats, ...customCats];
@@ -626,7 +621,6 @@ export default function App() {
     }
     // Default categories if nothing saved
     return [
-      { id: 'all', name: 'AuraMix', r2_folder: '' },
       { id: 'popular', name: 'Populares', r2_folder: '' },
       { id: 'favorites', name: 'Favoritos' },
       { id: 'podcasts', name: 'Podcasts', r2_folder: '' },
@@ -637,12 +631,10 @@ export default function App() {
 
 
   const [activeCategory, setActiveCategory] = useState(() => {
-    // Use admin-configured default category, falling back to 'all'
+    // Use admin-configured default category, falling back to 'popular'
     const saved = localStorage.getItem('aura_default_category');
-    if (saved) return saved;
-    // Legacy: if no saved preference, try to find a 'flamenca' category
-    const flamenca = dynamicCategories.find(c => c.name.toLowerCase().includes('flamenca'));
-    return flamenca ? flamenca.id : 'all';
+    if (saved && saved !== 'all') return saved;
+    return 'popular';
   });
   const [activePodcastSection, setActivePodcastSection] = useState('Todos');
   const [activeExplorerFolder, setActiveExplorerFolder] = useState('Todos');
@@ -1830,8 +1822,8 @@ export default function App() {
       audioEngine.pause();
     } catch (e) {}
 
-    // Reset active category to default/all
-    setActiveCategory('all');
+    // Reset active category to popular
+    setActiveCategory('popular');
     
     // Call handleSync to reload configuration of the chosen tenant!
     handleSync();
@@ -4344,7 +4336,7 @@ export default function App() {
                       localStorage.setItem('aura_accent_color', defColor);
                       setAccentColor(defColor);
                       
-                      setActiveCategory('all');
+                      setActiveCategory('popular');
                       setShowCircadianModal(false);
                     }}
                     className="w-full py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-xs font-bold transition-all cursor-pointer text-center"
