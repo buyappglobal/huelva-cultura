@@ -4480,19 +4480,27 @@ export default function App() {
       {/* Fullscreen Interactive Visualizer View */}
       <AnimatePresence>
         {showLiveView && (
-          <LiveView
-            currentSong={currentSong}
-            isPlaying={isPlaying}
-            onTogglePlay={() => audioEngine.toggle()}
-            favorites={favorites}
-            onToggleFavorite={toggleFavorite}
-            accentColor={accentColor}
-            onShare={(e) => handleShare(currentSong?.id || '', e)}
-            customMetadata={activeTenantConfig?.customSongNames?.[currentSong?.id || '']}
-            onExitToCatalog={() => setShowLiveView(false)}
-            circadianQuotes={activeTenantConfig?.circadianQuotes || []}
-            customVisualizers={activeTenantConfig?.customVisualizers || []}
-          />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.96 }}
+            transition={{ duration: 0.3 }}
+            className="fixed inset-0 z-[200] bg-black/95 p-2 sm:p-4 md:p-6 overflow-hidden flex flex-col"
+          >
+            <LiveView
+              currentSong={currentSong}
+              isPlaying={isPlaying}
+              onTogglePlay={() => audioEngine.toggle()}
+              favorites={favorites}
+              onToggleFavorite={toggleFavorite}
+              accentColor={accentColor}
+              onShare={(e) => handleShare(currentSong?.id || '', e)}
+              customMetadata={activeTenantConfig?.customSongNames?.[currentSong?.id || '']}
+              onExitToCatalog={() => setShowLiveView(false)}
+              circadianQuotes={activeTenantConfig?.circadianQuotes || []}
+              customVisualizers={activeTenantConfig?.customVisualizers || []}
+            />
+          </motion.div>
         )}
       </AnimatePresence>
 
