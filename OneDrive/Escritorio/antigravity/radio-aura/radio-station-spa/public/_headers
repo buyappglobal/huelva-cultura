@@ -1,0 +1,25 @@
+# Cloudflare Pages HTTP headers configuration
+
+# Never cache index.html or root HTML so users always get fresh JS module hashes
+/index.html
+  Cache-Control: no-cache, no-store, must-revalidate
+
+/
+  Cache-Control: no-cache, no-store, must-revalidate
+
+# Immutable caching for hashed static assets
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+  Access-Control-Allow-Origin: *
+
+# All other routes: standard security headers
+/*
+  X-Frame-Options: SAMEORIGIN
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+
+# /widget route: allow embedding in any external website (iframe)
+/widget*
+  ! X-Frame-Options
+  Content-Security-Policy: frame-ancestors *
+  Access-Control-Allow-Origin: *

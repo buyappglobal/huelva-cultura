@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <script>
+      window.addEventListener('error', function(e) {
+        if (e && e.message && (e.message.indexOf('module script') !== -1 || e.message.indexOf('MIME type') !== -1 || e.message.indexOf('text/html') !== -1)) {
+          console.warn('[Aura] Stale JS module detected. Purging cache and reloading...');
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function(regs) {
+              for (var reg of regs) reg.unregister();
+            });
+          }
+          if ('caches' in window) {
+            caches.keys().then(function(names) {
+              for (var name of names) caches.delete(name);
+            });
+          }
+          var url = new URL(window.location.href);
+          url.searchParams.set('_p', Date.now());
+          window.location.replace(url.toString());
+        }
+      }, true);
+    </script>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests" />
+    <meta name="google" content="notranslate" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#8A2BE2" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="description" content="Aura Radio - La mejor selección musical para tu negocio o estilo de vida. Escucha música sin interrupciones con la mejor calidad." />
+    
+    <!-- Facebook Open Graph Meta Tags -->
+    <meta property="og:site_name" content="Aura Radio" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://auraradio.es/" />
+    <meta property="og:title" content="AURA RADIO - Premium Music Selection" />
+    <meta property="og:description" content="La mejor selección musical sin interrupciones." />
+    <meta property="og:image" content="https://cdn.aurabusiness.es/logo-aura.webp" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:locale" content="es_ES" />
+    
+    <!-- Twitter Card Meta Tags -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="AURA RADIO" />
+    <meta name="twitter:description" content="La mejor selección musical sin interrupciones." />
+    <meta name="twitter:image" content="https://cdn.aurabusiness.es/logo-aura.webp" />
+
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" href="/favicon.ico" />
+    
+    <!-- Google Fonts: Outfit & Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    
+    <title>AURA RADIO - Premium Music Selection</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
