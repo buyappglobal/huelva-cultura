@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Music, Loader2, Play, Search, X, Lock, Radio, Heart, RefreshCw, CheckCircle2, LogOut, Shield, User, Users, Mic, Clock, Share2, Instagram, Facebook, Twitter, Globe, MessageCircle, Video, Info, Sparkles } from 'lucide-react';
+import { Music, Loader2, Play, Search, X, Lock, Radio, Heart, RefreshCw, CheckCircle2, LogOut, Shield, User, Users, Mic, Clock, Share2, Instagram, Facebook, Twitter, Globe, MessageCircle, Video, Info, Sparkles, Moon, FileText } from 'lucide-react';
 import { triggerHaptic } from './lib/haptics';
 import { Song, API_CONFIG, CATEGORIES, Category, VisualBanner, AudioAd, SpecialBanner, WelcomeJingle, CircadianBlock, TenantConfig } from './types';
 import { audioEngine } from './lib/AudioEngine';
@@ -26,11 +26,20 @@ import WelcomeModal from './components/WelcomeModal';
 import { InterstitialAd } from './components/InterstitialAdModal';
 import { LiveMarquee } from './components/LiveMarquee';
 import { SongSponsorModal } from './components/SongSponsorModal';
+import GuestIncentiveModal from './components/GuestIncentiveModal';
+import { LiveStudioDashboard } from './components/LiveStudioDashboard';
+import { CategoryHeroBanner } from './components/CategoryHeroBanner';
 
 // Deterministic random title generator for music files to make them look premium/epic
 const generateEpicTitle = (id: string): string => {
   if (!id) return "Melodía de Aura";
   
+  const filename = id.split('/').pop() || id;
+  const cleanFilename = filename.replace(/\.[^/.]+$/, "").replace(/%20/g, ' ').trim();
+  if (cleanFilename && !cleanFilename.startsWith('track-') && !cleanFilename.startsWith('live-') && !cleanFilename.startsWith('ad-')) {
+    return cleanFilename;
+  }
+
   // Deterministic seed generation based on string hash
   let hash = 0;
   for (let i = 0; i < id.length; i++) {
@@ -408,7 +417,7 @@ export default function App() {
     // 3. Sync preferences for the logged-in user
     if (isLoggedIn && syncPreferences) {
       try {
-        await syncPreferences({ categoryOrder: JSON.stringify(newOrder) });
+        await syncPreferences({ user_category_order: newOrder });
       } catch (e) {
         console.warn("Failed to sync local preferences:", e);
       }
@@ -517,6 +526,37 @@ export default function App() {
   };
 
   const handleWelcomeEnter = () => {
+    // 1. Silent Background Hard-Refresh of KV Data & Catalog Config
+    try {
+      fetch(`${API_CONFIG.BASE_URL}/api/list?carpeta=&t=${Date.now()}`)
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (data) {
+            if (data.song_catalog) setSongCatalog(data.song_catalog);
+            if (data.r2_key_to_id) setR2KeyToId(data.r2_key_to_id);
+            if (data.custom_song_names) {
+              setCustomSongNames(prev => ({ ...prev, ...data.custom_song_names }));
+            }
+            const ads = data.audio_ads || data.active_audio_ads || data.ads;
+            if (ads && Array.isArray(ads)) {
+              setAdPool(ads.map((a: any) => typeof a === 'string' ? { url: a, weight: 5 } : a));
+            }
+            if (data.welcome_jingles && Array.isArray(data.welcome_jingles)) {
+              setWelcomeJingles(data.welcome_jingles);
+            }
+            if (data.boletines_config && typeof data.boletines_config === 'object') {
+              setBoletinesConfig(data.boletines_config);
+            }
+          }
+        })
+        .catch(() => {});
+    } catch (e) {}
+
+    // 2. Unlock Audio Engine Context (User Gesture Initialization)
+    try {
+      audioEngine.resumeContext();
+    } catch (e) {}
+
     // If we loaded a shared song, play that song directly and skip any jingles or auto-play
     if (isSharedSongRef.current) {
       if (currentSong) {
@@ -587,7 +627,7 @@ export default function App() {
         const adminCats = JSON.parse(saved);
         if (Array.isArray(adminCats) && adminCats.length > 0) {
           const baseCats = [
-            { id: 'popular', name: 'Populares', r2_folder: '' },
+            { id: 'popular', name: 'Top 20', r2_folder: '' },
             { id: 'favorites', name: 'Favoritos' },
             { id: 'podcasts', name: 'Podcasts', r2_folder: '' },
             { id: 'red-emisoras', name: 'Red de Emisoras', r2_folder: '' }
@@ -621,7 +661,7 @@ export default function App() {
     }
     // Default categories if nothing saved
     return [
-      { id: 'popular', name: 'Populares', r2_folder: '' },
+      { id: 'popular', name: 'Top 20', r2_folder: '' },
       { id: 'favorites', name: 'Favoritos' },
       { id: 'podcasts', name: 'Podcasts', r2_folder: '' },
       { id: 'red-emisoras', name: 'Red de Emisoras', r2_folder: '' },
@@ -629,6 +669,11 @@ export default function App() {
     ].filter(Boolean);
   });
 
+  const [activeTenantConfig, setActiveTenantConfig] = useState<TenantConfig | null>(null);
+  const [stationName, setStationName] = useState('Aura Radio');
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [showGuestIncentiveModal, setShowGuestIncentiveModal] = useState(false);
+  const [incentiveCategoryName, setIncentiveCategoryName] = useState<string | undefined>(undefined);
 
   const [activeCategory, setActiveCategory] = useState(() => {
     // Use admin-configured default category, falling back to 'popular'
@@ -664,6 +709,7 @@ export default function App() {
   const [currentSong, setCurrentSong] = useState<Song | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isZenMode, setIsZenMode] = useState(false);
+  const [isDeepZenMode, setIsDeepZenMode] = useState(false);
   const [showLiveView, setShowLiveView] = useState(false);
   const [showTutorialModal, setShowTutorialModal] = useState(false);
   const [isAdOpen, setIsAdOpen] = useState(false);
@@ -674,7 +720,12 @@ export default function App() {
     const swReload = sessionStorage.getItem('aura_sw_reload');
     if (swReload === 'true') {
       sessionStorage.removeItem('aura_sw_reload');
-      return false; // Skip welcome modal on Service Worker auto-reload
+      // FIX: En PWA, aunque sea un reload del SW, mostrar el modal igualmente.
+      // El modo PWA tiene botón inmediato (sin cuenta atrás) que desbloquea el autoplay.
+      // Sin ese gesto de usuario, el audio no puede arrancar en móvil/PWA instalada.
+      const isPwaMode = window.matchMedia('(display-mode: standalone)').matches ||
+        (window.navigator as any).standalone === true;
+      return isPwaMode; // muestra modal en PWA, salta en navegador
     }
     return true; // Always show welcome modal on normal loads and manual refreshes
   });
@@ -838,8 +889,10 @@ export default function App() {
   });
   const [visibleSongsCount, setVisibleSongsCount] = useState(10);
 
-  // Inactivity detection for Zen Mode / Energy Saving
+  // Inactivity detection for Zen Mode / Energy Saving (3 minutes of no interaction)
   useEffect(() => {
+    if (isAdmin) return; // Don't trigger Zen Mode while in Admin Panel
+
     let idleTimeout: NodeJS.Timeout;
     let wakeLock: any = null;
 
@@ -859,31 +912,33 @@ export default function App() {
         wakeLock = null;
       }
     };
-    
-    const handleActivity = () => {
-      if (isZenMode) {
-        setIsZenMode(false);
-        releaseWakeLock();
-      }
+
+    const resetIdleTimer = () => {
       clearTimeout(idleTimeout);
       idleTimeout = setTimeout(() => {
-        setIsZenMode(true);
-        requestWakeLock();
-      }, 180000); // 3 minutes of inactivity
+        if (!isAdmin) {
+          console.log('[ZenMode] 3 minutes of inactivity reached. Activating Zen Mode energy saver.');
+          setIsZenMode(true);
+          requestWakeLock();
+        }
+      }, 180000); // 3 minutes = 180,000 ms
     };
 
-    const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'];
+    const handleUserActivity = () => {
+      if (!isZenMode) {
+        resetIdleTimer();
+      }
+    };
+
+    const events = ['click', 'touchstart', 'keydown', 'scroll'];
     
-    // Set initial timer
-    idleTimeout = setTimeout(() => {
-      setIsZenMode(true);
-      requestWakeLock();
-    }, 180000);
+    // Start initial 3-minute idle timer
+    resetIdleTimer();
 
     events.forEach(event => {
-      document.addEventListener(event, handleActivity, { passive: true });
+      document.addEventListener(event, handleUserActivity, { passive: true });
     });
-    
+
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && isZenMode) {
         requestWakeLock();
@@ -895,11 +950,11 @@ export default function App() {
       clearTimeout(idleTimeout);
       releaseWakeLock();
       events.forEach(event => {
-        document.removeEventListener(event, handleActivity);
+        document.removeEventListener(event, handleUserActivity);
       });
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [isZenMode]);
+  }, [isAdmin, isZenMode]);
 
   useEffect(() => {
     const removeListener = audioEngine.addListener((song, playing) => {
@@ -925,8 +980,11 @@ export default function App() {
       if (e.detail.ads) setAdPool(e.detail.ads);
       if (e.detail.visualBannerCadence) setVisualBannerCadence(e.detail.visualBannerCadence);
       if (e.detail.audioAdCadence) setAudioAdCadence(e.detail.audioAdCadence);
+      if (e.detail.liveAdCadenceMinutes) setLiveAdCadenceMinutes(e.detail.liveAdCadenceMinutes);
       if (e.detail.circadianSchedule) setCircadianSchedule(e.detail.circadianSchedule);
       if (e.detail.liveSource) setLiveSource(e.detail.liveSource);
+      if (e.detail.boletines_config) setBoletinesConfig(e.detail.boletines_config);
+      if (e.detail.boletinesConfig) setBoletinesConfig(e.detail.boletinesConfig);
     };
 
     window.addEventListener('aura_config_updated', handleConfigUpdate as EventListener);
@@ -1026,6 +1084,273 @@ export default function App() {
   const [adMode, setAdMode] = useState<'random' | 'weighted'>('random');
   const [visualBannerCadence, setVisualBannerCadence] = useState(() => parseInt(localStorage.getItem('aura_visual_banner_cadence') || '10'));
   const [audioAdCadence, setAudioAdCadence] = useState(() => parseInt(localStorage.getItem('aura_audio_ad_cadence') || '10'));
+  const [liveAdCadenceMinutes, setLiveAdCadenceMinutes] = useState(() => parseInt(localStorage.getItem('aura_live_ad_cadence_minutes') || '15'));
+
+  const [boletinesConfig, setBoletinesConfig] = useState<{enabled: boolean, hours: number[], jingleUrl: string, boletinUrl?: string}>(() => {
+    const saved = localStorage.getItem('aura_boletines_config');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (!parsed.boletinUrl || parsed.boletinUrl.includes('boletin_preview.mp3')) {
+          parsed.boletinUrl = 'https://audioads.aurabusiness.es/boletines/boletin_latest.mp3';
+        }
+        if (!parsed.jingleUrl) {
+          parsed.jingleUrl = 'https://audioads.aurabusiness.es/jingles/jingles_noticias_1.mp3';
+        }
+        return parsed;
+      } catch (e) {}
+    }
+    return { 
+      enabled: false, 
+      hours: [8, 12, 14, 20, 22], 
+      jingleUrl: 'https://audioads.aurabusiness.es/jingles/jingles_noticias_1.mp3', 
+      boletinUrl: 'https://audioads.aurabusiness.es/boletines/boletin_latest.mp3' 
+    };
+  });
+  const [boletinTriggered, setBoletinTriggered] = useState(false);
+  const [lastBoletinHourPlayed, setLastBoletinHourPlayed] = useState(-1);
+
+  // Hourly bulletin auto-trigger check loop (runs every 10 seconds)
+  useEffect(() => {
+    if (!boletinesConfig.enabled) return;
+
+    const checkHourlyBulletin = () => {
+      const now = new Date();
+      const currentHour = now.getHours();
+      const currentMinute = now.getMinutes();
+
+      if (
+        boletinesConfig.hours.includes(currentHour) &&
+        currentMinute < 10 &&
+        lastBoletinHourPlayed !== currentHour
+      ) {
+        console.log(`[Boletines] Hourly news trigger activated for ${currentHour}:00!`);
+        setLastBoletinHourPlayed(currentHour);
+        window.dispatchEvent(new CustomEvent('trigger-bulletin-now'));
+      }
+    };
+
+    checkHourlyBulletin();
+    const interval = setInterval(checkHourlyBulletin, 10000); // Check every 10 seconds
+    return () => clearInterval(interval);
+  }, [boletinesConfig, lastBoletinHourPlayed]);
+
+  // Dedicated HTML5 Audio ref for background news bed track (10% volume music bed)
+  const newsBedAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  const stopNewsBedAudio = () => {
+    if (newsBedAudioRef.current) {
+      try {
+        newsBedAudioRef.current.pause();
+        newsBedAudioRef.current.currentTime = 0;
+      } catch (e) {}
+      newsBedAudioRef.current = null;
+    }
+  };
+
+  const startNewsBedAudio = () => {
+    stopNewsBedAudio();
+    const bedUrl = boletinesConfig.backgroundBedUrl || boletinesConfig.jingleUrl || 'https://boletines.auraradio.es/jingles%20noticias%201.mp3';
+    try {
+      const bgAudio = new Audio(bedUrl);
+      bgAudio.volume = 0.10; // 10% volume audio bed support
+      bgAudio.loop = true;
+      bgAudio.play().catch(e => console.warn('[Boletines] Background bed play error:', e));
+      newsBedAudioRef.current = bgAudio;
+      console.log('[Boletines] Started 10% background music bed:', bedUrl);
+    } catch (e) {}
+  };
+
+  useEffect(() => {
+    if (currentSong && !currentSong.isBoletin && !currentSong.isBoletinJingle) {
+      stopNewsBedAudio();
+    }
+  }, [currentSong]);
+
+  // Deduplication timestamps for bulletin triggers
+  const lastBulletinTriggerTimeRef = useRef<number>(0);
+  const lastProcessedRemoteTriggerRef = useRef<number>(0);
+
+  // Global listener for instant manual or scheduled bulletin triggers
+  useEffect(() => {
+    const handleTriggerBulletinNow = () => {
+      const now = Date.now();
+      if (now - lastBulletinTriggerTimeRef.current < 4000) {
+        console.log('[Boletines] Ignored duplicate trigger event within 4s window');
+        return;
+      }
+      lastBulletinTriggerTimeRef.current = now;
+
+      console.log('[Boletines] Triggering bulletin sequence via standard AudioEngine pipeline...');
+
+      // Save currently playing non-ad song or live stream
+      // FIX: si currentSong.isLive, guardar explícitamente 'live-radio' para que
+      // handlePlayNext sepa volver al directo al terminar el boletín.
+      if (currentSong && !currentSong.isAd && !currentSong.isBoletin && !currentSong.isBoletinJingle) {
+        lastNonAdIdRef.current = currentSong.isLive ? 'live-radio' : currentSong.id;
+      } else if (!lastNonAdIdRef.current) {
+        lastNonAdIdRef.current = 'live-radio';
+      }
+
+      // Ensure audioEngine uses standard playNextRef callback pipeline
+      audioEngine.onEnded = () => playNextRef.current();
+
+      // Start with Pitos track (Pitos -> Hora -> Jingle -> Noticias)
+      const pitosSong: Song = {
+        id: `boletin_pitos_${Date.now()}`,
+        title: '⚡ Señal Horaria (Pitos)',
+        artist: 'Aura Radio',
+        coverUrl: 'https://images.unsplash.com/photo-1585829365295-ab7cd400c167?w=600&auto=format&fit=crop&q=80',
+        streamUrl: 'https://boletines.auraradio.es/pitos_senal_horaria.wav',
+        category: 'noticias',
+        isBoletinPitos: true
+      };
+
+      console.log('[Boletines] Playing time pips via AudioEngine:', pitosSong.streamUrl);
+      setCurrentSong(pitosSong);
+      setIsPlaying(true);
+      audioEngine.play(pitosSong);
+    };
+
+    const checkRemoteManualTrigger = (cfg: any) => {
+      if (!cfg) return;
+      const remoteTriggerTime = Number(cfg.last_manual_trigger || 0);
+      if (
+        remoteTriggerTime > 0 &&
+        remoteTriggerTime > lastProcessedRemoteTriggerRef.current &&
+        Date.now() - remoteTriggerTime < 90000 // Trigger if issued within the last 90 seconds
+      ) {
+        console.log('[Boletines] Global remote manual trigger received from server:', remoteTriggerTime);
+        lastProcessedRemoteTriggerRef.current = remoteTriggerTime;
+        handleTriggerBulletinNow();
+      }
+    };
+
+    // Check remote trigger when boletinesConfig is loaded or updated
+    checkRemoteManualTrigger(boletinesConfig);
+
+    // Periodic check (every 12s) to catch global manual triggers from Admin for all active listeners
+    const remoteSyncInterval = setInterval(async () => {
+      try {
+        const res = await fetch(`${API_CONFIG.BASE_URL}/api/list?t=${Date.now()}`);
+        if (res.ok) {
+          const data = await res.json();
+          const cfg = data.boletines_config || (activeTenantConfig?.id ? data.tenants?.[activeTenantConfig.id]?.boletines_config : null);
+          checkRemoteManualTrigger(cfg);
+        }
+      } catch (e) {}
+    }, 3000);
+
+    window.addEventListener('trigger-bulletin-now', handleTriggerBulletinNow);
+
+    let bc: BroadcastChannel | null = null;
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        bc = new BroadcastChannel('aura-radio-events');
+        bc.onmessage = (event) => {
+          if (event.data?.type === 'trigger-bulletin-now') {
+            handleTriggerBulletinNow();
+          }
+        };
+      } catch (e) {}
+    }
+
+    const handleConfigUpdated = () => {
+      setSyncTrigger(prev => prev + 1);
+    };
+
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'aura_trigger_bulletin_now') {
+        handleTriggerBulletinNow();
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('aura-config-updated', handleConfigUpdated);
+
+    return () => {
+      window.removeEventListener('trigger-bulletin-now', handleTriggerBulletinNow);
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('aura-config-updated', handleConfigUpdated);
+      clearInterval(remoteSyncInterval);
+      if (bc) bc.close();
+    };
+  }, [currentSong, boletinesConfig, activeTenantConfig]);
+
+  const getResolvedSongMetadata = (song: Song | null) => {
+    if (!song) return undefined;
+    const rawId = song.id || '';
+    const decodedId = (() => { try { return decodeURIComponent(rawId); } catch { return rawId; } })();
+    const cleanId = decodedId.split('/').pop() || decodedId;
+    const noExtId = cleanId.replace(/\.[^/.]+$/, "");
+
+    // 1) First attempt resolution from central songCatalog (numeric ID or key map)
+    const catalogEntry = songCatalog[rawId] 
+      || songCatalog[r2KeyToId[rawId] || '']
+      || songCatalog[r2KeyToId[decodedId] || '']
+      || songCatalog[r2KeyToId[cleanId] || '']
+      || songCatalog[r2KeyToId[noExtId] || ''];
+
+    const customMap: Record<string, any> = {
+      ...(activeTenantConfig?.customSongNames || {}),
+      ...(customSongNames || {})
+    };
+
+    const normalize = (str: string) => (str || '').toLowerCase().trim().replace(/%20/g, ' ');
+
+    const targetKeys = [
+      rawId,
+      decodedId,
+      cleanId,
+      noExtId,
+      normalize(rawId),
+      normalize(decodedId),
+      normalize(cleanId),
+      normalize(noExtId)
+    ];
+
+    let customFromMap: any = null;
+    for (const key of targetKeys) {
+      if (key && customMap[key]) {
+        customFromMap = customMap[key];
+        break;
+      }
+    }
+
+    if (!customFromMap) {
+      const foundEntry = Object.entries(customMap).find(([k]) => {
+        const normK = normalize(k);
+        const normKNoExt = normK.replace(/\.[^/.]+$/, "");
+        return targetKeys.includes(normK) || targetKeys.includes(normKNoExt);
+      });
+      if (foundEntry) customFromMap = foundEntry[1];
+    }
+
+    const cleanFilename = noExtId && !noExtId.startsWith('track-') ? noExtId.replace(/%20/g, ' ') : '';
+
+    const lyrics = customFromMap?.lyrics || catalogEntry?.lyrics || song.lyrics || (song as any).lyric || (song as any).text;
+    const meaning = customFromMap?.meaning || catalogEntry?.meaning || (song as any).meaning || (song as any).description;
+
+    let title = (customFromMap?.title && customFromMap.title.trim())
+      || (catalogEntry?.title && catalogEntry.title.trim())
+      || (song.title && !song.title.startsWith('track-') && song.title !== 'Tema sin título' ? song.title : '')
+      || cleanFilename
+      || song.title;
+
+    let artist = (customFromMap?.artist && customFromMap.artist.trim())
+      || (catalogEntry?.artist && catalogEntry.artist.trim())
+      || song.artist
+      || 'Aura Radio';
+
+    const sponsor = customFromMap?.sponsor || catalogEntry?.sponsor || songSponsors[rawId] || songSponsors[cleanId] || null;
+
+    return {
+      title: title,
+      artist: artist,
+      meaning: meaning,
+      lyrics: lyrics,
+      sponsor: sponsor
+    };
+  };
 
   const [activeSpecialBannerIndex, setActiveSpecialBannerIndex] = useState(0);
 
@@ -1088,7 +1413,9 @@ export default function App() {
   const [accentColor, setAccentColor] = useState(() => {
     return localStorage.getItem('aura_accent_color') || '#6366f1';
   });
-  const [customSongNames, setCustomSongNames] = useState<Record<string, { title: string; artist: string; meaning?: string }>>({});
+  const [customSongNames, setCustomSongNames] = useState<Record<string, { title: string; artist: string; meaning?: string; lyrics?: string }>>({});
+  const [songCatalog, setSongCatalog] = useState<Record<string, any>>({});
+  const [r2KeyToId, setR2KeyToId] = useState<Record<string, string>>({});
   const [activeDetailSong, setActiveDetailSong] = useState<Song | null>(null);
   const [songSponsors, setSongSponsors] = useState<Record<string, { name: string; link: string; bannerUrl?: string }>>({});
   const [copilotName, setCopilotName] = useState('AURA SYSTEM');
@@ -1118,9 +1445,6 @@ export default function App() {
     }
   });
   const [isSubscriptionSuspended, setIsSubscriptionSuspended] = useState(false);
-  const [stationName, setStationName] = useState('Aura Radio');
-  const [logoUrl, setLogoUrl] = useState<string | null>(null);
-  const [activeTenantConfig, setActiveTenantConfig] = useState<TenantConfig | null>(null);
   const [isSocialOpen, setIsSocialOpen] = useState(false);
   const [activeWidgetUrl, setActiveWidgetUrl] = useState<string | null>(null);
   const [promoPodcast, setPromoPodcast] = useState<any | null>(null);
@@ -1253,85 +1577,84 @@ export default function App() {
     });
   }, [songs, favoriteSongs, podcasts]);
 
-  // Handle ?play=songId parameter
+  const findCategoryForSong = useCallback((song: Song | { folder?: string; category?: string; id?: string }) => {
+    if (!song || !Array.isArray(dynamicCategories)) return null;
+    let matched = dynamicCategories.find(c => c && String(c.id) === String(song.category));
+    if (matched) return matched.id;
+
+    if (song.folder) {
+      const cleanFolder = song.folder.trim().replace(/^\/|\/$/g, '').toLowerCase();
+      matched = dynamicCategories.find(c => 
+        c && (c.r2_folder || '')
+          .split(',')
+          .map(f => f.trim().replace(/^\/|\/$/g, '').toLowerCase())
+          .includes(cleanFolder)
+      );
+      if (matched) return matched.id;
+    }
+
+    if (song.category) {
+      const cleanCat = song.category.trim().replace(/^\/|\/$/g, '').toLowerCase();
+      matched = dynamicCategories.find(c => 
+        c && (c.r2_folder || '')
+          .split(',')
+          .map(f => f.trim().replace(/^\/|\/$/g, '').toLowerCase())
+          .includes(cleanCat)
+      );
+      if (matched) return matched.id;
+    }
+    return null;
+  }, [dynamicCategories]);
+
+  // Handle shared song routing via /cancion/songId OR ?play=songId
   useEffect(() => {
     let playId = new URLSearchParams(window.location.search).get('play');
+
+    if (!playId && window.location.pathname.includes('/cancion/')) {
+      const parts = window.location.pathname.split('/cancion/');
+      if (parts.length > 1 && parts[1]) {
+        playId = parts[1].replace(/\/+$/, '');
+      }
+    }
+
     if (playId && !currentSong && !isSyncing) {
-      if (isLoading) return; // Wait for any active category/song loading to complete
+      if (isLoading) return; // Wait for initial category loading to complete
 
       try {
         playId = decodeURIComponent(playId);
       } catch (e) {}
 
-      // Helper to find category ID for a song
-      const findCategoryForSong = (song: Song) => {
-        if (!song) return null;
-        // 1. Try direct ID match
-        let matched = dynamicCategories.find(c => String(c.id) === String(song.category));
-        if (matched) return matched.id;
+      // Resolve numeric ID (e.g. "0148") or R2 key
+      const catalogSong = songCatalog[playId];
+      const resolvedKey = catalogSong?.r2_key || r2KeyToId[playId] || playId;
+      const cleanKeyFilename = (resolvedKey.split('/').pop() || resolvedKey).replace(/\.[^/.]+$/, "");
 
-        // 2. Try R2 folder match using song.folder
-        if (song.folder) {
-          const cleanFolder = song.folder.trim().replace(/^\/|\/$/g, '').toLowerCase();
-          matched = dynamicCategories.find(c => 
-            (c.r2_folder || '')
-              .split(',')
-              .map(f => f.trim().replace(/^\/|\/$/g, '').toLowerCase())
-              .includes(cleanFolder)
-          );
-          if (matched) return matched.id;
+      // 1. Try to find matching song in allKnownSongs
+      let songToPlay: Song | null = allKnownSongs.get(playId) || allKnownSongs.get(resolvedKey) || null;
+
+      if (!songToPlay) {
+        for (const [id, song] of allKnownSongs.entries()) {
+          const cleanId = (id.split('/').pop() || id).replace(/\.[^/.]+$/, "");
+          if (id === playId || id === resolvedKey || cleanId === cleanKeyFilename || (song as any).numericId === playId) {
+            songToPlay = song;
+            break;
+          }
         }
+      }
 
-        // 3. Try R2 folder match using song.category
-        if (song.category) {
-          const cleanCat = song.category.trim().replace(/^\/|\/$/g, '').toLowerCase();
-          matched = dynamicCategories.find(c => 
-            (c.r2_folder || '')
-              .split(',')
-              .map(f => f.trim().replace(/^\/|\/$/g, '').toLowerCase())
-              .includes(cleanCat)
-          );
-          if (matched) return matched.id;
-        }
-        return null;
-      };
-
-      // 1. Try to find the song in allKnownSongs
-      const songToPlay = allKnownSongs.get(playId);
       if (songToPlay) {
         const catId = findCategoryForSong(songToPlay);
         if (catId && activeCategory !== catId) {
           setActiveCategory(catId);
         }
         handleSongSelect(songToPlay);
+        setActiveDetailSong(songToPlay);
         isSharedSongRef.current = true;
-        // Remove param from URL
-        window.history.replaceState({}, document.title, window.location.pathname);
         return;
       }
 
-      // Try fuzzy matching in case of encoding differences
-      let fuzzySong = null;
-      for (const [id, song] of allKnownSongs.entries()) {
-        if (id.includes(playId) || playId.includes(id)) {
-          fuzzySong = song;
-          break;
-        }
-      }
-
-      if (fuzzySong) {
-        const catId = findCategoryForSong(fuzzySong);
-        if (catId && activeCategory !== catId) {
-          setActiveCategory(catId);
-        }
-        handleSongSelect(fuzzySong);
-        isSharedSongRef.current = true;
-        window.history.replaceState({}, document.title, window.location.pathname);
-        return;
-      }
-
-      // 2. If not found, try to auto-detect and load its category
-      const folder = playId.includes('/') ? playId.split('/')[0] : '';
+      // 2. Try to auto-detect and load category
+      const folder = resolvedKey.includes('/') ? resolvedKey.split('/')[0] : '';
       if (folder) {
         const cleanFolder = folder.replace(/^\/|\/$/g, '').toLowerCase();
         const matchedCat = dynamicCategories.find(c => 
@@ -1343,17 +1666,19 @@ export default function App() {
         
         if (matchedCat && activeCategory !== matchedCat.id) {
           setActiveCategory(matchedCat.id);
-          // We return here. The activeCategory state change triggers fetchSongs,
-          // and once isLoading turns false, this useEffect runs again.
           return;
         }
       }
 
-      // 3. Fallback: If category not found, or already on correct category but song not loaded,
-      // build a dynamic song object and play it immediately.
+      // 3. Fallback: Build dynamic song object and play/display immediately
       const mediaBase = `${API_CONFIG.BASE_URL}/api/stream/music/`;
-      const title = generateEpicTitle(playId);
-      const streamUrl = mediaBase + decodeURIComponent(playId).split('/').map(segment => encodeURIComponent(segment)).join('/');
+      const title = catalogSong?.title || customSongNames[playId]?.title || customSongNames[resolvedKey]?.title || generateEpicTitle(resolvedKey);
+      const artist = catalogSong?.artist || customSongNames[playId]?.artist || customSongNames[resolvedKey]?.artist || 'Aura Radio';
+      const lyrics = catalogSong?.lyrics || customSongNames[playId]?.lyrics || customSongNames[resolvedKey]?.lyrics;
+      const meaning = catalogSong?.meaning || customSongNames[playId]?.meaning || customSongNames[resolvedKey]?.meaning;
+      
+      const cleanPath = resolvedKey.replace(/^\//, '');
+      const streamUrl = mediaBase + cleanPath.split('/').map(segment => encodeURIComponent(segment)).join('/');
       
       let songCategory = 'all';
       if (folder) {
@@ -1374,28 +1699,27 @@ export default function App() {
       const dynamicSong: Song = {
         id: playId,
         title,
-        artist: 'Aura Radio',
+        artist,
         streamUrl,
         coverUrl: `https://api.dicebear.com/7.x/shapes/svg?seed=${encodeURIComponent(playId)}`,
         category: songCategory,
-        folder: folder
-      };
+        folder: folder,
+        lyrics: lyrics,
+        meaning: meaning
+      } as any;
 
-      // Play it instantly
       handleSongSelect(dynamicSong);
+      setActiveDetailSong(dynamicSong);
       isSharedSongRef.current = true;
       
-      // Register it in allKnownSongs to avoid infinite loop
       setAllKnownSongs(prev => {
         const next = new Map(prev);
         next.set(playId, dynamicSong);
+        next.set(resolvedKey, dynamicSong);
         return next;
       });
-
-      // Remove param from URL
-      window.history.replaceState({}, document.title, window.location.pathname);
     }
-  }, [allKnownSongs, currentSong, dynamicCategories, activeCategory, isSyncing, isLoading]);
+  }, [allKnownSongs, currentSong, dynamicCategories, activeCategory, isSyncing, isLoading, songCatalog, r2KeyToId]);
   // Trigger sponsor modal automatically for shared sponsored songs
   useEffect(() => {
     if (currentSong && isSharedSongRef.current && songSponsors[currentSong.id]) {
@@ -1495,9 +1819,9 @@ export default function App() {
           return t.domain && t.domain.toLowerCase() === hostname;
         });
         
-        if (!matchingTenant && hostname.endsWith('.appradio.aurabusiness.es')) {
+        if (!matchingTenant && (hostname.endsWith('.appradio.aurabusiness.es') || hostname.endsWith('.auraradio.es'))) {
           const subdomain = hostname.split('.')[0];
-          if (subdomain) {
+          if (subdomain && subdomain !== 'auraradio' && subdomain !== 'appradio' && subdomain !== 'noticias' && subdomain !== 'boletines') {
             matchingTenant = Object.values(loadedTenants).find((t: any) => t.id === subdomain);
           }
         }
@@ -1593,15 +1917,20 @@ export default function App() {
           }
         }
 
-        // Load custom song names map from configuration
-        const customNames = matchingTenant 
-          ? (matchingTenant.customSongNames || {}) 
-          : (data.custom_song_names || {});
+        if (data.song_catalog) setSongCatalog(data.song_catalog);
+        if (data.r2_key_to_id) setR2KeyToId(data.r2_key_to_id);
+
+        // Merge global custom song names with tenant custom song names configuration
+        const customNames = {
+          ...(data.custom_song_names || {}),
+          ...(matchingTenant?.customSongNames || {})
+        };
         setCustomSongNames(customNames);
 
-        const sponsors = matchingTenant 
-          ? (matchingTenant.songSponsors || {}) 
-          : (data.song_sponsors || {});
+        const sponsors = {
+          ...(data.song_sponsors || {}),
+          ...(matchingTenant?.songSponsors || {})
+        };
         setSongSponsors(sponsors);
 
         const copName = matchingTenant 
@@ -1655,7 +1984,7 @@ export default function App() {
 
           const baseCats2 = [
             { id: 'all', name: 'AuraMix', r2_folder: '' },
-            { id: 'popular', name: 'Populares', r2_folder: '' },
+            { id: 'popular', name: 'Top 20', r2_folder: '' },
             { id: 'favorites', name: 'Favoritos' },
             { id: 'podcasts', name: 'Podcasts', r2_folder: '' },
             { id: 'red-emisoras', name: 'Red de Emisoras', r2_folder: '' }
@@ -1669,14 +1998,20 @@ export default function App() {
           const podcastsCat2 = filteredCats.find((c: any) => c.id === 'podcasts');
           if (podcastsCat2) baseCats2[3] = { ...baseCats2[3], ...podcastsCat2 };
           
-          setDynamicCategories([
+          const kvCats = [
             ...baseCats2,
             ...filteredCats.filter((c: any) => c.id !== 'all' && c.id !== 'favorites' && c.id !== 'popular' && c.id !== 'podcasts' && c.id !== 'red-emisoras').map((cat: any, i: number) => ({
               ...cat,
               id: String(cat.id || `sync-${i}`),
               name: cat.name || 'Sin nombre'
             }))
-          ]);
+          ];
+          setDynamicCategories(kvCats);
+          // If the user has no personal order saved, adopt the KV order as global default
+          if (!localStorage.getItem('user_category_order')) {
+            const kvOrder = kvCats.map(c => c.id);
+            setUserCategoryOrder(kvOrder);
+          }
           localStorage.setItem('aura_categories', JSON.stringify(finalCategories));
           localStorage.setItem('aura_ui_categories', JSON.stringify(filteredCats));
         }
@@ -1707,8 +2042,8 @@ export default function App() {
           localStorage.setItem('aura_special_banner', JSON.stringify(data.special_banner));
         }
 
-        // Handle new structure: active_audio_ads or ads
-        const ads = data.active_audio_ads || data.ads;
+        // Handle new structure: audio_ads, active_audio_ads or ads
+        const ads = data.audio_ads || data.active_audio_ads || data.ads;
         if (ads && Array.isArray(ads)) {
           const processedAds = (ads as any[])
             .filter(a => a && (typeof a === 'string' || (typeof a === 'object' && a.url)))
@@ -1744,6 +2079,20 @@ export default function App() {
           localStorage.setItem('aura_copilot_messages', JSON.stringify(data.copilot_messages));
         }
 
+        // Sync boletinesConfig from KV so all remote listeners get the admin config (enabled, hours, urls)
+        if (data.boletines_config && typeof data.boletines_config === 'object') {
+          const bCfg = data.boletines_config;
+          // Patch legacy URL references
+          if (!bCfg.boletinUrl || bCfg.boletinUrl.includes('boletin_preview.mp3')) {
+            bCfg.boletinUrl = 'https://audioads.aurabusiness.es/boletines/boletin_latest.mp3';
+          }
+          if (!bCfg.jingleUrl) {
+            bCfg.jingleUrl = 'https://audioads.aurabusiness.es/jingles/jingles_noticias_1.mp3';
+          }
+          setBoletinesConfig(bCfg);
+          localStorage.setItem('aura_boletines_config', JSON.stringify(bCfg));
+        }
+
         if (data.accent_color) {
           localStorage.setItem('aura_accent_color', data.accent_color);
           setAccentColor(data.accent_color);
@@ -1773,9 +2122,12 @@ export default function App() {
           }
         }
 
-        // Persist live stream URL and whatsapp number from worker config
+        // Persist live stream URL, HLS URL and whatsapp number from worker config
         if (data.live_stream_url) {
           localStorage.setItem('aura_live_stream_url', data.live_stream_url);
+        }
+        if (data.live_stream_url_hls) {
+          localStorage.setItem('aura_live_stream_url_hls', data.live_stream_url_hls);
         }
         if (data.whatsapp_number) {
           localStorage.setItem('aura_whatsapp_number', data.whatsapp_number);
@@ -1807,6 +2159,14 @@ export default function App() {
   };
 
   const handleSwitchTenant = (tenantId: string | null) => {
+    if (!user && tenantId) {
+      triggerHaptic(12);
+      const targetTenant = tenants.find(t => t.id === tenantId);
+      setIncentiveCategoryName(targetTenant?.name || 'Red de Emisoras');
+      setShowGuestIncentiveModal(true);
+      return;
+    }
+
     const url = new URL(window.location.href);
     if (tenantId) {
       url.searchParams.set('tenant', tenantId);
@@ -1845,7 +2205,7 @@ export default function App() {
       const adminCats = JSON.parse(savedCats);
       const baseCats3 = [
         { id: 'all', name: 'AuraMix', r2_folder: '' },
-        { id: 'popular', name: 'Populares', r2_folder: '' },
+        { id: 'popular', name: 'Top 20', r2_folder: '' },
         { id: 'favorites', name: 'Favoritos' },
         { id: 'podcasts', name: 'Podcasts', r2_folder: '' },
         { id: 'red-emisoras', name: 'Red de Emisoras', r2_folder: '' }
@@ -1988,16 +2348,76 @@ export default function App() {
     };
   }, []);
 
-  // 15-minute ad timer
+  // Ref to track current song safely across async closures
+  const currentSongRef = useRef(currentSong);
+  currentSongRef.current = currentSong;
+
+  const startFullBulletinSequence = () => {
+    console.log('[Boletines] Starting full bulletin sequence (Pitos -> Hora -> Jingle -> Noticias)...');
+    
+    const curr = currentSongRef.current;
+    if (curr && !curr.isBoletin && !curr.isBoletinJingle && !curr.isBoletinPitos && !curr.isBoletinHora) {
+      lastNonAdIdRef.current = curr.isLive ? 'live-radio' : curr.id;
+    }
+
+    const pitosAudio: Song = {
+      id: 'boletin_pitos_' + Date.now(),
+      title: '⚡ Señal Horaria (Pitos)',
+      artist: 'Aura Radio',
+      coverUrl: 'https://images.unsplash.com/photo-1585829365295-ab7cd400c167?w=600&auto=format&fit=crop&q=80',
+      streamUrl: 'https://boletines.auraradio.es/pitos_senal_horaria.wav',
+      category: 'noticias',
+      isBoletinPitos: true
+    };
+
+    setBoletinTriggered(false);
+    setCurrentSong(pitosAudio);
+    setIsPlaying(true);
+    audioEngine.play(pitosAudio);
+  };
+
+  // Manual trigger-bulletin-now listener
+  useEffect(() => {
+    const handleTriggerBulletin = () => {
+      console.log('[Boletines] Manual trigger received! Forcing full sequence (Pitos -> Hora -> Jingle -> Noticias)...');
+      startFullBulletinSequence();
+    };
+    window.addEventListener('trigger-bulletin-now', handleTriggerBulletin);
+    return () => window.removeEventListener('trigger-bulletin-now', handleTriggerBulletin);
+  }, []);
+
+  // Live Radio Stream Ad Interrupter
+  const lastLiveAdTimeRef = useRef<number>(Date.now());
+  
   useEffect(() => {
     if (isAdmin) return;
-    
+
     const interval = setInterval(() => {
-      setAdTriggered(true);
-    }, API_CONFIG.AD_TIMER_MS);
+      if (!isPlaying || !currentSong || !currentSong.isLive) return;
+
+      const now = Date.now();
+      const intervalMs = (liveAdCadenceMinutes || 15) * 60 * 1000;
+      
+      if (now - lastLiveAdTimeRef.current >= intervalMs) {
+        const currentMinute = new Date().getMinutes();
+        // Anti-overlap check: Don't trigger ad break if bulletin is due in < 3 minutes
+        if (boletinesConfig.enabled && currentMinute >= 57) {
+          console.log('[LiveAdEngine] Postponing ad break: News bulletin due in <3 minutes');
+          return;
+        }
+
+        console.log('[LiveAdEngine] Live stream ad break triggered! Interupting live stream to play audio ad...');
+        lastLiveAdTimeRef.current = now;
+        lastNonAdIdRef.current = 'live-radio';
+
+        // Play ad via audioEngine
+        const adSong = getRandomAd();
+        audioEngine.play(adSong);
+      }
+    }, 30000); // Check every 30 seconds
 
     return () => clearInterval(interval);
-  }, [isAdmin]);
+  }, [isAdmin, isPlaying, currentSong, liveAdCadenceMinutes, boletinesConfig]);
 
   useEffect(() => {
     if (!isAdmin) fetchSongs(activeCategory);
@@ -2445,40 +2865,63 @@ export default function App() {
   };
 
   const getRandomAd = (): Song => {
-    const pool = adPool.length > 0 ? adPool : API_CONFIG.AD_URLS.map(url => ({ url, weight: 5 }));
-    let selectedAd: AudioAd;
+    const rawPool = adPool.length > 0 ? adPool : API_CONFIG.AD_URLS.map(url => ({ url, weight: 5 }));
+    const currentHour = new Date().getHours();
+    
+    // Filter pool by targetCategory and timeConstraint if configured
+    let eligiblePool = rawPool.filter(ad => {
+      // Category filter
+      if (ad.targetCategories && ad.targetCategories.length > 0) {
+        if (!ad.targetCategories.includes(activeCategory) && !ad.targetCategories.includes('all')) {
+          return false;
+        }
+      }
+      // Time constraint filter
+      if (ad.timeConstraint && ad.timeConstraint !== 'all') {
+        if (ad.timeConstraint === 'morning' && (currentHour < 6 || currentHour >= 12)) return false;
+        if (ad.timeConstraint === 'afternoon' && (currentHour < 12 || currentHour >= 20)) return false;
+        if (ad.timeConstraint === 'night' && (currentHour >= 6 && currentHour < 20)) return false;
+      }
+      return true;
+    });
 
+    // Fallback to full pool if filters leave empty list
+    if (eligiblePool.length === 0) {
+      eligiblePool = rawPool;
+    }
+
+    let selectedAd: AudioAd;
     if (adMode === 'weighted') {
-      const totalWeight = pool.reduce((sum, ad) => sum + ad.weight, 0);
+      const totalWeight = eligiblePool.reduce((sum, ad) => sum + (ad.weight || 5), 0);
       let random = Math.random() * totalWeight;
-      selectedAd = pool[0];
-      for (const ad of pool) {
-        if (random < ad.weight) {
+      selectedAd = eligiblePool[0];
+      for (const ad of eligiblePool) {
+        if (random < (ad.weight || 5)) {
           selectedAd = ad;
           break;
         }
-        random -= ad.weight;
+        random -= (ad.weight || 5);
       }
     } else {
-      selectedAd = pool[Math.floor(Math.random() * pool.length)];
+      selectedAd = eligiblePool[Math.floor(Math.random() * eligiblePool.length)];
     }
 
     let randomUrl = selectedAd.url;
-    
     if (randomUrl) {
       const rawUrl = Array.isArray(randomUrl) ? randomUrl.join('/') : String(randomUrl);
       randomUrl = rawUrl.split(',').join('/');
-
       if (!randomUrl.startsWith('http')) {
         randomUrl = `https://audioads.aurabusiness.es/${randomUrl}`;
       }
     }
 
+    const isTut = selectedAd.isTutorial;
+
     return {
       id: `ad-${Date.now()}`,
-      title: "Espacio Informativo",
-      artist: selectedAd.sponsorName ? `Sponsor: ${selectedAd.sponsorName}` : "Publicidad",
-      coverUrl: "", 
+      title: isTut ? "Tutorial Aura Radio" : "Espacio Publicitario",
+      artist: isTut ? "Aprende Cantando" : (selectedAd.sponsorName ? `Patrocinante: ${selectedAd.sponsorName}` : "Espacio Publicitario"),
+      coverUrl: selectedAd.sponsorBannerUrl || selectedAd.immersiveBannerUrl || (isTut ? "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80" : "https://images.unsplash.com/photo-1557804506-669a67965ba0?w=600&auto=format&fit=crop&q=80"), 
       streamUrl: randomUrl,
       category: "ads",
       isAd: true
@@ -2525,9 +2968,103 @@ export default function App() {
       return matchesSearch;
     });
 
+    // 1) Keep track of the real song ID before playing an ad/bulletin
+    if (currentSong && !currentSong.isAd && !currentSong.isBoletin && !currentSong.isBoletinJingle && !currentSong.isBoletinPitos && !currentSong.isBoletinHora) {
+      lastNonAdIdRef.current = currentSong.isLive ? 'live-radio' : currentSong.id;
+    }
+
+    // 2) Bulletin finished: stop background news bed track cleanly
+    if (currentSong?.isBoletin) {
+      stopNewsBedAudio();
+    }
+
+    // 3) Check if Pitos (time pips) finished -> Play Audio de la Hora (hora_HH.mp3)
+    if (currentSong?.isBoletinPitos) {
+      const currentHour = new Date().getHours();
+      const hh = currentHour.toString().padStart(2, '0');
+      const horaAudio: Song = {
+        id: 'boletin_hora_' + Date.now(),
+        title: `🕒 Hora Exacta (${hh}:00h)`,
+        artist: 'Señal Horaria Aura',
+        coverUrl: 'https://images.unsplash.com/photo-1585829365295-ab7cd400c167?w=600&auto=format&fit=crop&q=80',
+        streamUrl: `https://boletines.auraradio.es/horas/hora_${hh}.mp3`,
+        category: 'noticias',
+        isBoletinHora: true
+      };
+      setCurrentSong(horaAudio);
+      setIsPlaying(true);
+      audioEngine.play(horaAudio);
+      return;
+    }
+
+    // 4) Check if Audio de la Hora finished -> Play Sintonía Jingle
+    if (currentSong?.isBoletinHora) {
+      const jingleAudio: Song = {
+        id: 'boletin_jingle_' + Date.now(),
+        title: 'Sintonía de Noticias',
+        artist: 'Espacio Informativo',
+        coverUrl: 'https://images.unsplash.com/photo-1585829365295-ab7cd400c167?w=600&auto=format&fit=crop&q=80',
+        streamUrl: boletinesConfig.jingleUrl || 'https://boletines.auraradio.es/jingles%20noticias%201.mp3',
+        category: 'noticias',
+        isBoletinJingle: true
+      };
+      setCurrentSong(jingleAudio);
+      setIsPlaying(true);
+      audioEngine.play(jingleAudio);
+      return;
+    }
+
+    // 5) Check if the jingle finished -> Play the actual bulletin audio and start 10% music bed
+    if (currentSong?.isBoletinJingle) {
+      startNewsBedAudio();
+      const boletinAudio: Song = {
+        id: 'boletin_news_' + Date.now(),
+        title: '📰 Boletín Informativo',
+        artist: 'Espacio Informativo',
+        coverUrl: 'https://images.unsplash.com/photo-1585829365295-ab7cd400c167?w=600&auto=format&fit=crop&q=80',
+        streamUrl: (() => {
+          const raw = boletinesConfig.boletinUrl || 'https://boletines.auraradio.es/boletin_latest.mp3';
+          const currentHour = new Date().getHours();
+          const hh = currentHour.toString().padStart(2, '0');
+          let url = raw.replace(/{hour}/g, currentHour.toString()).replace(/{HH}/g, hh);
+          if (url.includes('audioads.aurabusiness.es/boletines/')) {
+            url = url.replace('https://audioads.aurabusiness.es/boletines/', 'https://boletines.auraradio.es/boletines/');
+          }
+          const separator = url.includes('?') ? '&' : '?';
+          return `${url}${separator}t=${Date.now()}`;
+        })(),
+        category: 'noticias',
+        isBoletin: true
+      };
+      setCurrentSong(boletinAudio);
+      setIsPlaying(true);
+      audioEngine.play(boletinAudio);
+      return;
+    }
+
+    // 6) Check if it's time to start the boletin sequence -> Start with Pitos de Señal Horaria
+    if (boletinTriggered && !currentSong?.isAd && !currentSong?.isBoletin && !currentSong?.isBoletinJingle && !currentSong?.isBoletinPitos && !currentSong?.isBoletinHora) {
+      setBoletinTriggered(false);
+      const pitosAudio: Song = {
+        id: 'boletin_pitos_' + Date.now(),
+        title: '⚡ Señal Horaria (Pitos)',
+        artist: 'Aura Radio',
+        coverUrl: 'https://images.unsplash.com/photo-1585829365295-ab7cd400c167?w=600&auto=format&fit=crop&q=80',
+        streamUrl: 'https://boletines.auraradio.es/pitos_senal_horaria.wav',
+        category: 'noticias',
+        isBoletinPitos: true
+      };
+      setCurrentSong(pitosAudio);
+      setIsPlaying(true);
+      audioEngine.play(pitosAudio);
+      return;
+    }
+
     if (!visibleSongs.length && !currentSong?.isAd) {
-      const flamencaCat = dynamicCategories.find(c => c.name.toLowerCase().includes('flamenca'));
-      const fallbackCat = flamencaCat ? flamencaCat.id : (dynamicCategories.find(c => c.id === 'all') ? 'all' : (dynamicCategories[0]?.id || 'all'));
+      const savedDefault = localStorage.getItem('aura_default_category');
+      const fallbackCat = savedDefault && savedDefault !== 'all' && dynamicCategories.find(c => c.id === savedDefault)
+        ? savedDefault
+        : (dynamicCategories.find(c => c.id === 'all') ? 'all' : (dynamicCategories[0]?.id || 'all'));
       if (fallbackCat && fallbackCat !== activeCategory) {
         setActiveCategory(fallbackCat);
         const newSongs = await fetchSongs(fallbackCat);
@@ -2537,11 +3074,6 @@ export default function App() {
         }
       }
       return;
-    }
-
-    // Keep track of the real song ID before playing an ad
-    if (currentSong && !currentSong.isAd) {
-      lastNonAdIdRef.current = currentSong.id;
     }
 
     // Check if we need to play an ad
@@ -2555,8 +3087,12 @@ export default function App() {
     // Normal progression
     let currentIndex = currentSong ? visibleSongs.findIndex(s => s.id === currentSong.id) : -1;
     
-    // If we just finished an ad, resume from the next song after the last real song ID
-    if (currentSong?.isAd && lastNonAdIdRef.current) {
+    // If we just finished an ad or bulletin, resume from the next song after the last real song ID
+    if ((currentSong?.isAd || currentSong?.isBoletin || currentSong?.isBoletinJingle || currentSong?.isBoletinPitos || currentSong?.isBoletinHora) && lastNonAdIdRef.current) {
+      if (lastNonAdIdRef.current === 'live-radio') {
+        handlePlayLiveRef.current();
+        return;
+      }
       currentIndex = visibleSongs.findIndex(s => s.id === lastNonAdIdRef.current);
     }
 
@@ -2564,8 +3100,10 @@ export default function App() {
     
     if (nextIndex >= visibleSongs.length) {
       // Reached the end of the list. "si llega a la ultima de la lista comenzar a reproducir la siguiente de la categoria defecto auramix"
-      const flamencaCat = dynamicCategories.find(c => c.name.toLowerCase().includes('flamenca'));
-      const fallbackCat = flamencaCat ? flamencaCat.id : 'all'; // default to flamenca, otherwise auramix
+      const savedDefault = localStorage.getItem('aura_default_category');
+      const fallbackCat = savedDefault && savedDefault !== 'all' && dynamicCategories.find(c => c.id === savedDefault)
+        ? savedDefault
+        : (dynamicCategories.find(c => c.id === 'all') ? 'all' : (dynamicCategories[0]?.id || 'all'));
       if (activeCategory !== fallbackCat) {
         setActiveCategory(fallbackCat);
         const newSongs = await fetchSongs(fallbackCat);
@@ -2589,8 +3127,9 @@ export default function App() {
     }
   };
 
-  // Always keep a fresh reference to handlePlayNext
+  // Always keep fresh references to handlePlayNext and handlePlayLive for hoisting safety
   const lastNonAdIdRef = useRef<string | null>(null);
+  const handlePlayLiveRef = useRef<() => void>(() => {});
   const playNextRef = useRef(handlePlayNext);
   playNextRef.current = handlePlayNext;
 
@@ -2600,6 +3139,7 @@ export default function App() {
   }, []);
 
   const handlePlayLive = async () => {
+    handlePlayLiveRef.current = handlePlayLive;
     stopJingle();
     if (liveSource === 'circadian') {
       triggerHaptic(10);
@@ -2620,7 +3160,13 @@ export default function App() {
         } 
       }));
     } else {
-      const liveUrl = localStorage.getItem('aura_live_stream_url') || 'https://aura-radio-streamer.holasolonet.workers.dev/radio.mp3';
+      const mp3Url = localStorage.getItem('aura_live_stream_url') || 'https://aura-radio-streamer.holasolonet.workers.dev/radio.mp3';
+      const hlsUrl = localStorage.getItem('aura_live_stream_url_hls') || 'https://aura-radio-streamer.holasolonet.workers.dev/live.m3u8';
+      
+      const isIOS = typeof navigator !== 'undefined' && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+      const isSafari = typeof navigator !== 'undefined' && /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+      
+      const liveUrl = (isIOS || isSafari) && hlsUrl ? hlsUrl : mp3Url;
       const liveSong: Song = {
         id: 'live-radio',
         title: 'Aura Radio En Vivo',
@@ -2631,10 +3177,62 @@ export default function App() {
         category: 'live'
       };
       
+      // FIX: marcar explícitamente que estamos en el directo para que el boletín
+      // sepa a dónde volver cuando termine su secuencia jingle → audio → vuelta.
+      lastNonAdIdRef.current = 'live-radio';
+
       setCircadianMode(false);
       localStorage.setItem('aura_circadian_mode', 'false');
+      setActiveCategory('live');
+
+      // Seleccionar cuña de bienvenida (welcome jingle) si existe
+      let jingleUrl = "";
+      if (welcomeJingles && welcomeJingles.length > 0) {
+        const currentHour = new Date().getHours();
+        let currentPeriod: 'morning' | 'afternoon' | 'night' = 'night';
+        if (currentHour >= 6 && currentHour < 12) currentPeriod = 'morning';
+        else if (currentHour >= 12 && currentHour < 20) currentPeriod = 'afternoon';
+        else currentPeriod = 'night';
+
+        const validJingles = welcomeJingles.filter(j => 
+          j.timeConstraint === 'all' || j.timeConstraint === currentPeriod
+        );
+
+        if (validJingles.length > 0) {
+          const totalWeight = validJingles.reduce((sum, j) => sum + (j.weight || 5), 0);
+          let randomVal = Math.random() * totalWeight;
+          for (const j of validJingles) {
+            if (randomVal < (j.weight || 5)) {
+              jingleUrl = j.url;
+              break;
+            }
+            randomVal -= (j.weight || 5);
+          }
+        }
+      }
+
+      stopJingle();
+      audioEngine.pause();
+      setCurrentSong(liveSong);
+      setIsPlaying(true);
+
+      if (jingleUrl) {
+        // Reproducir la cuña de bienvenida primero y seguidamente iniciar la emisión live
+        const audio = new Audio(jingleUrl);
+        audio.volume = 0.8;
+        audio.addEventListener('ended', () => {
+          jingleAudioRef.current = null;
+          audioEngine.play(liveSong);
+        });
+        audio.play().catch(e => {
+          console.error('Welcome jingle playback failed, starting live directly:', e);
+          audioEngine.play(liveSong);
+        });
+        jingleAudioRef.current = audio;
+      } else {
+        audioEngine.play(liveSong);
+      }
       
-      audioEngine.play(liveSong);
       window.dispatchEvent(new CustomEvent('aura-system-msg', { 
         detail: { 
           text: "Estás escuchando Aura Live (Emisión Externa).", 
@@ -2720,6 +3318,13 @@ export default function App() {
       const isAdding = !next.has(id);
       
       if (isAdding) {
+        // Register favorite action with backend API (+3.0 points weight)
+        fetch(`${API_CONFIG.BASE_URL}/api/songs/react`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ song_id: id, reaction: 'favorite' })
+        }).catch(() => {});
+
         next.add(id);
         // Find the song object and add to favoriteSongs
         const song = songs.find(s => s.id === id) || allKnownSongs.get(id);
@@ -2790,7 +3395,24 @@ export default function App() {
   };
 
   const handleSongSelect = (song: Song) => {
+    setSearchQuery(''); // Clears search query on song selection!
     stopJingle();
+
+    if (song && !song.isAd && !song.isLive) {
+      // Register play action with backend API (+0.5 points weight)
+      fetch(`${API_CONFIG.BASE_URL}/api/songs/react`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ song_id: song.id, reaction: 'play' })
+      }).catch(() => {});
+
+      const catId = findCategoryForSong(song);
+      if (catId && catId !== activeCategory && catId !== 'all') {
+        setActiveCategory(catId);
+        fetchSongs(catId);
+      }
+    }
+
     const embed = getEmbedUrl(song.streamUrl);
     if (embed) {
       audioEngine.pause();
@@ -2802,6 +3424,66 @@ export default function App() {
       audioEngine.play(song);
     }
   };
+
+  // 🔍 BUSQUEDA GLOBAL: Busca en TODO el catálogo máster y canciones cargadas
+  const globalSearchResults = React.useMemo(() => {
+    const q = (searchQuery || '').trim().toLowerCase();
+    if (!q) return [];
+
+    const resultsMap = new Map<string, Song>();
+
+    // 1. Buscar en allKnownSongs (canciones cargadas de cualquier categoría, podcasts y favoritos)
+    Array.from(allKnownSongs.values()).forEach(song => {
+      if (!song || song.isAd || song.isLive) return;
+      const resolvedMeta = getResolvedSongMetadata(song);
+      const title = (resolvedMeta?.title || song.title || '').toLowerCase();
+      const artist = (resolvedMeta?.artist || song.artist || '').toLowerCase();
+      const lyrics = (resolvedMeta?.lyrics || song.lyrics || '').toLowerCase();
+      const folder = (song.folder || '').toLowerCase();
+      const id = (song.id || '').toLowerCase();
+
+      if (title.includes(q) || artist.includes(q) || lyrics.includes(q) || folder.includes(q) || id.includes(q)) {
+        resultsMap.set(song.id, song);
+      }
+    });
+
+    // 2. Buscar en songCatalog (el catálogo máster completo con los 828 temas R2)
+    Object.values(songCatalog || {}).forEach((entry: any) => {
+      if (!entry) return;
+      const songId = entry.id || entry.r2_key;
+      if (!songId || resultsMap.has(songId)) return;
+
+      const resolvedMeta = getResolvedSongMetadata({ id: songId, title: entry.title, artist: entry.artist, folder: entry.r2_key });
+      const title = (resolvedMeta?.title || entry.title || '').toLowerCase();
+      const artist = (resolvedMeta?.artist || entry.artist || '').toLowerCase();
+      const lyrics = (resolvedMeta?.lyrics || entry.lyrics || '').toLowerCase();
+      const r2Key = (entry.r2_key || '').toLowerCase();
+      const id = (entry.id || '').toLowerCase();
+
+      if (title.includes(q) || artist.includes(q) || lyrics.includes(q) || r2Key.includes(q) || id.includes(q)) {
+        const r2Path = entry.r2_key || entry.id;
+        const cleanFilename = r2Path.split('/').pop() || r2Path;
+        const folderName = r2Path.includes('/') ? r2Path.split('/')[0] : '';
+        const streamUrl = r2Path.startsWith('http') 
+          ? r2Path 
+          : `${API_CONFIG.BASE_URL}/api/stream/music/${r2Path.split('/').map((s: string) => encodeURIComponent(s)).join('/')}`;
+        
+        const constructedSong: Song = {
+          id: entry.id || r2Path,
+          title: resolvedMeta?.title || entry.title || cleanFilename.replace(/\.[^/.]+$/, ''),
+          artist: resolvedMeta?.artist || entry.artist || 'Aura Radio',
+          streamUrl: streamUrl,
+          category: entry.category || folderName || 'all',
+          folder: folderName || r2Path,
+          coverUrl: entry.coverUrl || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80'
+        };
+
+        resultsMap.set(constructedSong.id, constructedSong);
+      }
+    });
+
+    return Array.from(resultsMap.values());
+  }, [searchQuery, allKnownSongs, songCatalog, getResolvedSongMetadata]);
 
 
   const handleGlobalAction = (actionType: string, e?: React.MouseEvent) => {
@@ -2830,15 +3512,9 @@ export default function App() {
   };
 
   const displayCategories = React.useMemo(() => {
-    const mappedCategories = dynamicCategories.map(cat => {
-      if (cat.id === 'all') {
-        const tenantMixName = activeTenantConfig && activeTenantConfig.id !== 'aura-radio'
-          ? `${activeTenantConfig.name} Mix`
-          : 'AuraMix';
-        return { ...cat, name: cat.name && cat.name !== 'AuraMix' ? cat.name : tenantMixName };
-      }
-      return cat;
-    });
+    const mappedCategories = dynamicCategories
+      .filter(cat => cat.id !== 'all' && cat.name !== 'AuraMix')
+      .map(cat => cat);
 
     const cats = userCategoryOrder.length === 0 
       ? mappedCategories 
@@ -3022,8 +3698,11 @@ export default function App() {
               </h1>
             </div>
             <div className="flex items-center gap-1.5 mt-2 justify-center">
-              <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
-              <span className="text-[9px] text-green-500 font-bold uppercase tracking-[0.1em]">Business Live</span>
+              <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-[0.12em] bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 shadow-[0_0_12px_rgba(16,185,129,0.2)]">
+                <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
+                <Sparkles className="w-2.5 h-2.5 text-emerald-400 shrink-0" />
+                AI MUSIC
+              </span>
             </div>
           </div>
         )}
@@ -3180,6 +3859,7 @@ export default function App() {
                            triggerHaptic(10);
                            setPcScrollMode('mouse');
                            localStorage.setItem('aura_pc_scroll_mode', 'mouse');
+                           if (isLoggedIn && syncPreferences) syncPreferences({ aura_pc_scroll_mode: 'mouse' });
                          }}
                          className={`py-1 rounded-lg text-[9px] font-black uppercase transition-all cursor-pointer ${
                            pcScrollMode === 'mouse'
@@ -3195,6 +3875,7 @@ export default function App() {
                            triggerHaptic(10);
                            setPcScrollMode('drag');
                            localStorage.setItem('aura_pc_scroll_mode', 'drag');
+                           if (isLoggedIn && syncPreferences) syncPreferences({ aura_pc_scroll_mode: 'drag' });
                          }}
                          className={`py-1 rounded-lg text-[9px] font-black uppercase transition-all cursor-pointer ${
                            pcScrollMode === 'drag'
@@ -3370,6 +4051,12 @@ export default function App() {
         onReorderCategories={handleReorderCategories}
         onShareMix={handleShareMix}
         pcScrollMode={pcScrollMode}
+        isGuest={!user}
+        onOpenIncentiveModal={(catName) => {
+          setIncentiveCategoryName(catName);
+          setShowGuestIncentiveModal(true);
+        }}
+        onOpenProfile={() => setShowProfilePage(true)}
       />
 
       {/* Main Content Area */}
@@ -3416,7 +4103,11 @@ export default function App() {
                 <div className="flex flex-col gap-1 mb-6">
                   <h1 className="text-xl md:text-2xl font-black text-white capitalize flex items-center gap-3">
                     {activeCategoryName}
-                    {activeCategory !== 'red-emisoras' && <span className="text-text-secondary">({songs.length})</span>}
+                    {activeCategory !== 'red-emisoras' && (
+                      <span className="text-text-secondary text-sm md:text-base font-semibold">
+                        ({songs.length > 0 ? `${songs.length} temas` : '+900 títulos'})
+                      </span>
+                    )}
                     {isLoading && (
                       <Loader2 className="w-4 h-4 text-accent animate-spin shrink-0" style={{ animationDuration: '1.5s' }} />
                     )}
@@ -3528,165 +4219,196 @@ export default function App() {
                       </div>
                     )}
                   </div>
+                ) : activeCategory === 'live' && !searchQuery.trim() ? (
+                  <LiveStudioDashboard
+                    currentSong={currentSong}
+                    isPlaying={isPlaying}
+                    onTogglePlay={() => audioEngine.toggle()}
+                    onOpenVisualizer={() => setShowLiveView(true)}
+                    onExploreCatalog={() => setActiveCategory('popular')}
+                    accentColor={accentColor}
+                    stationName={stationName}
+                    liveSponsorMarquee={activeTenantConfig?.liveSponsorMarquee}
+                    liveBanners={activeTenantConfig?.liveBanners}
+                  />
                 ) : (
                   <div className="grid grid-cols-1 gap-2">
-                    {songs
-                    .filter(song => {
-                      const title = (song.title || '').toLowerCase();
-                      const artist = (song.artist || '').toLowerCase();
-                      const query = (searchQuery || '').toLowerCase();
-                      const matchesSearch = title.includes(query) || artist.includes(query);
-                      
-                      if (activeCategory === 'favorites') {
-                        return favorites.has(song.id) && matchesSearch;
-                      }
+                    {(() => {
+                      const isSearching = searchQuery.trim() !== '';
+                      const sourceSongs = isSearching 
+                        ? globalSearchResults 
+                        : (activeCategory === 'favorites' 
+                            ? Array.from(favoriteSongs.values()) 
+                            : (activeCategory === 'podcasts' 
+                                ? (activePodcastSection !== 'Todos' ? podcasts.filter(p => p.podcastSection === activePodcastSection) : podcasts)
+                                : songs));
 
-                      if (activeCategory === 'podcasts' && activePodcastSection !== 'Todos') {
-                        if (song.podcastSection !== activePodcastSection) return false;
-                      }
-
-                      return matchesSearch;
-                    })
-                    .slice(0, visibleSongsCount)
-                    .map((song, index) => {
-                      const isSelected = currentSong?.id === song.id;
-                      const isFavorite = favorites.has(song.id);
                       return (
-                        <div key={song.id}>
-                          <motion.div
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: index * 0.02 }}
-                            onClick={() => {
-                              if (!currentSong?.isAd) {
-                                triggerHaptic(12);
-                                handleSongSelect(song);
-                              }
-                            }}
-                            className={`group flex items-center p-3 rounded-xl cursor-pointer glass-card relative overflow-hidden ${
-                              isSelected 
-                                ? `bg-accent/10 border-accent/20 ${isPlaying ? 'playing-card-effect' : ''}` 
-                                : 'border-transparent'
-                            } ${currentSong?.isAd ? 'cursor-not-allowed opacity-50' : ''}`}
-                          >
-                            <AudioReactiveGlow isPlaying={isPlaying} isSelected={isSelected} isZenMode={isZenMode} />
-                            <div className="flex items-center gap-4 flex-1 min-w-0 relative z-10">
-                              <div className={`w-12 h-12 md:w-11 md:h-11 rounded-lg overflow-hidden flex items-center justify-center shrink-0 shadow-lg ${!song.coverUrl ? 'track-thumbnail-empty' : 'bg-[#1a1a20]'}`}>
-                                {song.coverUrl ? (
-                                  <img src={song.coverUrl} alt={song.title} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" />
-                                ) : (
-                                  isSelected && isPlaying ? (
-                                    <MiniVisualizer isPlaying={isPlaying} barCount={3} gap="gap-0.5" barWidth="w-1" isZenMode={isZenMode} />
-                                  ) : (
-                                    <Play className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 fill-current" />
-                                  )
-                                )}
-                              </div>
-                              
-                              <div className="flex flex-col min-w-0">
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <span className={`text-[0.95rem] font-bold truncate leading-tight ${isSelected ? 'text-accent' : 'text-white'}`}>
-                                    {song.title}
-                                  </span>
-                                  {(song.id.toLowerCase().includes('ensayo') || song.folder?.toLowerCase().includes('ensayo')) && (
-                                    <span className="text-[8px] bg-accent/20 text-accent border border-accent/30 font-extrabold uppercase px-1.5 py-0.5 rounded-md shrink-0 flex items-center gap-1">
-                                      🎸 {song.rank ? `Top ${song.rank}` : 'Ensayo'}
-                                    </span>
-                                  )}
-                                </div>
-                                <span className="text-[0.8rem] text-text-secondary truncate mt-0.5">{song.artist}</span>
-                              </div>
-                            </div>
+                        <>
+                          {!isSearching && activeCategory !== 'favorites' && activeCategory !== 'podcasts' && activeCategory !== 'red-emisoras' && (
+                            <CategoryHeroBanner
+                              category={dynamicCategories.find(c => c.id === activeCategory) || null}
+                              categoryName={activeCategoryName}
+                              songCount={sourceSongs.length}
+                              defaultMarquee={activeTenantConfig?.liveSponsorMarquee}
+                              defaultBanners={activeTenantConfig?.liveBanners}
+                              categoryMarqueeOverride={activeTenantConfig?.categorySponsorBanners?.[activeCategory]?.marqueeText || (dynamicCategories.find(c => c.id === activeCategory)?.sponsorMarquee)}
+                              categoryBannersOverride={activeTenantConfig?.categorySponsorBanners?.[activeCategory]?.banners || (dynamicCategories.find(c => c.id === activeCategory)?.sponsorBanners)}
+                              onPlayCategory={() => {
+                                if (sourceSongs.length > 0) handleSongSelect(sourceSongs[0]);
+                              }}
+                              onOpenVisualizer={() => setShowLiveView(true)}
+                              accentColor={accentColor}
+                            />
+                          )}
 
-                            <div className="flex items-center gap-3 px-3 shrink-0 relative z-10">
-                              <button
-                                onClick={(e) => {
-                                  triggerHaptic(10);
-                                  toggleFavorite(song.id, e);
-                                }}
-                                className={`p-2 rounded-full transition-all duration-300 ${
-                                  isFavorite 
-                                    ? 'text-red-500 bg-red-500/10' 
-                                    : 'text-text-secondary hover:text-white hover:bg-white/5 opacity-0 group-hover:opacity-100'
-                                }`}
-                              >
-                                <Heart className={`w-4 h-4 ${isFavorite ? 'fill-current' : ''}`} />
-                              </button>
-
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  triggerHaptic(10);
-                                  setActiveDetailSong(song);
-                                }}
-                                className="p-2 rounded-full text-text-secondary hover:text-white hover:bg-white/5 opacity-0 group-hover:opacity-100 transition-all duration-300"
-                                title="Información de la canción"
-                              >
-                                <Info className="w-4 h-4" />
-                              </button>
-
-                              {(user?.isSuperAdmin || user?.email === 'holasolonet@gmail.com') && (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    triggerHaptic(10);
-                                    setVideoClipSong(song);
-                                  }}
-                                  className="p-2 rounded-full text-text-secondary hover:text-accent hover:bg-accent/10 opacity-0 group-hover:opacity-100 transition-all duration-300"
-                                  title="Crear Clip para Redes (30s)"
-                                >
-                                  <Video className="w-4 h-4" />
-                                </button>
-                              )}
-
-                              {isSelected && (
-                                <MiniVisualizer isPlaying={isPlaying} barCount={3} gap="gap-1" barWidth="w-1" isZenMode={isZenMode} />
-                              )}
-                            </div>
-                          </motion.div>
-
-                          {/* Banner integration every X items in the current view */}
-                          {(index + 1) % visualBannerCadence === 0 && visualBanners.length > 0 && (
-                            <div className="my-6 px-1 w-full">
-                              <div className="flex flex-col gap-2">
-                                <div className="flex items-center gap-2 px-1">
-                                  <div className="h-[1px] flex-1 bg-border/30"></div>
-                                  <span className="text-[9px] font-bold text-text-secondary uppercase tracking-[0.2em]">Publicidad</span>
-                                  <div className="h-[1px] flex-1 bg-border/30"></div>
-                                </div>
-                                <div className="w-full shrink-0 snap-center pb-2">
-                                  <div className="w-full opacity-100 transition-opacity duration-300">
-                                    <VisualAdCard 
-                                      banner={getSelectedVisualBanner(index) as VisualBanner} 
-                                      onAction={handleGlobalAction}
-                                    />
-                                  </div>
-                                </div>
-                              </div>
+                          {isSearching && (
+                            <div className="px-3 py-3 mb-2 bg-accent/10 border border-accent/30 rounded-xl flex items-center justify-between shadow-md">
+                              <span className="text-xs font-bold text-white flex items-center gap-2">
+                                <Search className="w-4 h-4 text-accent" />
+                                Búsqueda global en todo el catálogo: "{searchQuery}"
+                              </span>
+                              <span className="text-[10px] font-bold text-accent px-2.5 py-0.5 bg-accent/20 border border-accent/40 rounded-full">
+                                {sourceSongs.length} temas encontrados
+                              </span>
                             </div>
                           )}
-                        </div>
+
+                          {sourceSongs
+                            .slice(0, visibleSongsCount)
+                            .map((song, index) => {
+                              const isSelected = currentSong?.id === song.id;
+                              const isFavorite = favorites.has(song.id);
+                              return (
+                                <div key={song.id}>
+                                  <motion.div
+                                    initial={{ opacity: 0, y: 10 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    transition={{ delay: index * 0.02 }}
+                                    onClick={() => {
+                                      if (!currentSong?.isAd) {
+                                        triggerHaptic(12);
+                                        handleSongSelect(song);
+                                      }
+                                    }}
+                                    className={`group flex items-center p-3 rounded-xl cursor-pointer glass-card relative overflow-hidden ${
+                                      isSelected 
+                                        ? `bg-accent/10 border-accent/20 ${isPlaying ? 'playing-card-effect' : ''}` 
+                                        : 'border-transparent'
+                                    } ${currentSong?.isAd ? 'cursor-not-allowed opacity-50' : ''}`}
+                                  >
+                                    <AudioReactiveGlow isPlaying={isPlaying} isSelected={isSelected} isZenMode={isZenMode} />
+                                    <div className="flex items-center gap-4 flex-1 min-w-0 relative z-10">
+                                      <div className={`w-12 h-12 md:w-11 md:h-11 rounded-lg overflow-hidden flex items-center justify-center shrink-0 shadow-lg ${!song.coverUrl ? 'track-thumbnail-empty' : 'bg-[#1a1a20]'}`}>
+                                        {song.coverUrl ? (
+                                          <img src={song.coverUrl} alt={song.title} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" />
+                                        ) : (
+                                          isSelected && isPlaying ? (
+                                            <MiniVisualizer isPlaying={isPlaying} barCount={3} gap="gap-0.5" barWidth="w-1" isZenMode={isZenMode} />
+                                          ) : (
+                                            <Play className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 fill-current" />
+                                          )
+                                        )}
+                                      </div>
+                                      
+                                      {(() => {
+                                        const resolvedMeta = getResolvedSongMetadata(song);
+                                        const hasLyrics = !!(resolvedMeta?.lyrics && resolvedMeta.lyrics.trim() !== '');
+                                        const displayTitle = resolvedMeta?.title || song.title;
+                                        const displayArtist = resolvedMeta?.artist || song.artist;
+
+                                        return (
+                                          <div className="flex flex-col min-w-0">
+                                            <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+                                              <span className={`text-[0.95rem] font-bold truncate leading-tight ${isSelected ? 'text-accent' : 'text-white'}`}>
+                                                {displayTitle}
+                                              </span>
+                                              {hasLyrics && (
+                                                <span className="text-[8px] bg-accent/20 text-accent border border-accent/40 font-extrabold uppercase px-1.5 py-0.5 rounded-md shrink-0 flex items-center gap-1 shadow-sm" title="Letra disponible en visualizador">
+                                                  <FileText className="w-2.5 h-2.5" /> Letra
+                                                </span>
+                                              )}
+                                              {(song.id.toLowerCase().includes('ensayo') || song.folder?.toLowerCase().includes('ensayo')) && (
+                                                <span className="text-[8px] bg-amber-500/20 text-amber-400 border border-amber-500/30 font-extrabold uppercase px-1.5 py-0.5 rounded-md shrink-0 flex items-center gap-1">
+                                                  🎸 {song.rank ? `Top ${song.rank}` : 'Ensayo'}
+                                                </span>
+                                              )}
+                                            </div>
+                                            <span className="text-[0.8rem] text-text-secondary truncate mt-0.5">{displayArtist}</span>
+                                          </div>
+                                        );
+                                      })()}
+                                    </div>
+
+                                    <div className="flex items-center gap-3 px-3 shrink-0 relative z-10">
+                                      <button
+                                        onClick={(e) => {
+                                          triggerHaptic(10);
+                                          toggleFavorite(song.id, e);
+                                        }}
+                                        className={`p-2 rounded-full transition-all duration-300 ${
+                                          isFavorite 
+                                            ? 'text-red-500 bg-red-500/10 opacity-100' 
+                                            : 'text-text-secondary hover:text-white hover:bg-white/10 opacity-70 hover:opacity-100'
+                                        }`}
+                                        title={isFavorite ? "Quitar de favoritos" : "Añadir a favoritos"}
+                                      >
+                                        <Heart className={`w-4 h-4 ${isFavorite ? 'fill-current' : ''}`} />
+                                      </button>
+
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          triggerHaptic(10);
+                                          setActiveDetailSong(song);
+                                        }}
+                                        className="p-2 rounded-full text-text-secondary hover:text-white hover:bg-white/10 opacity-70 hover:opacity-100 transition-all duration-300"
+                                        title="Información de la canción"
+                                      >
+                                        <Info className="w-4 h-4" />
+                                      </button>
+
+                                      {isSelected && (
+                                        <MiniVisualizer isPlaying={isPlaying} barCount={3} gap="gap-1" barWidth="w-1" isZenMode={isZenMode} />
+                                      )}
+                                    </div>
+                                  </motion.div>
+
+                                  {/* Banner integration every X items in the current view */}
+                                  {(index + 1) % visualBannerCadence === 0 && visualBanners.length > 0 && (
+                                    <div className="my-6 px-1 w-full">
+                                      <div className="flex flex-col gap-2">
+                                        <div className="flex items-center gap-2 px-1">
+                                          <div className="h-[1px] flex-1 bg-border/30"></div>
+                                          <span className="text-[9px] font-bold text-text-secondary uppercase tracking-[0.2em]">Publicidad</span>
+                                          <div className="h-[1px] flex-1 bg-border/30"></div>
+                                        </div>
+                                        <div className="w-full shrink-0 snap-center pb-2">
+                                          <div className="w-full opacity-100 transition-opacity duration-300">
+                                            <VisualAdCard 
+                                              banner={getSelectedVisualBanner(index) as VisualBanner} 
+                                              onAction={handleGlobalAction}
+                                            />
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+
+                          {sourceSongs.length === 0 && (
+                            <div className="flex flex-col items-center justify-center py-20 gap-4 text-text-secondary">
+                              <Search className="w-10 h-10 opacity-20" />
+                              <p className="text-sm">{searchQuery ? `No se encontraron resultados para "${searchQuery}" en todo el catálogo` : 'Cargando experiencia...'}</p>
+                            </div>
+                          )}
+                        </>
                       );
-                    })}
-                  {songs.filter(song => {
-                      const title = (song.title || '').toLowerCase();
-                      const artist = (song.artist || '').toLowerCase();
-                      const query = (searchQuery || '').toLowerCase();
-                      const matchesSearch = title.includes(query) || artist.includes(query);
-                      
-                      if (activeCategory === 'favorites') {
-                        return favorites.has(song.id) && matchesSearch;
-                      }
-                      
-                      return matchesSearch;
-                    }).length === 0 && (
-                    <div className="flex flex-col items-center justify-center py-20 gap-4 text-text-secondary">
-                      <Search className="w-10 h-10 opacity-20" />
-                      <p className="text-sm">No se encontraron resultados para "{searchQuery}"</p>
-                    </div>
-                  )}
-                </div>
-              )}
+                    })()}
+                  </div>
+                )}
             </motion.div>
           )}
         </div>
@@ -3824,6 +4546,7 @@ export default function App() {
         onOpenSponsor={() => setIsSponsorModalOpen(true)}
         sponsor={currentSong ? songSponsors[currentSong.id] : null}
         stationName={stationName}
+        customMetadata={getResolvedSongMetadata(currentSong)}
         onOpenVisualizer={() => setShowLiveView(true)}
       />
 
@@ -3842,6 +4565,9 @@ export default function App() {
           document.documentElement.style.setProperty('--color-accent', color);
           localStorage.setItem('aura_accent_color', color);
           setAccentColor(color);
+          if (isLoggedIn && syncPreferences) {
+            syncPreferences({ aura_accent_color: color });
+          }
         }}
       />
       
@@ -3856,6 +4582,10 @@ export default function App() {
           }} 
           logoUrl={logoUrl || undefined}
           stationName={stationName}
+          userName={user?.name}
+          userEmail={user?.email}
+          userPicture={user?.picture}
+          isLoggedIn={isLoggedIn}
         />
       )}
 
@@ -3973,8 +4703,7 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={() => setIsZenMode(false)}
-            className="fixed inset-0 z-[9999] bg-[#050508]/98 backdrop-blur-md flex flex-col items-center justify-between p-8 md:p-12 cursor-pointer select-none overflow-hidden"
+            className="fixed inset-0 z-[9999] bg-[#050508]/98 backdrop-blur-md flex flex-col items-center justify-between p-8 md:p-12 select-none overflow-hidden"
           >
             {/* Ambient Background Aura Glow */}
             <div className="absolute inset-0 overflow-hidden pointer-events-none opacity-40">
@@ -4043,23 +4772,49 @@ export default function App() {
               )}
             </div>
 
-            {/* Bottom Wake-up Hint */}
+            {/* Dedicated Bottom Exit Button */}
             <div className="relative z-10 flex flex-col items-center gap-2">
-              <motion.span 
-                animate={{ opacity: [0.3, 0.7, 0.3] }}
-                transition={{ repeat: Infinity, duration: 3, ease: "easeInOut" }}
-                className="text-[10px] md:text-xs text-white/60 tracking-[0.15em] font-medium"
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsDeepZenMode(true);
+                }}
+                className="px-6 py-2.5 bg-black/40 hover:bg-black/60 border border-white/5 text-white/70 rounded-full text-xs font-black uppercase tracking-wider backdrop-blur-xl transition-all shadow-none flex items-center gap-2 cursor-pointer mb-2"
               >
-                Haz clic o toca la pantalla para despertar
-              </motion.span>
-              <div className="w-8 h-1 bg-white/10 rounded-full overflow-hidden">
-                <motion.div 
-                  animate={{ x: [-32, 32] }}
-                  transition={{ repeat: Infinity, duration: 4, ease: "easeInOut" }}
-                  className="w-4 h-full bg-accent/50 rounded-full"
-                />
-              </div>
+                <Moon className="w-4 h-4 text-white/50" />
+                <span>Modo Zen Profundo</span>
+              </button>
+
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsZenMode(false);
+                }}
+                className="px-6 py-2.5 bg-white/10 hover:bg-white/20 border border-white/20 text-white rounded-full text-xs font-black uppercase tracking-wider backdrop-blur-xl transition-all active:scale-95 shadow-[0_0_20px_rgba(255,255,255,0.1)] flex items-center gap-2 cursor-pointer"
+              >
+                <X className="w-4 h-4 text-accent" />
+                <span>Salir del Modo Zen</span>
+              </button>
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Deep Zen Mode Overlay */}
+      <AnimatePresence>
+        {isDeepZenMode && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.8 }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsDeepZenMode(false);
+            }}
+            className="fixed inset-0 z-[10000] bg-black flex items-center justify-center cursor-pointer"
+          >
+            <span className="text-white/10 text-[10px] md:text-xs tracking-[0.2em] font-mono uppercase">Interactuar para despertar</span>
           </motion.div>
         )}
       </AnimatePresence>
@@ -4368,17 +5123,19 @@ export default function App() {
       <AnimatePresence>
         {activeDetailSong && (() => {
           const songId = activeDetailSong.id;
-          const custom = customSongNames[songId];
-          let title = custom?.title || activeDetailSong.title || songId.split('/').pop() || 'Tema sin título';
-          let artist = custom?.artist || activeDetailSong.artist || 'Aura Radio';
+          const resolvedMeta = getResolvedSongMetadata(activeDetailSong);
+          const custom = customSongNames[songId] || customSongNames[songId.split('/').pop() || ''];
+          
+          let title = resolvedMeta?.title || custom?.title || activeDetailSong.title || songId.split('/').pop() || 'Tema sin título';
+          let artist = resolvedMeta?.artist || custom?.artist || activeDetailSong.artist || 'Aura Radio';
           
           const isUnnamed = !activeDetailSong.title && !activeDetailSong.artist;
-          if (isUnnamed && !custom?.title) {
+          if (isUnnamed && !custom?.title && !resolvedMeta?.title) {
             title = generateEpicTitle(songId);
             artist = "Aura Radio";
           }
           
-          let meaning = custom?.meaning || '';
+          let meaning = resolvedMeta?.meaning || custom?.meaning || '';
           if (!meaning) {
             if (isUnnamed) {
               meaning = generateEpicPoemMeaning(songId);
@@ -4387,7 +5144,8 @@ export default function App() {
             }
           }
           
-          const sponsor = songSponsors[songId];
+          const lyrics = resolvedMeta?.lyrics || custom?.lyrics || (activeDetailSong as any).lyrics || '';
+          const sponsor = songSponsors[songId] || songSponsors[songId.split('/').pop() || ''];
           const hasCover = !!activeDetailSong.coverUrl;
 
           return (
@@ -4424,6 +5182,19 @@ export default function App() {
                       <p className="text-xs text-accent font-medium mt-0.5">{artist}</p>
                     </div>
                   </div>
+
+                  {/* Letra de la canción (Si está disponible) */}
+                  {lyrics && lyrics.trim() && (
+                    <div className="bg-accent/10 border border-accent/20 rounded-2xl p-4 space-y-2">
+                      <span className="text-[9px] font-black text-accent uppercase tracking-wider flex items-center gap-1.5">
+                        <FileText className="w-3.5 h-3.5" />
+                        <span>Letra de la Canción</span>
+                      </span>
+                      <p className="text-xs text-white leading-relaxed font-medium whitespace-pre-line max-h-48 overflow-y-auto no-scrollbar select-text">
+                        {lyrics}
+                      </p>
+                    </div>
+                  )}
 
                   {/* Significado / Detrás del poema */}
                   <div className="bg-white/5 border border-white/5 rounded-2xl p-4 space-y-2">
@@ -4487,7 +5258,7 @@ export default function App() {
               onToggleFavorite={toggleFavorite}
               accentColor={accentColor}
               onShare={(e) => handleShare(currentSong?.id || '', e)}
-              customMetadata={activeTenantConfig?.customSongNames?.[currentSong?.id || '']}
+              customMetadata={getResolvedSongMetadata(currentSong)}
               onExitToCatalog={() => setShowLiveView(false)}
               circadianQuotes={activeTenantConfig?.circadianQuotes || []}
               customVisualizers={activeTenantConfig?.customVisualizers || []}
@@ -4503,6 +5274,14 @@ export default function App() {
           onClose={() => setShowTutorialModal(false)} 
         />
       )}
+
+      {/* Guest App Download / Register Incentive Modal */}
+      <GuestIncentiveModal
+        isOpen={showGuestIncentiveModal}
+        onClose={() => setShowGuestIncentiveModal(false)}
+        config={activeTenantConfig?.guestIncentiveConfig}
+        restrictedCategoryName={incentiveCategoryName}
+      />
     </div>
   );
 }

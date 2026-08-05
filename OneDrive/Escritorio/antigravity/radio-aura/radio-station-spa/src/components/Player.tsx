@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from 'motion/react';
-import { Play, Pause, Volume2, VolumeX, AlertCircle, Loader2, Music, X, Heart, Timer, Share2, ThumbsUp, RotateCcw, RotateCw, FastForward, Info, Sparkles } from 'lucide-react';
+import { Play, Pause, Volume2, VolumeX, AlertCircle, Loader2, Music, X, Heart, Timer, Share2, ThumbsUp, RotateCcw, RotateCw, FastForward, Info, Sparkles, SlidersHorizontal, ChevronUp } from 'lucide-react';
 import React, { useState, useRef, useEffect } from 'react';
 import { Song, API_CONFIG } from '../types';
 import { audioEngine } from '../lib/AudioEngine';
@@ -120,12 +120,20 @@ export default function Player({
 
   const { user } = useAuth();
   const [showCopied, setShowCopied] = useState(false);
+  const [showMobileControlsDrawer, setShowMobileControlsDrawer] = useState(false);
 
   const handleShare = async (songId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     triggerHaptic(10);
     
     if (currentSong) {
+      // Register share interaction with backend API (weight 5.0 boost)
+      fetch(`${API_CONFIG.BASE_URL}/api/songs/react`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ song_id: currentSong.id, reaction: 'share' })
+      }).catch(() => {});
+
       const shareData = buildShareMessage(currentSong, customMetadata, stationName, tenantConfig);
       
       if (navigator.share) {
@@ -388,21 +396,31 @@ export default function Player({
           </button>
           
           <div className="min-w-0 flex flex-col justify-center flex-1">
-            <div className="w-full max-w-[120px] sm:max-w-[180px] md:max-w-[240px] overflow-hidden relative mask-fade-edges">
+            <div className="w-full max-w-[260px] xs:max-w-[310px] sm:max-w-[380px] md:max-w-[340px] overflow-hidden relative mask-fade-edges">
               <div className={`whitespace-nowrap inline-flex gap-6 ${isPlaying ? 'animate-marquee' : ''}`}>
-                <h3 className={`text-xs md:text-sm font-bold leading-tight ${isAd ? 'text-accent' : 'text-white'}`}>
-                  {isAd ? "Espacio Informativo" : (currentSong?.title || (stationName || "AURA RADIO").toUpperCase())}
+                <h3 className={`text-xs md:text-sm font-bold leading-tight ${isAd ? 'text-accent' : 'text-white'} flex items-center gap-1.5`}>
+                  <span>{isAd ? "Espacio Informativo" : (customMetadata?.title || currentSong?.title || (stationName || "AURA RADIO").toUpperCase())}</span>
+                  {currentSong && (currentSong.isExplicit || currentSong.explicit) && (
+                    <span className="px-1 py-0.2 text-[8px] font-black bg-red-500/20 text-red-400 border border-red-500/30 rounded uppercase tracking-wider shrink-0" title="Contenido Explícito">
+                      E
+                    </span>
+                  )}
                 </h3>
                 {isPlaying && (
-                  <h3 className={`text-xs md:text-sm font-bold leading-tight ${isAd ? 'text-accent' : 'text-white'}`}>
-                    {isAd ? "Espacio Informativo" : (currentSong?.title || (stationName || "AURA RADIO").toUpperCase())}
+                  <h3 className={`text-xs md:text-sm font-bold leading-tight ${isAd ? 'text-accent' : 'text-white'} flex items-center gap-1.5`}>
+                    <span>{isAd ? "Espacio Informativo" : (customMetadata?.title || currentSong?.title || (stationName || "AURA RADIO").toUpperCase())}</span>
+                    {currentSong && (currentSong.isExplicit || currentSong.explicit) && (
+                      <span className="px-1 py-0.2 text-[8px] font-black bg-red-500/20 text-red-400 border border-red-500/30 rounded uppercase tracking-wider shrink-0" title="Contenido Explícito">
+                        E
+                      </span>
+                    )}
                   </h3>
                 )}
               </div>
             </div>
             <div className="flex items-center gap-1.5 min-w-0 flex-wrap mt-0.5">
-              <p className="text-[10px] md:text-xs text-text-secondary truncate max-w-[90px] sm:max-w-none">
-                {isAd ? (currentSong?.artist || "Publicidad") : (currentSong?.artist || "Selecciona una canción")}
+              <p className="text-[10px] md:text-xs text-text-secondary truncate">
+                {isAd ? (currentSong?.artist || "Publicidad") : (customMetadata?.artist || currentSong?.artist || "Selecciona una canción")}
               </p>
               {globalRank !== undefined && globalRank > 0 && !isAd && (
                 <button
@@ -410,12 +428,18 @@ export default function Player({
                     e.stopPropagation();
                     const toast = document.createElement('div');
                     toast.className = 'fixed bottom-24 left-1/2 -translate-x-1/2 bg-accent/90 text-white px-4 py-2 rounded-full text-xs font-bold shadow-xl backdrop-blur-md z-50 animate-fade-in-up';
-                    toast.textContent = '¡Dale a ❤️ Favoritos para subirla en el Top!';
+                    toast.textContent = globalRank <= 20
+                      ? `🔥 ¡Puesto #${globalRank} en el Top 20 General!`
+                      : `🏆 ¡Puesto #${globalRank} en el Top 100! Añádela a ❤️ Favoritos o Comparte 🔗 para subirla al Top 20`;
                     document.body.appendChild(toast);
                     setTimeout(() => toast.remove(), 3500);
                   }}
-                  className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-yellow-500/20 border border-yellow-500/40 text-yellow-400 text-[8px] font-black uppercase tracking-wider hover:bg-yellow-500/30 transition-all cursor-pointer shrink-0 shadow-sm"
-                  title="Posición en el Top 100 Global"
+                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[8px] font-black uppercase tracking-wider transition-all cursor-pointer shrink-0 shadow-sm ${
+                    globalRank <= 20
+                      ? 'bg-amber-500/20 border border-amber-500/40 text-amber-400 hover:bg-amber-500/30'
+                      : 'bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 hover:bg-indigo-500/30'
+                  }`}
+                  title={globalRank <= 20 ? `Posición #${globalRank} en el Top 20` : `Posición #${globalRank} en el Top 100 (¡Comparte o añade a favoritos para impulsarla al Top 20!)`}
                 >
                   🏆 #{globalRank}
                 </button>
@@ -430,30 +454,68 @@ export default function Player({
               )}
             </div>
           </div>
-          {/* Mobile Dedicated Play/Pause Button */}
-          {!hidePlayButton && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                if (!isAd) {
-                  triggerHaptic(15);
-                  onTogglePlay();
-                }
-              }}
-              disabled={isAd}
-              className="md:hidden shrink-0 w-10 h-10 rounded-full bg-white text-black flex items-center justify-center transition-all shadow-md active:scale-95 cursor-pointer mx-1 z-30"
-              title={isPlaying ? "Pausar" : "Reproducir"}
-            >
-              {isLoading ? (
-                <Loader2 className="w-4 h-4 text-black animate-spin" />
-              ) : isPlaying ? (
-                <Pause className="w-4 h-4 text-black fill-current" />
-              ) : (
-                <Play className="w-4 h-4 text-black fill-current translate-x-0.5" />
-              )}
-            </button>
-          )}
 
+          {/* Mobile Main Control Bar Buttons (Play/Pause + Skip + More Controls Drawer Trigger) */}
+          <div className="md:hidden flex items-center gap-1.5 shrink-0 z-30">
+            {!hidePlayButton && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!isAd) {
+                    triggerHaptic(15);
+                    onTogglePlay();
+                  }
+                }}
+                disabled={isAd}
+                className="shrink-0 w-11 h-11 rounded-full bg-white text-black flex items-center justify-center transition-all shadow-md active:scale-95 cursor-pointer"
+                title={isPlaying ? "Pausar" : "Reproducir"}
+              >
+                {isLoading ? (
+                  <Loader2 className="w-5 h-5 text-black animate-spin" />
+                ) : isPlaying ? (
+                  <Pause className="w-5 h-5 text-black fill-current" />
+                ) : (
+                  <Play className="w-5 h-5 text-black fill-current translate-x-0.5" />
+                )}
+              </button>
+            )}
+
+            {!currentSong?.isLive && (
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  triggerHaptic(12);
+                  onPlayNext();
+                }}
+                disabled={isAd}
+                className={`text-white hover:text-accent transition-colors p-2.5 ${isAd ? 'opacity-20 cursor-not-allowed' : 'cursor-pointer active:scale-95'}`}
+                title="Siguiente Canción"
+              >
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+              </button>
+            )}
+
+            {/* More Controls Button (Triggers Mobile Controls Drawer) */}
+            {currentSong && !isAd && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  triggerHaptic(10);
+                  setShowMobileControlsDrawer(prev => !prev);
+                }}
+                className={`p-2.5 rounded-full transition-all cursor-pointer ${
+                  showMobileControlsDrawer 
+                    ? 'bg-accent text-white shadow-lg shadow-accent/30' 
+                    : 'text-text-secondary hover:text-white hover:bg-white/10'
+                }`}
+                title="Más Controles"
+              >
+                <SlidersHorizontal className="w-5 h-5" />
+              </button>
+            )}
+          </div>
+
+          {/* Desktop Only Extra Badges & Actions */}
           {currentSong && !isAd && onOpenDetail && (
             <button
               onClick={(e) => {
@@ -461,7 +523,7 @@ export default function Player({
                 triggerHaptic(10);
                 onOpenDetail();
               }}
-              className="shrink-0 p-1.5 rounded-full text-accent hover:text-white hover:bg-white/10 transition-all duration-200 cursor-pointer z-20 hidden sm:block"
+              className="shrink-0 p-1.5 rounded-full text-accent hover:text-white hover:bg-white/10 transition-all duration-200 cursor-pointer z-20 hidden md:block"
               title="Mostrar / Esconder escenario inmersivo"
             >
               <Info className="w-4 h-4" />
@@ -469,7 +531,7 @@ export default function Player({
           )}
           
           {currentSong && !isAd && !currentSong.isLive && (
-            <div className="flex items-center gap-0.5 shrink-0 z-20">
+            <div className="hidden md:flex items-center gap-0.5 shrink-0 z-20">
               <button 
                 onClick={(e) => {
                   triggerHaptic(10);
@@ -491,18 +553,6 @@ export default function Player({
                 title="Compartir"
               >
                 <Share2 className="w-4 h-4" />
-                <AnimatePresence>
-                  {showCopied && (
-                    <motion.span 
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0 }}
-                      className="absolute -top-8 left-1/2 -translate-x-1/2 bg-surface px-2 py-1 rounded text-[10px] text-white whitespace-nowrap"
-                    >
-                      Copiado
-                    </motion.span>
-                  )}
-                </AnimatePresence>
               </button>
 
               {onOpenVisualizer && (
@@ -517,46 +567,6 @@ export default function Player({
                   <Sparkles className="w-4 h-4" />
                 </button>
               )}
-              
-              {/* Next Button / Seek Menu (Mobile Only) */}
-              {isPodcast ? (
-                <div className="relative md:hidden ml-1">
-                  <button 
-                    onClick={() => setShowSeekMenu(!showSeekMenu)}
-                    disabled={isAd}
-                    className={`text-text-secondary transition-colors p-2 ${isAd ? 'opacity-20 cursor-not-allowed' : 'hover:text-white cursor-pointer'}`}
-                    title="Opciones de salto"
-                  >
-                    <FastForward className="w-5 h-5" />
-                  </button>
-                  <AnimatePresence>
-                    {showSeekMenu && (
-                      <motion.div
-                        initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                        className="absolute bottom-full right-0 mb-4 bg-bg-pill border border-border rounded-xl p-2 min-w-[140px] shadow-2xl backdrop-blur-xl z-50"
-                      >
-                        <p className="text-[9px] font-black text-text-secondary uppercase tracking-widest mb-2 px-2 text-center">Saltar tiempo</p>
-                        <div className="grid grid-cols-2 gap-1">
-                          <button onClick={(e) => { e.stopPropagation(); audioEngine.seek(-300); setShowSeekMenu(false); }} className="px-2 py-1.5 rounded-lg text-[10px] font-bold text-white hover:bg-white/10 text-center">-5m</button>
-                          <button onClick={(e) => { e.stopPropagation(); audioEngine.seek(300); setShowSeekMenu(false); }} className="px-2 py-1.5 rounded-lg text-[10px] font-bold text-white hover:bg-white/10 text-center">+5m</button>
-                          <button onClick={(e) => { e.stopPropagation(); audioEngine.seek(-1800); setShowSeekMenu(false); }} className="px-2 py-1.5 rounded-lg text-[10px] font-bold text-white hover:bg-white/10 text-center">-30m</button>
-                          <button onClick={(e) => { e.stopPropagation(); audioEngine.seek(1800); setShowSeekMenu(false); }} className="px-2 py-1.5 rounded-lg text-[10px] font-bold text-white hover:bg-white/10 text-center">+30m</button>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              ) : !currentSong?.isLive && (
-                <button 
-                  onClick={onPlayNext}
-                  disabled={isAd}
-                  className={`md:hidden text-text-secondary transition-colors p-2 ml-1 ${isAd ? 'opacity-20 cursor-not-allowed' : 'hover:text-white cursor-pointer'}`}
-                >
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
-                </button>
-              )}
             </div>
           )}
         </div>
@@ -564,15 +574,6 @@ export default function Player({
         {/* Controls (Player Controls) - Hidden on mobile as we use thumbnail play/pause */}
         <div className="hidden md:flex flex-1 flex-col items-center gap-2 max-w-[450px]">
           <div className="flex items-center gap-4 md:gap-8">
-            {!currentSong?.isLive && (
-              <button 
-                disabled={isAd}
-                className={`text-text-secondary transition-colors hidden md:block ${isAd ? 'opacity-20 cursor-not-allowed' : 'hover:text-white cursor-pointer'}`}
-              >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
-              </button>
-            )}
-            
             <div className="flex items-center gap-4 md:gap-6">
               {isPodcast && (
                 <button
@@ -657,15 +658,6 @@ export default function Player({
                 </button>
               )}
             </div>
-
-            {!currentSong?.isLive && (
-              <button 
-                disabled={isAd}
-                className={`text-text-secondary transition-colors hidden md:block ${isAd ? 'opacity-20 cursor-not-allowed' : 'hover:text-white cursor-pointer'}`}
-              >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
-              </button>
-            )}
           </div>
           
 
@@ -684,8 +676,8 @@ export default function Player({
           </AnimatePresence>
         </div>
 
-        {/* Desktop & Mobile Volume Slider */}
-        <div className="flex items-center gap-2 md:gap-6 w-auto md:w-[250px] justify-end">
+        {/* Desktop Only Volume & Timer Controls (On mobile, accessible via Options Drawer) */}
+        <div className="hidden md:flex items-center gap-2 md:gap-6 w-auto md:w-[250px] justify-end">
           {/* Sleep Timer */}
           <div className="relative">
             <button 
@@ -760,6 +752,189 @@ export default function Player({
           </div>
         </div>
       </div>
+
+      {/* ===== MOBILE CONTROLS DRAWER MODAL ===== */}
+      <AnimatePresence>
+        {showMobileControlsDrawer && currentSong && !isAd && (
+          <div className="md:hidden fixed inset-0 z-[150] flex flex-col justify-end bg-black/70 backdrop-blur-md">
+            {/* Backdrop Tap to Close */}
+            <div 
+              className="flex-1 w-full"
+              onClick={() => setShowMobileControlsDrawer(false)}
+            />
+
+            {/* Bottom Drawer Content */}
+            <motion.div
+              initial={{ y: "100%", opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: "100%", opacity: 0 }}
+              transition={{ type: "spring", damping: 25, stiffness: 300 }}
+              className="bg-[#0E0E17] border-t border-white/15 rounded-t-[2.5rem] p-6 space-y-6 shadow-2xl relative z-10"
+            >
+              {/* Drag Handle & Close Header */}
+              <div className="flex items-center justify-between pb-2 border-b border-white/5">
+                <div className="w-12 h-1 bg-white/20 rounded-full mx-auto absolute top-3 left-1/2 -translate-x-1/2" />
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-accent/10 flex items-center justify-center">
+                    <SlidersHorizontal className="w-4 h-4 text-accent" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white leading-tight">Controles de Emisión</h3>
+                    <p className="text-[10px] text-text-secondary">Personaliza tu experiencia de escucha</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowMobileControlsDrawer(false)}
+                  className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-text-secondary hover:text-white"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Action Pills Grid */}
+              <div className="grid grid-cols-2 gap-3">
+                {/* Reproducir de Nuevo Pill */}
+                <button
+                  onClick={() => {
+                    triggerHaptic(10);
+                    if (currentSong) {
+                      if (currentSong.isLive) {
+                        audioEngine.play(currentSong);
+                      } else {
+                        audioEngine.seek(-audioEngine.getCurrentTime());
+                        if (!isPlaying) {
+                          onTogglePlay();
+                        }
+                      }
+                    }
+                  }}
+                  className="p-3.5 rounded-2xl flex items-center gap-3 bg-white/5 border border-white/10 text-xs font-bold text-white hover:bg-white/10 transition-all active:scale-95 cursor-pointer"
+                >
+                  <RotateCcw className="w-4 h-4 text-emerald-400" />
+                  <span>Volver a empezar</span>
+                </button>
+
+                {/* Compartir Canción Pill */}
+                <button
+                  onClick={(e) => handleShare(currentSong.id, e)}
+                  className="p-3.5 rounded-2xl flex items-center gap-3 bg-white/5 border border-white/10 text-xs font-bold text-white hover:bg-white/10 transition-all active:scale-95 cursor-pointer"
+                >
+                  <Share2 className="w-4 h-4 text-accent" />
+                  <span>{showCopied ? '¡Copiado!' : 'Compartir Canción'}</span>
+                </button>
+
+                {/* Favorito Pill */}
+                <button
+                  onClick={(e) => {
+                    triggerHaptic(10);
+                    onToggleFavorite(currentSong.id, e);
+                  }}
+                  className={`p-3.5 rounded-2xl flex items-center gap-3 border text-xs font-bold transition-all active:scale-95 cursor-pointer ${
+                    favorites.has(currentSong.id)
+                      ? 'bg-red-500/20 border-red-500/40 text-red-400'
+                      : 'bg-white/5 border-white/10 text-white hover:bg-white/10'
+                  }`}
+                >
+                  <Heart className={`w-4 h-4 ${favorites.has(currentSong.id) ? 'fill-current' : ''}`} />
+                  <span>{favorites.has(currentSong.id) ? 'En Favoritos' : 'Añadir Favorito'}</span>
+                </button>
+
+                {/* Visualizador Fullscreen Pill */}
+                {onOpenVisualizer && (
+                  <button
+                    onClick={() => {
+                      triggerHaptic(10);
+                      setShowMobileControlsDrawer(false);
+                      onOpenVisualizer();
+                    }}
+                    className="p-3.5 rounded-2xl flex items-center gap-3 bg-accent/20 border border-accent/40 text-xs font-bold text-accent hover:bg-accent/30 transition-all shadow-lg shadow-accent/10 active:scale-95 cursor-pointer"
+                  >
+                    <Sparkles className="w-4 h-4 animate-pulse" />
+                    <span>Visualizador En Vivo</span>
+                  </button>
+                )}
+
+                {/* Info / Escenario Pill */}
+                {onOpenDetail && (
+                  <button
+                    onClick={() => {
+                      triggerHaptic(10);
+                      setShowMobileControlsDrawer(false);
+                      onOpenDetail();
+                    }}
+                    className="p-3.5 rounded-2xl flex items-center gap-3 bg-white/5 border border-white/10 text-xs font-bold text-white hover:bg-white/10 transition-all active:scale-95 cursor-pointer"
+                  >
+                    <Info className="w-4 h-4 text-amber-400" />
+                    <span>Letra / Info Tema</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Volume Slider Block */}
+              <div className="p-4 bg-white/5 border border-white/8 rounded-2xl space-y-2">
+                <div className="flex items-center justify-between text-xs font-bold text-white">
+                  <span className="flex items-center gap-2">
+                    {isMuted || volume === 0 ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4 text-accent" />}
+                    Volumen de Audio
+                  </span>
+                  <span className="font-mono text-accent text-[11px]">{isMuted ? 'Silenciado' : `${Math.round(volume * 100)}%`}</span>
+                </div>
+                <div className="flex items-center gap-3 pt-1">
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={volume}
+                    onChange={(e) => setVolume(parseFloat(e.target.value))}
+                    className="w-full h-2 bg-white/10 rounded-full accent-accent cursor-pointer"
+                  />
+                  <button
+                    onClick={() => { triggerHaptic(10); setIsMuted(!isMuted); }}
+                    className="px-2.5 py-1 text-[10px] font-bold rounded-lg bg-white/10 hover:bg-white/20 text-white shrink-0"
+                  >
+                    {isMuted ? 'Activar' : 'Mute'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Sleep Timer Selector */}
+              <div className="p-4 bg-white/5 border border-white/8 rounded-2xl space-y-2">
+                <div className="flex items-center justify-between text-xs font-bold text-white">
+                  <span className="flex items-center gap-2">
+                    <Timer className="w-4 h-4 text-purple-400" />
+                    Apagado Automático (Sleep Timer)
+                  </span>
+                  {sleepTimer && <span className="font-mono text-purple-400 text-[11px] font-bold">{formatTimer(sleepTimer)}</span>}
+                </div>
+                <div className="grid grid-cols-4 gap-2 pt-1">
+                  {[15, 30, 60, 90].map(mins => (
+                    <button
+                      key={mins}
+                      onClick={() => { triggerHaptic(10); setTimer(mins); }}
+                      className={`py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        sleepTimer === mins * 60
+                          ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/30'
+                          : 'bg-white/5 border border-white/5 text-text-secondary hover:text-white'
+                      }`}
+                    >
+                      {mins}m
+                    </button>
+                  ))}
+                </div>
+                {sleepTimer && (
+                  <button
+                    onClick={clearTimer}
+                    className="w-full mt-2 py-2 text-[10px] text-red-400 font-bold hover:bg-red-500/10 rounded-xl transition-colors border border-red-500/20"
+                  >
+                    Cancelar Timer
+                  </button>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

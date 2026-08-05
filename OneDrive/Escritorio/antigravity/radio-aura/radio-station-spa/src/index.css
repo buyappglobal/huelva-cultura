@@ -1,0 +1,98 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg-deep: #050508;
+  --color-bg-surface: #0a0a0f;
+  --color-bg-pill: rgba(255, 255, 255, 0.03);
+  --color-accent: #4f46e5;
+  --color-text-secondary: #a1a1aa;
+  --color-border: rgba(255, 255, 255, 0.05);
+  
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-heading: 'Outfit', system-ui, sans-serif;
+}
+
+.glass-panel {
+  background: rgba(20, 20, 25, 0.4);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.02);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.03);
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-card:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
+  transform: translateY(-2px);
+  box-shadow: 0 10px 40px -10px rgba(0,0,0,0.5);
+}
+
+@keyframes playing-glow {
+  0%, 100% { 
+    border-color: var(--color-accent); 
+    box-shadow: 0 0 4px var(--color-accent);
+    transform: scale(1);
+  }
+  50% { 
+    border-color: rgba(255, 255, 255, 0.5); 
+    box-shadow: 0 0 12px var(--color-accent);
+    transform: scale(1.01);
+  }
+}
+
+@keyframes marquee {
+  0% { transform: translateX(0%); }
+  100% { transform: translateX(-50%); }
+}
+
+.animate-marquee {
+  display: inline-flex;
+  animation: marquee 12s linear infinite;
+}
+
+.animate-marquee:hover {
+  animation-play-state: paused;
+}
+
+.playing-card-effect {
+  animation: playing-glow 3s ease-in-out infinite;
+  z-index: 10;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+@layer base {
+  body {
+    @apply bg-bg-deep text-white font-sans antialiased;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Hide scrollbar for category pills but keep functionality */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+.featured-card-gradient {
+  background: linear-gradient(135deg, #4f46e5 0%, #312e81 100%);
+}
+
+.track-thumbnail-empty {
+  background-color: #1a1625;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><linearGradient id='g' x1='0%' y1='0%' x2='100%' y2='100%'><stop offset='0%' stop-color='%23FF4500'/><stop offset='100%' stop-color='%238A2BE2'/></linearGradient><circle cx='50' cy='50' r='35' fill='none' stroke='url(%23g)' stroke-width='4' opacity='0.3'/><rect x='42' y='35' width='4' height='30' rx='2' fill='url(%23g)'/><rect x='49' y='25' width='4' height='50' rx='2' fill='url(%23g)'/><rect x='56' y='35' width='4' height='30' rx='2' fill='url(%23g)'/></svg>");
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 65%;
+  transition: all 0.3s ease;
+}

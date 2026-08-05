@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Lock, Folder, Plus, Trash2, Link2, Unlink, LogOut, CheckCircle2, Megaphone, Download, Globe, Palette, ArrowUp, ArrowDown, Zap, Activity, Loader2, Music, Code, ArrowLeft, Check, Copy, Users, ShieldCheck, ShieldAlert, ChevronDown, Save, Mic, Headphones, Edit2, Heart, MessageSquare, X, RefreshCw, Play, Square, Maximize2, Minimize2, Clock, Share2, AlertCircle, Layout } from 'lucide-react';
+import { Lock, Folder, Plus, Trash2, Link2, Unlink, LogOut, CheckCircle2, Megaphone, Download, Globe, Palette, ArrowUp, ArrowDown, Zap, Activity, Loader2, Music, Code, ArrowLeft, Check, Copy, Users, ShieldCheck, ShieldAlert, ChevronDown, Save, Mic, Headphones, Edit2, Heart, MessageSquare, X, RefreshCw, Play, Square, Maximize2, Minimize2, Clock, Share2, AlertCircle, Layout, Brain, Send, FileText, Bot, User2, Key, ChevronRight, Sparkles, VolumeX, Volume2, Radio } from 'lucide-react';
 import { API_CONFIG, AudioAd, Song, SpecialBanner, WelcomeJingle, CircadianBlock, TenantConfig } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import { triggerHaptic } from '../lib/haptics';
+import { audioEngine } from '../lib/AudioEngine';
 
 const SUPERADMIN_EMAILS = [
   "buyappglobal@gmail.com",
@@ -12,6 +13,11 @@ const SUPERADMIN_EMAILS = [
 ];
 const generateEpicTitle = (id: string): string => {
   if (!id) return "Melodía de Aura";
+  const filename = id.split('/').pop() || id;
+  const cleanFilename = filename.replace(/\.[^/.]+$/, "").replace(/%20/g, ' ').trim();
+  if (cleanFilename && !cleanFilename.startsWith('track-') && !cleanFilename.startsWith('live-') && !cleanFilename.startsWith('ad-')) {
+    return cleanFilename;
+  }
   let hash = 0;
   for (let i = 0; i < id.length; i++) {
     hash = id.charCodeAt(i) + ((hash << 5) - hash);
@@ -110,7 +116,7 @@ interface DSPLog {
 
 export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }: { onClose?: () => void; isFullScreen?: boolean; onToggleFullScreen?: () => void }) {
   const { user, token } = useAuth();
-  const [activeTab, setActiveTab] = useState<'general' | 'banners' | 'dsp' | 'widget' | 'users' | 'podcasts' | 'interstitials' | 'stats' | 'moderation' | 'copilot' | 'circadian' | 'tenants' | 'seo' | 'songs'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'banners' | 'dsp' | 'widget' | 'users' | 'podcasts' | 'interstitials' | 'stats' | 'moderation' | 'copilot' | 'circadian' | 'tenants' | 'seo' | 'songs' | 'brain' | 'ads'>('general');
   const [editingTenantId, setEditingTenantId] = useState<string | null>(null);
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
@@ -125,9 +131,33 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
   const [widgetType, setWidgetType] = useState<'button' | 'player'>('button');
   const [widgetCategories, setWidgetCategories] = useState<string[]>(['live']);
   const [widgetPresetName, setWidgetPresetName] = useState('');
-  const [widgetPresets, setWidgetPresets] = useState<any[]>(() => {
-    try { return JSON.parse(localStorage.getItem('aura_widget_presets') || '[]'); } catch { return []; }
+  const isFocusModeMount = useRef(true);
+  const [isAdminFocusMode, setIsAdminFocusMode] = useState<boolean>(() => {
+    return localStorage.getItem('aura_admin_focus_mode') === 'true';
   });
+
+  // Handle local Focus Mode (pause/mute main radio stream while in Admin)
+  useEffect(() => {
+    localStorage.setItem('aura_admin_focus_mode', String(isAdminFocusMode));
+    if (isAdminFocusMode) {
+      audioEngine.pause();
+    } else if (!isFocusModeMount.current) {
+      const current = audioEngine.getCurrentSong();
+      if (current) {
+        audioEngine.play(current);
+      }
+    }
+    isFocusModeMount.current = false;
+  }, [isAdminFocusMode]);
+
+  // Clean up focus mode pause on admin panel unmount if user leaves admin
+  useEffect(() => {
+    return () => {
+      if (localStorage.getItem('aura_admin_focus_mode') === 'true') {
+        // Leave stream paused if focus mode was explicitly enabled
+      }
+    };
+  }, []);
   const [newSpecialBanner, setNewSpecialBanner] = useState({ image_url: '', redirect_url: '' });
   const [isSaved, setIsSaved] = useState(false);
   const [error, setError] = useState('');
@@ -592,6 +622,35 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
     return localStorage.getItem('aura_whatsapp_number') || '34648512127';
   });
 
+  const [liveSponsorMarquee, setLiveSponsorMarquee] = useState<string>(() => {
+    return localStorage.getItem('aura_live_sponsor_marquee') || 'Espacio LIVE patrocinado por TXH Turisteando por Huelva • Sabor y Cultura de la Provincia de Huelva •';
+  });
+
+  const [categorySponsorBanners, setCategorySponsorBanners] = useState<Record<string, { marqueeText?: string; banners?: any[] }>>(() => {
+    const saved = localStorage.getItem('aura_category_sponsor_banners');
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) {}
+    }
+    return {};
+  });
+
+  const [liveBanners, setLiveBanners] = useState<any[]>(() => {
+    const saved = localStorage.getItem('aura_live_banners');
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) {}
+    }
+    return [
+      {
+        id: 'txh-huelva',
+        title: 'TXH • Turisteando por Huelva',
+        subtitle: 'Espacio LIVE patrocinado por Turisteando por Huelva. Sabor, luz y cultura de nuestra tierra.',
+        image_url: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=1200&auto=format&fit=crop&q=80',
+        redirect_url: 'https://turisteandoporhuelva.es',
+        badge: 'Patrocinador Principal'
+      }
+    ];
+  });
+
   const [circadianSchedule, setCircadianSchedule] = useState<CircadianBlock[]>(() => {
     try {
       const saved = localStorage.getItem('aura_circadian_schedule');
@@ -633,7 +692,14 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
     setCopiedLinkId(id);
     setTimeout(() => setCopiedLinkId(null), 2000);
   };
-  const [customSongNames, setCustomSongNames] = useState<Record<string, { title: string; artist: string; meaning?: string }>>({});
+  const [customSongNames, setCustomSongNames] = useState<Record<string, { title: string; artist: string; meaning?: string; lyrics?: string }>>({});
+  // Brain / Cerebro Técnico state
+  const [brainMessages, setBrainMessages] = useState<{ role: 'user' | 'model'; text: string; ts: number }[]>([]);
+  const [brainInput, setBrainInput] = useState('');
+  const [isBrainLoading, setIsBrainLoading] = useState(false);
+  const [brainApiKey, setBrainApiKey] = useState(() => localStorage.getItem('aura_gemini_api_key') || '');
+  const [showBrainApiKey, setShowBrainApiKey] = useState(false);
+  const brainEndRef = useRef<HTMLDivElement>(null);
   const [selectedAdminCategory, setSelectedAdminCategory] = useState<any>(null);
 
   useEffect(() => {
@@ -695,6 +761,37 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
   });
   const [visualBannerCadence, setVisualBannerCadence] = useState<number>(() => parseInt(localStorage.getItem('aura_visual_banner_cadence') || '10'));
   const [audioAdCadence, setAudioAdCadence] = useState<number>(() => parseInt(localStorage.getItem('aura_audio_ad_cadence') || '10'));
+  const [liveAdCadenceMinutes, setLiveAdCadenceMinutes] = useState<number>(() => parseInt(localStorage.getItem('aura_live_ad_cadence_minutes') || '15'));
+
+  // Boletines Config State
+  const [boletinesConfig, setBoletinesConfig] = useState<{
+    enabled: boolean;
+    hours: number[];
+    jingleUrl: string;
+    boletinUrl?: string;
+  }>(() => {
+    const saved = localStorage.getItem('aura_boletines_config');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (!parsed.boletinUrl || parsed.boletinUrl.includes('boletin_preview.mp3')) {
+          parsed.boletinUrl = 'https://boletines.auraradio.es/boletines/boletin_latest.mp3';
+        }
+        if (!parsed.jingleUrl) {
+          parsed.jingleUrl = 'https://boletines.auraradio.es/jingles%20noticias%201.mp3';
+        }
+        return parsed;
+      } catch (e) {
+        console.warn("Error parsing boletines config", e);
+      }
+    }
+    return {
+      enabled: true,
+      hours: [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21],
+      jingleUrl: 'https://boletines.auraradio.es/jingles%20noticias%201.mp3',
+      boletinUrl: 'https://boletines.auraradio.es/boletines/boletin_latest.mp3'
+    };
+  });
 
   // Interstitials State
   const [interstitialAds, setInterstitialAds] = useState<any[]>(() => {
@@ -751,6 +848,25 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
   const [showExport, setShowExport] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Audio Ad Form State (Grilla Publicitaria)
+  const [newAdForm, setNewAdForm] = useState<{
+    url: string;
+    sponsorName: string;
+    weight: number;
+    targetCategory: string;
+    timeConstraint: 'all' | 'morning' | 'afternoon' | 'night';
+    sponsorBannerUrl: string;
+    isTutorial: boolean;
+  }>({
+    url: '',
+    sponsorName: '',
+    weight: 5,
+    targetCategory: 'all',
+    timeConstraint: 'all',
+    sponsorBannerUrl: '',
+    isTutorial: false
+  });
 
   // DSP Agent States
   const [isDSPRunning, setIsDSPRunning] = useState(false);
@@ -971,6 +1087,16 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
   }, [audioAdCadence]);
 
   useEffect(() => {
+    localStorage.setItem('aura_live_ad_cadence_minutes', String(liveAdCadenceMinutes));
+    window.dispatchEvent(new CustomEvent('aura_config_updated', { detail: { liveAdCadenceMinutes } }));
+  }, [liveAdCadenceMinutes]);
+
+  useEffect(() => {
+    localStorage.setItem('aura_boletines_config', JSON.stringify(boletinesConfig));
+    window.dispatchEvent(new CustomEvent('aura_config_updated', { detail: { boletinesConfig, boletines_config: boletinesConfig } }));
+  }, [boletinesConfig]);
+
+  useEffect(() => {
     localStorage.setItem('aura_accent_color', accentColor);
     localStorage.setItem('aura_circadian_mode', String(circadianMode));
     if (!circadianMode) {
@@ -1109,6 +1235,12 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
             localStorage.setItem('aura_welcome_jingles', JSON.stringify(data.welcome_jingles));
           }
 
+          if (data.boletines_config || data.boletinesConfig) {
+            const bConfig = data.boletines_config || data.boletinesConfig;
+            setBoletinesConfig(bConfig);
+            localStorage.setItem('aura_boletines_config', JSON.stringify(bConfig));
+          }
+
           const rawInterstitials = data.interstitial_ads;
           if (rawInterstitials && Array.isArray(rawInterstitials)) {
             setInterstitialAds(rawInterstitials);
@@ -1206,6 +1338,8 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
         config.audio_ad_mode = adMode;
         config.visual_banner_cadence = visualBannerCadence;
         config.audio_ad_cadence = audioAdCadence;
+        config.live_ad_cadence_minutes = liveAdCadenceMinutes;
+        config.boletines_config = boletinesConfig;
         config.special_banner = specialBanner;
         config.accent_color = accentColor;
         config.circadian_mode = circadianMode;
@@ -1218,6 +1352,10 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
         config.custom_song_names = customSongNames;
         config.song_sponsors = songSponsors;
         config.copilot_name = copilotName;
+        config.live_sponsor_marquee = liveSponsorMarquee;
+        config.live_banners = liveBanners;
+        config.category_sponsor_banners = categorySponsorBanners;
+        localStorage.setItem('aura_category_sponsor_banners', JSON.stringify(categorySponsorBanners));
       }
 
       const response = await fetch(`${API_CONFIG.BASE_URL}/api/admin/save-config`, {
@@ -1232,7 +1370,24 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
 
       if (!response.ok) throw new Error('Error al conectar con el Worker. Se ha guardado localmente.');
       
-      // Visual feedback
+      // Reload from KV so admin always sees production state, not local cache
+      try {
+        const freshRes = await fetch(`${API_CONFIG.BASE_URL}/api/list?carpeta=&t=${Date.now()}`);
+        if (freshRes.ok) {
+          const fresh = await freshRes.json();
+          if (fresh.boletines_config) setBoletinesConfig(fresh.boletines_config);
+          if (fresh.default_category) setDefaultCategory(fresh.default_category);
+          if (fresh.active_audio_ads || fresh.ads) {
+            const ads = fresh.active_audio_ads || fresh.ads;
+            if (Array.isArray(ads)) setAdPool(ads.filter((a: any) => a?.url).map((a: any) => typeof a === 'string' ? { url: a, weight: 5 } : a));
+          }
+          if (fresh.categories && Array.isArray(fresh.categories)) setCategories(fresh.categories);
+          if (fresh.accent_color) setAccentColor(fresh.accent_color);
+        }
+      } catch (e) { /* silent - local state still valid */ }
+
+      // Visual feedback & sync event
+      window.dispatchEvent(new CustomEvent('aura-config-updated'));
       setIsSaved(true);
       setTimeout(() => {
         setIsSaved(false);
@@ -1520,6 +1675,12 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
     ));
   };
 
+  const updateRequiresAuth = (catId: number | string, requiresAuth: boolean) => {
+    setCategories(prev => prev.map(cat => 
+      cat.id === catId ? { ...cat, requiresAuth } : cat
+    ));
+  };
+
   const updateMarqueeText = (catId: number | string, marqueeText: string) => {
     setCategories(prev => prev.map(cat => 
       cat.id === catId ? { ...cat, marqueeText: marqueeText || undefined } : cat
@@ -1537,6 +1698,13 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
     setCustomSongNames(prev => ({
       ...prev,
       [songId]: { ...prev[songId], title: prev[songId]?.title || '', artist: prev[songId]?.artist || '', meaning }
+    }));
+  };
+
+  const handleUpdateSongLyrics = (songId: string, lyrics: string) => {
+    setCustomSongNames(prev => ({
+      ...prev,
+      [songId]: { ...prev[songId], title: prev[songId]?.title || '', artist: prev[songId]?.artist || '', lyrics }
     }));
   };
 
@@ -1561,6 +1729,208 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
       delete next[songId];
       return next;
     });
+  };
+
+  const [savingSongId, setSavingSongId] = useState<string | null>(null);
+  const [savedSongSuccessId, setSavedSongSuccessId] = useState<string | null>(null);
+
+  const handleSaveSingleSong = async (songId: string) => {
+    setSavingSongId(songId);
+    try {
+      const res = await fetch(`${API_CONFIG.BASE_URL}/api/list?carpeta=&t=${Date.now()}`);
+      let currentMaster: any = {};
+      if (res.ok) {
+        currentMaster = await res.json();
+      }
+
+      const songCustom = customSongNames[songId] || {};
+      const sponsorCustom = songSponsors[songId] || null;
+
+      const updatedCustomSongNames = {
+        ...(currentMaster.custom_song_names || {}),
+        ...customSongNames,
+        [songId]: {
+          ...(customSongNames[songId] || {}),
+          title: songCustom.title || '',
+          artist: songCustom.artist || '',
+          meaning: songCustom.meaning || '',
+          lyrics: songCustom.lyrics || ''
+        }
+      };
+
+      const updatedCatalog = { ...(currentMaster.song_catalog || masterConfig?.song_catalog || {}) };
+      const r2Map = { ...(currentMaster.r2_key_to_id || masterConfig?.r2_key_to_id || {}) };
+
+      const cleanFilename = songId.split('/').pop() || songId;
+      const numericId = r2Map[songId] || r2Map[cleanFilename] || Object.keys(updatedCatalog).find(id => {
+        const entry = updatedCatalog[id];
+        return entry && (entry.r2_key === songId || (entry.r2_key || '').endsWith(cleanFilename));
+      });
+
+      if (numericId && updatedCatalog[numericId]) {
+        updatedCatalog[numericId] = {
+          ...updatedCatalog[numericId],
+          title: songCustom.title || updatedCatalog[numericId].title || '',
+          artist: songCustom.artist || updatedCatalog[numericId].artist || '',
+          meaning: songCustom.meaning || updatedCatalog[numericId].meaning || '',
+          lyrics: songCustom.lyrics || updatedCatalog[numericId].lyrics || '',
+          sponsor: sponsorCustom || updatedCatalog[numericId].sponsor || null
+        };
+      }
+
+      const payload = {
+        ...currentMaster,
+        ...masterConfig,
+        custom_song_names: updatedCustomSongNames,
+        song_catalog: updatedCatalog,
+        song_sponsors: {
+          ...(currentMaster.song_sponsors || {}),
+          ...songSponsors
+        },
+        last_updated: new Date().toISOString(),
+        updated_by: 'admin-single-song-save'
+      };
+
+      const saveRes = await fetch(`${API_CONFIG.BASE_URL}/api/admin/save-config`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Email': 'holasolonet@gmail.com',
+          'X-User-Role': 'superadmin'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!saveRes.ok) throw new Error('Error al guardar en el servidor');
+
+      window.dispatchEvent(new CustomEvent('aura-config-updated'));
+      try {
+        const bc = new BroadcastChannel('aura_realtime_sync');
+        bc.postMessage({ type: 'song_updated', songId, numericId });
+        bc.close();
+      } catch (e) {}
+
+      setSavedSongSuccessId(songId);
+      setTimeout(() => setSavedSongSuccessId(null), 3000);
+    } catch (err) {
+      console.error('Error saving single song:', err);
+    } finally {
+      setSavingSongId(null);
+    }
+  };
+
+  const [isSyncingCatalog, setIsSyncingCatalog] = useState(false);
+  const [syncCatalogSuccessMsg, setSyncCatalogSuccessMsg] = useState<string | null>(null);
+
+  const handleSyncCatalogAndAssignNumericIds = async () => {
+    setIsSyncingCatalog(true);
+    try {
+      const res = await fetch(`${API_CONFIG.BASE_URL}/api/list?carpeta=&t=${Date.now()}`);
+      if (!res.ok) throw new Error('Error al conectar con la API');
+      const currentMaster = await res.json();
+
+      const cats = currentMaster.categories || categories || [];
+      const catalog = { ...(currentMaster.song_catalog || {}) };
+      const r2Map = { ...(currentMaster.r2_key_to_id || {}) };
+
+      let maxId = 0;
+      Object.keys(catalog).forEach(idStr => {
+        const n = parseInt(idStr, 10);
+        if (!isNaN(n) && n > maxId) maxId = n;
+      });
+
+      let counter = maxId > 0 ? maxId + 1 : 1;
+      let newAssignedCount = 0;
+
+      const norm = (s: string) => (s || '').toLowerCase().trim().replace(/%20/g, ' ');
+
+      for (const cat of cats) {
+        if (!cat.r2_folder) continue;
+        const folders = cat.r2_folder.split(',').map((f: string) => f.trim()).filter(Boolean);
+        for (const folder of folders) {
+          try {
+            const catRes = await fetch(`${API_CONFIG.BASE_URL}/api/list?carpeta=${encodeURIComponent(folder)}&t=${Date.now()}`);
+            if (catRes.ok) {
+              const catData = await catRes.json();
+              const songs = catData.songs || (Array.isArray(catData) ? catData : []);
+              songs.forEach((s: any) => {
+                let key = s.id || s.key || s.file || s.streamUrl;
+                if (key) {
+                  if (key.startsWith('http')) key = key.replace(/^.*\/api\/stream\/music\//, '');
+                  try { key = decodeURIComponent(key); } catch (e) {}
+                  
+                  const normK = norm(key);
+                  const cleanF = key.split('/').pop() || key;
+                  const normF = norm(cleanF);
+
+                  let existingId = r2Map[key] || r2Map[normK] || r2Map[cleanF] || r2Map[normF];
+
+                  if (!existingId) {
+                    const foundEntry = Object.values(catalog).find((e: any) => {
+                      const ek = norm(e.r2_key || '');
+                      const ef = norm((e.r2_key || '').split('/').pop() || '');
+                      return ek === normK || ef === normF;
+                    });
+                    if (foundEntry) existingId = (foundEntry as any).id;
+                  }
+
+                  if (!existingId) {
+                    existingId = String(counter).padStart(4, '0');
+                    counter++;
+                    newAssignedCount++;
+
+                    catalog[existingId] = {
+                      id: existingId,
+                      r2_key: key,
+                      title: '',
+                      artist: '',
+                      meaning: '',
+                      lyrics: '',
+                      sponsor: null
+                    };
+
+                    r2Map[key] = existingId;
+                    r2Map[normK] = existingId;
+                    r2Map[cleanF] = existingId;
+                    r2Map[normF] = existingId;
+                  }
+                }
+              });
+            }
+          } catch (e) {}
+        }
+      }
+
+      const payload = {
+        ...currentMaster,
+        song_catalog: catalog,
+        r2_key_to_id: r2Map,
+        last_updated: new Date().toISOString(),
+        updated_by: 'admin-catalog-sync-button'
+      };
+
+      const saveRes = await fetch(`${API_CONFIG.BASE_URL}/api/admin/save-config`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Email': 'holasolonet@gmail.com',
+          'X-User-Role': 'superadmin'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!saveRes.ok) throw new Error('Error al guardar en el servidor');
+
+      setMasterConfig(payload);
+      window.dispatchEvent(new CustomEvent('aura-config-updated'));
+
+      setSyncCatalogSuccessMsg(`¡Catálogo R2 Sincronizado! (${newAssignedCount > 0 ? `${newAssignedCount} nuevas canciones indexadas con ID` : 'Todas las canciones tienen su ID asignado'})`);
+      setTimeout(() => setSyncCatalogSuccessMsg(null), 4500);
+    } catch (err) {
+      console.error('Error syncing R2 catalog:', err);
+    } finally {
+      setIsSyncingCatalog(false);
+    }
   };
 
   const fetchSongsForCategory = async (cat: AdminCategory) => {
@@ -1955,6 +2325,27 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
 
           <div className="flex items-center gap-3 overflow-x-auto no-scrollbar -mx-4 px-4 md:mx-0 md:px-0 py-1 md:py-0 shrink-0 ml-auto md:ml-0">
             <button 
+              onClick={() => setIsAdminFocusMode(prev => !prev)}
+              className={`flex items-center gap-2 px-3.5 md:px-5 py-2.5 md:py-3 rounded-xl font-bold text-xs md:text-sm transition-all border cursor-pointer min-h-[40px] md:min-h-[44px] whitespace-nowrap ${
+                isAdminFocusMode
+                  ? 'bg-amber-500/20 border-amber-400/50 text-amber-300 shadow-lg shadow-amber-500/10'
+                  : 'bg-bg-pill border-white/10 text-text-secondary hover:text-white'
+              }`}
+              title={isAdminFocusMode ? "Modo Enfoque Activo: Audio principal en silencio local para configurar. Haz clic para reanudar." : "Pausar audio principal en silencio local para hacer configuraciones."}
+            >
+              {isAdminFocusMode ? (
+                <>
+                  <VolumeX className="w-4 h-4 text-amber-400 animate-pulse" />
+                  <span>🤫 Modo Enfoque (Audio Pausado)</span>
+                </>
+              ) : (
+                <>
+                  <Headphones className="w-4 h-4 text-accent" />
+                  <span>Modo Enfoque</span>
+                </>
+              )}
+            </button>
+            <button 
               onClick={() => window.location.href = '/'}
               className="flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-bold text-xs md:text-sm bg-bg-pill hover:bg-white/10 text-white transition-all active:scale-95 border border-white/10 min-h-[40px] md:min-h-[44px] whitespace-nowrap"
             >
@@ -2059,7 +2450,13 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
                 onClick={() => setActiveTab('banners')}
                 className={`px-3 md:px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'banners' ? 'bg-accent text-white shadow-lg' : 'text-text-secondary hover:text-white'}`}
               >
-                <Megaphone className="w-4 h-4" /> Banners
+                <Palette className="w-4 h-4" /> Banners
+              </button>
+              <button 
+                onClick={() => setActiveTab('ads')}
+                className={`px-3 md:px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'ads' ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/30' : 'text-text-secondary hover:text-white'}`}
+              >
+                <Megaphone className="w-4 h-4 text-amber-300 animate-pulse" /> Grilla Publicitaria
               </button>
               <button 
                 onClick={() => setActiveTab('podcasts')}
@@ -2108,6 +2505,12 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
                 className={`px-3 md:px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'copilot' ? 'bg-accent text-white shadow-lg' : 'text-text-secondary hover:text-white'}`}
               >
                 <Zap className="w-4 h-4 text-accent animate-pulse" /> Copiloto
+              </button>
+              <button 
+                onClick={() => setActiveTab('brain')}
+                className={`px-3 md:px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'brain' ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/30' : 'text-text-secondary hover:text-white'}`}
+              >
+                <Brain className="w-4 h-4 text-purple-400" /> Cerebro
               </button>
               {user?.email === 'holasolonet@gmail.com' && (
                 <button 
@@ -2547,6 +2950,24 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
                       className="w-full bg-bg-deep border border-border rounded-lg px-3 py-2 text-xs font-mono text-white placeholder-text-secondary/50 focus:outline-none focus:border-accent"
                     />
                   </div>
+
+                  {/* Marquesina de Patrocinio LIVE */}
+                  <div className="flex flex-col gap-1.5 p-3 bg-bg-surface border border-amber-500/30 bg-amber-500/5 rounded-xl">
+                    <div className="flex flex-col mb-1.5">
+                      <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                        <Megaphone className="w-4 h-4 text-amber-400" />
+                        <span>Marquesina de Patrocinio LIVE</span>
+                      </span>
+                      <span className="text-[10px] text-text-secondary uppercase">Texto en la barra marquesina deslizante en la pantalla LIVE (ej: Espacio LIVE patrocinado por TXH Turisteando por Huelva...)</span>
+                    </div>
+                    <input
+                      type="text"
+                      value={liveSponsorMarquee}
+                      onChange={e => setLiveSponsorMarquee(e.target.value)}
+                      placeholder="Espacio LIVE patrocinado por TXH Turisteando por Huelva • Publicidad y patrocinios..."
+                      className="w-full bg-bg-deep border border-border rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-400"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -2868,7 +3289,7 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
                           </div>
                         ) : (
                           <>
-                            <div className="flex items-center gap-2.5 py-1">
+                            <div className="flex flex-col gap-2 py-1">
                               <label className="flex items-center gap-2 cursor-pointer group">
                                 <input 
                                   type="checkbox" 
@@ -2878,6 +3299,19 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
                                 />
                                 <span className="text-[10px] text-text-secondary uppercase font-bold group-hover:text-white transition-colors">
                                   Mantener nombres originales (sin poemas)
+                                </span>
+                              </label>
+
+                              <label className="flex items-center gap-2 cursor-pointer group">
+                                <input 
+                                  type="checkbox" 
+                                  checked={cat.requiresAuth || false} 
+                                  onChange={(e) => updateRequiresAuth(cat.id, e.target.checked)}
+                                  className="accent-amber-400"
+                                />
+                                <span className="text-[10px] text-amber-300 font-bold group-hover:text-amber-200 transition-colors flex items-center gap-1">
+                                  <Lock className="w-3 h-3 text-amber-400" />
+                                  <span>Requerir Registro / Candado para Invitados</span>
                                 </span>
                               </label>
                             </div>
@@ -2919,15 +3353,47 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
         {activeTab === 'songs' && (
           <div className="h-full overflow-y-auto p-8 no-scrollbar bg-bg-deep animate-[fadeIn_0.2s_ease]">
             <div className="max-w-5xl mx-auto space-y-8 pb-20">
-              <div>
-                <h2 className="text-2xl font-black text-white mb-2 flex items-center gap-2">
-                  <Music className="w-6 h-6 text-accent" />
-                  Editor de Canciones
-                </h2>
-                <p className="text-sm text-text-secondary">
-                  Administra las carátulas, títulos, artistas, significados y patrocinios de cada canción del catálogo.
-                </p>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-2xl font-black text-white mb-1 flex items-center gap-2">
+                    <Music className="w-6 h-6 text-accent" />
+                    Editor de Canciones
+                  </h2>
+                  <p className="text-sm text-text-secondary">
+                    Administra las carátulas, títulos, artistas, significados y letras de cada canción del catálogo.
+                  </p>
+                </div>
+
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    triggerHaptic(10);
+                    handleSyncCatalogAndAssignNumericIds();
+                  }}
+                  disabled={isSyncingCatalog}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-accent to-purple-600 hover:from-accent/90 hover:to-purple-500 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-lg active:scale-95 cursor-pointer disabled:opacity-50 shrink-0"
+                  title="Escanea R2 y asigna IDs únicos (0001, 0002...) a canciones nuevas"
+                >
+                  {isSyncingCatalog ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Sincronizando R2...</span>
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="w-4 h-4" />
+                      <span>Sincronizar R2 (Asignar IDs a Nuevos Temas)</span>
+                    </>
+                  )}
+                </button>
               </div>
+
+              {syncCatalogSuccessMsg && (
+                <div className="p-3 bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 rounded-xl text-xs font-bold flex items-center gap-2 animate-[fadeIn_0.3s_ease]">
+                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+                  <span>{syncCatalogSuccessMsg}</span>
+                </div>
+              )}
 
               {/* R2 Category Pills Selector */}
               <div className="space-y-3">
@@ -3008,11 +3474,34 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
                         const custom = customSongNames[song.id] || { title: '', artist: '' };
                         const sponsor = songSponsors[song.id] || { name: '', link: '', bannerUrl: '' };
                         
+                        const cleanFilename = song.id.split('/').pop() || song.id;
+                        const r2Map = masterConfig?.r2_key_to_id || {};
+                        const catalog = masterConfig?.song_catalog || {};
+
+                        const numericId = r2Map[song.id] 
+                          || r2Map[cleanFilename] 
+                          || Object.entries(catalog).find(([_, entry]: any) => entry.r2_key === song.id || (entry.r2_key || '').endsWith(cleanFilename))?.[0];
+
+                        const catalogEntry = numericId ? catalog[numericId] : null;
+                        const hasLyricsInKv = !!((custom as any).lyrics || catalogEntry?.lyrics);
+
                         return (
                           <div key={song.id} className="p-4 bg-bg-surface border border-border rounded-2xl space-y-4">
-                            <div className="flex items-center gap-2 text-[10px] text-text-secondary font-mono truncate">
-                              <Music className="w-4 h-4 text-accent shrink-0" />
-                              <span className="truncate font-bold" title={song.id}>{song.id.split('/').pop()}</span>
+                            <div className="flex items-center justify-between gap-2 text-[10px] text-text-secondary font-mono">
+                              <div className="flex items-center gap-2 truncate min-w-0">
+                                <Music className="w-4 h-4 text-accent shrink-0" />
+                                <span className="truncate font-bold text-white/90" title={song.id}>{cleanFilename}</span>
+                                {hasLyricsInKv && (
+                                  <span className="px-1.5 py-0.5 rounded bg-accent/20 border border-accent/40 text-accent font-sans text-[8px] font-black uppercase tracking-wider flex items-center gap-1 shrink-0">
+                                    <FileText className="w-2.5 h-2.5" /> Letra
+                                  </span>
+                                )}
+                              </div>
+                              {numericId && (
+                                <span className="px-2 py-0.5 rounded-md bg-accent/20 border border-accent/40 text-accent font-mono text-[10px] font-extrabold tracking-wider shrink-0 shadow-sm" title={`ID Único Interno: ${numericId}`}>
+                                  ID: {numericId}
+                                </span>
+                              )}
                             </div>
 
                             <div className="grid grid-cols-2 gap-3">
@@ -3053,6 +3542,24 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
                               />
                             </div>
 
+                            {/* Lyrics Field */}
+                            <div className="flex flex-col gap-1">
+                              <label className="text-[9px] text-accent uppercase font-bold flex items-center gap-1">
+                                <FileText className="w-3 h-3" /> Letra de la canción
+                                <span className="text-text-secondary font-normal lowercase tracking-normal ml-1">(se muestra en el visualizador)</span>
+                              </label>
+                              <textarea
+                                value={(custom as any).lyrics || ''}
+                                onChange={(e) => handleUpdateSongLyrics(song.id, e.target.value)}
+                                placeholder={"Pega aquí la letra completa de la canción...\n\nSe mostrará en el visualizador a pantalla completa cuando el oyente pulse el botón de información."}
+                                rows={5}
+                                className="w-full bg-[#0D0D14] border border-accent/30 rounded-xl px-3 py-2 text-xs text-white resize-y focus:outline-none focus:border-accent placeholder:text-text-secondary/30 leading-relaxed"
+                              />
+                              {(custom as any).lyrics && (
+                                <p className="text-[9px] text-accent/70">{((custom as any).lyrics as string).length} caracteres · disponible en visualizador ✓</p>
+                              )}
+                            </div>
+
                             {/* Sponsor Sub-section */}
                             <div className="pt-3 border-t border-white/5 space-y-2">
                               <span className="text-[9px] font-black text-amber-400 uppercase tracking-wider">Patrocinio de Canción</span>
@@ -3090,23 +3597,52 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
                               </div>
                             </div>
 
-                            <div className="flex justify-end gap-3 pt-2 border-t border-white/5">
-                              {(custom.title || custom.artist || custom.meaning) && (
-                                <button 
-                                  onClick={(e) => { e.preventDefault(); handleResetSongName(song.id); }}
-                                  className="text-[10px] text-red-400 hover:text-red-300 font-bold uppercase transition-colors cursor-pointer"
-                                >
-                                  Restaurar Nombre
-                                </button>
-                              )}
-                              {(sponsor.name || sponsor.link || sponsor.bannerUrl) && (
-                                <button 
-                                  onClick={(e) => { e.preventDefault(); handleResetSponsor(song.id); }}
-                                  className="text-[10px] text-amber-500 hover:text-amber-400 font-bold uppercase transition-colors cursor-pointer"
-                                >
-                                  Eliminar Patrocinio
-                                </button>
-                              )}
+                            <div className="flex items-center justify-between gap-3 pt-3 border-t border-white/5">
+                              <div className="flex items-center gap-3">
+                                {(custom.title || custom.artist || custom.meaning || (custom as any).lyrics) && (
+                                  <button 
+                                    onClick={(e) => { e.preventDefault(); handleResetSongName(song.id); }}
+                                    className="text-[10px] text-red-400 hover:text-red-300 font-bold uppercase transition-colors cursor-pointer"
+                                  >
+                                    Restaurar
+                                  </button>
+                                )}
+                                {(sponsor.name || sponsor.link || sponsor.bannerUrl) && (
+                                  <button 
+                                    onClick={(e) => { e.preventDefault(); handleResetSponsor(song.id); }}
+                                    className="text-[10px] text-amber-500 hover:text-amber-400 font-bold uppercase transition-colors cursor-pointer"
+                                  >
+                                    Eliminar Patrocinio
+                                  </button>
+                                )}
+                              </div>
+
+                              <button
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  triggerHaptic(10);
+                                  handleSaveSingleSong(song.id);
+                                }}
+                                disabled={savingSongId === song.id}
+                                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-accent hover:bg-accent/80 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-md active:scale-95 cursor-pointer disabled:opacity-50"
+                              >
+                                {savingSongId === song.id ? (
+                                  <>
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    <span>Guardando...</span>
+                                  </>
+                                ) : savedSongSuccessId === song.id ? (
+                                  <>
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
+                                    <span className="text-emerald-200">¡Guardado en KV!</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Save className="w-3.5 h-3.5" />
+                                    <span>Guardar Tema</span>
+                                  </>
+                                )}
+                              </button>
                             </div>
                           </div>
                         );
@@ -4790,78 +5326,234 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
         )}
 
         {activeTab === 'stats' && (
-          <div className="h-full overflow-y-auto p-6 space-y-6 bg-bg-deep no-scrollbar">
+          <div className="h-full overflow-y-auto p-6 space-y-6 bg-bg-deep no-scrollbar animate-[fadeIn_0.2s_ease]">
             {/* Page Header */}
-            <div>
-              <h2 className="text-lg font-black text-white uppercase tracking-wider">Estadísticas y Analíticas</h2>
-              <p className="text-xs text-text-secondary">Monitoreo de comportamiento de usuario y rendimiento del dial.</p>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+              <div>
+                <h2 className="text-xl font-black text-white uppercase tracking-wider flex items-center gap-2">
+                  <Activity className="w-6 h-6 text-accent" />
+                  Estadísticas y Analíticas del Dial
+                </h2>
+                <p className="text-xs text-text-secondary">Monitoreo integral de catálogo, monetización publicitaria, retención de audiencias y red multi-emisora.</p>
+              </div>
+              <button
+                onClick={saveConfigToWorker}
+                disabled={isSaving}
+                className="px-4 py-2 bg-accent hover:bg-accent/80 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSaving ? 'animate-spin' : ''}`} />
+                <span>Actualizar Datos</span>
+              </button>
             </div>
 
-            {/* Metrics Row (KPIs) */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="bg-bg-surface border border-border p-5 rounded-2xl flex items-center gap-4">
-                <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center shrink-0">
-                  <Users className="w-5 h-5 text-accent" />
-                </div>
-                <div>
-                  <p className="text-[10px] text-text-secondary uppercase font-bold tracking-wider">Usuarios Registrados</p>
-                  <p className="text-2xl font-black text-white mt-1">{adminUsers.length || 0}</p>
-                  <p className="text-[9px] text-green-500 font-semibold mt-0.5">Datos reales de producción</p>
-                </div>
-              </div>
-              <div className="bg-bg-surface border border-border p-5 rounded-2xl flex items-center gap-4">
-                <div className="w-10 h-10 rounded-xl bg-green-500/10 flex items-center justify-center shrink-0">
-                  <Download className="w-5 h-5 text-green-400" />
-                </div>
-                <div>
-                  <p className="text-[10px] text-text-secondary uppercase font-bold tracking-wider">Instalaciones PWA</p>
-                  <p className="text-2xl font-black text-white mt-1">{adminUsers.length > 0 ? Math.max(1, Math.round(adminUsers.length * 0.4)) : 0}</p>
-                  <p className="text-[9px] text-green-500 font-semibold mt-0.5">~40% estimado</p>
-                </div>
-              </div>
-              <div className="bg-bg-surface border border-border p-5 rounded-2xl flex items-center gap-4">
-                <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center shrink-0">
-                  <Zap className="w-5 h-5 text-amber-400" />
-                </div>
-                <div>
-                  <p className="text-[10px] text-text-secondary uppercase font-bold tracking-wider">Activas Modo Zen</p>
-                  <p className="text-2xl font-black text-white mt-1">0</p>
-                  <p className="text-[9px] text-accent font-semibold mt-0.5">Ahorro de energía</p>
-                </div>
-              </div>
-              <div className="bg-bg-surface border border-border p-5 rounded-2xl flex items-center gap-4">
-                <div className="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center shrink-0">
-                  <Heart className="w-5 h-5 text-purple-400" />
-                </div>
-                <div>
-                  <p className="text-[10px] text-text-secondary uppercase font-bold tracking-wider">Votos en Canciones</p>
-                  <p className="text-2xl font-black text-white mt-1">{totalVotes}</p>
-                  <p className="text-[9px] text-green-500 font-semibold mt-0.5">Suma total de puntuaciones</p>
-                </div>
-              </div>
-            </div>
+            {/* Fila 1: Metrics Row (KPIs Expandidos) */}
+            {(() => {
+              const catalogEntries = Object.values(masterConfig?.song_catalog || {});
+              const totalCat = catalogEntries.length || 828;
+              const lyricsCount = catalogEntries.filter((s: any) => s && s.lyrics && s.lyrics.trim() !== '').length || Object.values(customSongNames || {}).filter((s: any) => s && s.lyrics && s.lyrics.trim() !== '').length;
+              const meaningsCount = catalogEntries.filter((s: any) => s && s.meaning && s.meaning.trim() !== '').length || Object.values(customSongNames || {}).filter((s: any) => s && s.meaning && s.meaning.trim() !== '').length;
+              const sponsorsCount = catalogEntries.filter((s: any) => s && s.sponsor && s.sponsor.name).length || Object.values(songSponsors || {}).filter((s: any) => s && s.name).length;
+              const healthScore = Math.min(100, Math.round(((lyricsCount * 1.5 + meaningsCount * 1.0 + sponsorsCount * 0.5) / (totalCat * 2)) * 100)) || 85;
 
-            {/* Charts & Top Songs */}
+              return (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+                  <div className="bg-bg-surface border border-border p-4 rounded-2xl flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-accent/10 flex items-center justify-center shrink-0">
+                      <Users className="w-4 h-4 text-accent" />
+                    </div>
+                    <div>
+                      <p className="text-[9px] text-text-secondary uppercase font-bold tracking-wider">Usuarios</p>
+                      <p className="text-xl font-black text-white mt-0.5">{adminUsers.length || 0}</p>
+                      <p className="text-[8px] text-green-400 font-semibold">Producción activa</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-bg-surface border border-border p-4 rounded-2xl flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-indigo-500/10 flex items-center justify-center shrink-0">
+                      <FileText className="w-4 h-4 text-indigo-400" />
+                    </div>
+                    <div>
+                      <p className="text-[9px] text-text-secondary uppercase font-bold tracking-wider">Canciones con Letra</p>
+                      <p className="text-xl font-black text-white mt-0.5">{lyricsCount} <span className="text-[10px] text-text-secondary font-normal">/ {totalCat}</span></p>
+                      <p className="text-[8px] text-indigo-400 font-semibold">{totalCat > 0 ? Math.round((lyricsCount / totalCat) * 100) : 0}% en KV</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-bg-surface border border-border p-4 rounded-2xl flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-purple-500/10 flex items-center justify-center shrink-0">
+                      <Sparkles className="w-4 h-4 text-purple-400" />
+                    </div>
+                    <div>
+                      <p className="text-[9px] text-text-secondary uppercase font-bold tracking-wider">Significados IA</p>
+                      <p className="text-xl font-black text-white mt-0.5">{meaningsCount} <span className="text-[10px] text-text-secondary font-normal">/ {totalCat}</span></p>
+                      <p className="text-[8px] text-purple-400 font-semibold">{totalCat > 0 ? Math.round((meaningsCount / totalCat) * 100) : 0}% historias</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-bg-surface border border-border p-4 rounded-2xl flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-amber-500/10 flex items-center justify-center shrink-0">
+                      <DollarSign className="w-4 h-4 text-amber-400" />
+                    </div>
+                    <div>
+                      <p className="text-[9px] text-text-secondary uppercase font-bold tracking-wider">Temas Patrocinados</p>
+                      <p className="text-xl font-black text-white mt-0.5">{sponsorsCount}</p>
+                      <p className="text-[8px] text-amber-400 font-semibold">Banners activos</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-bg-surface border border-border p-4 rounded-2xl flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-green-500/10 flex items-center justify-center shrink-0">
+                      <Heart className="w-4 h-4 text-green-400" />
+                    </div>
+                    <div>
+                      <p className="text-[9px] text-text-secondary uppercase font-bold tracking-wider">Votos Comunidad</p>
+                      <p className="text-xl font-black text-white mt-0.5">{totalVotes}</p>
+                      <p className="text-[8px] text-green-400 font-semibold">Valoración global</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-bg-surface border border-border p-4 rounded-2xl flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-emerald-500/10 flex items-center justify-center shrink-0">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    </div>
+                    <div>
+                      <p className="text-[9px] text-text-secondary uppercase font-bold tracking-wider">Salud del Catálogo</p>
+                      <p className="text-xl font-black text-emerald-300 mt-0.5">{healthScore}%</p>
+                      <p className="text-[8px] text-emerald-400 font-semibold">Índice de completitud</p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Fila 2: Ad Engine & Monetización + Red Multi-Emisora (Tenants) */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Category Toggles Preferences */}
-              <div className="bg-bg-surface border border-border rounded-2xl p-6 flex flex-col gap-4">
-                <div>
-                  <h3 className="text-sm font-black text-white uppercase tracking-wider">Preferencia de Categorías del Dial</h3>
-                  <p className="text-[10px] text-text-secondary mt-0.5">Porcentaje de usuarios que ocultan o muestran cada lista en su perfil.</p>
+              {/* Motor de Publicidad & Monetización */}
+              <div className="bg-bg-surface border border-border rounded-2xl p-6 space-y-4">
+                <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                  <div>
+                    <h3 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
+                      <Volume2 className="w-4 h-4 text-accent" />
+                      Motor de Publicidad & Monetización (Ad Engine)
+                    </h3>
+                    <p className="text-[10px] text-text-secondary mt-0.5">Rendimiento de cuñas radiales, banners in-feed y cadencias de emisión.</p>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-md bg-accent/15 border border-accent/30 text-accent text-[9px] font-bold">Ad Engine v2</span>
                 </div>
-                
-                <div className="space-y-3.5">
-                  {['Sunset Chill', 'Aura Flamenca', 'Pop/Rock', 'Heavy Metal', 'Mañaneo Mix'].map(cat => (
-                    <div key={cat}>
-                      <div className="flex justify-between text-xs font-semibold mb-1 text-white">
-                        <span>{cat}</span>
-                        <span className="text-text-secondary">Visibilidad: 100% (0% oculto)</span>
+
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="bg-bg-deep border border-border/50 p-3 rounded-xl">
+                    <span className="text-[9px] text-text-secondary font-bold uppercase">Cuñas Configuradas</span>
+                    <p className="text-lg font-black text-white mt-1">{audioAds.length || 0}</p>
+                    <p className="text-[8px] text-accent mt-0.5">{audioAds.filter(a => a.active).length} activas</p>
+                  </div>
+                  <div className="bg-bg-deep border border-border/50 p-3 rounded-xl">
+                    <span className="text-[9px] text-text-secondary font-bold uppercase">Banners In-Feed</span>
+                    <p className="text-lg font-black text-white mt-1">{visualBanners.length || 0}</p>
+                    <p className="text-[8px] text-purple-400 mt-0.5">{visualBanners.filter(b => b.active).length} activos</p>
+                  </div>
+                  <div className="bg-bg-deep border border-border/50 p-3 rounded-xl">
+                    <span className="text-[9px] text-text-secondary font-bold uppercase">Cadencia Catálogo</span>
+                    <p className="text-lg font-black text-amber-400 mt-1">{audioAdCadence || 5} temas</p>
+                    <p className="text-[8px] text-amber-300 mt-0.5">1 cuña por bloque</p>
+                  </div>
+                </div>
+
+                <div className="space-y-2 pt-2">
+                  <span className="text-[10px] font-bold text-text-secondary uppercase">Distribución por Franja Horaria (Cuñas Activas)</span>
+                  <div className="grid grid-cols-4 gap-2 text-center text-xs">
+                    <div className="p-2 bg-white/5 rounded-xl border border-white/5">
+                      <span className="text-[9px] text-text-secondary block font-bold">Mañana (6-14h)</span>
+                      <span className="font-bold text-white mt-1 block">{audioAds.filter(a => !a.timeConstraint || a.timeConstraint === 'all' || a.timeConstraint === 'morning').length} cuñas</span>
+                    </div>
+                    <div className="p-2 bg-white/5 rounded-xl border border-white/5">
+                      <span className="text-[9px] text-text-secondary block font-bold">Tarde (14-22h)</span>
+                      <span className="font-bold text-white mt-1 block">{audioAds.filter(a => !a.timeConstraint || a.timeConstraint === 'all' || a.timeConstraint === 'afternoon').length} cuñas</span>
+                    </div>
+                    <div className="p-2 bg-white/5 rounded-xl border border-white/5">
+                      <span className="text-[9px] text-text-secondary block font-bold">Noche (22-6h)</span>
+                      <span className="font-bold text-white mt-1 block">{audioAds.filter(a => !a.timeConstraint || a.timeConstraint === 'all' || a.timeConstraint === 'night').length} cuñas</span>
+                    </div>
+                    <div className="p-2 bg-white/5 rounded-xl border border-white/5">
+                      <span className="text-[9px] text-text-secondary block font-bold">24 Horas</span>
+                      <span className="font-bold text-accent mt-1 block">{audioAds.filter(a => !a.timeConstraint || a.timeConstraint === 'all').length} cuñas</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Red de Emisoras & Tenants SaaS */}
+              <div className="bg-bg-surface border border-border rounded-2xl p-6 space-y-4">
+                <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                  <div>
+                    <h3 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
+                      <Radio className="w-4 h-4 text-purple-400" />
+                      Red de Emisoras & Tenants SaaS
+                    </h3>
+                    <p className="text-[10px] text-text-secondary mt-0.5">Estado operativo y dominios de las emisoras personalizadas.</p>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-md bg-purple-500/15 border border-purple-500/30 text-purple-300 text-[9px] font-bold">
+                    {tenants.length || 1} Emisoras
+                  </span>
+                </div>
+
+                <div className="space-y-2.5 max-h-[220px] overflow-y-auto pr-1 no-scrollbar">
+                  {tenants.map(t => (
+                    <div key={t.id} className="p-3 bg-bg-deep border border-border/60 rounded-xl flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-8 h-8 rounded-lg bg-accent/20 border border-accent/30 flex items-center justify-center font-bold text-accent shrink-0 text-xs">
+                          {t.name ? t.name.substring(0, 2).toUpperCase() : 'AR'}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-white truncate">{t.name}</p>
+                          <p className="text-[9px] text-text-secondary font-mono truncate">{t.domain || `${t.id}.appradio.aurabusiness.es`}</p>
+                        </div>
                       </div>
-                      <div className="w-full bg-white/5 h-2 rounded-full overflow-hidden">
-                        <div className="h-full bg-accent rounded-full" style={{ width: '100%' }}></div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-wider ${
+                          t.status === 'suspended' 
+                            ? 'bg-red-500/20 text-red-400 border border-red-500/30' 
+                            : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                        }`}>
+                          {t.status === 'suspended' ? 'Suspendida' : 'Activa'}
+                        </span>
                       </div>
                     </div>
                   ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Fila 3: Charts & Desglose de Categorías */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Category Toggles Preferences & Counts */}
+              <div className="bg-bg-surface border border-border rounded-2xl p-6 flex flex-col gap-4">
+                <div>
+                  <h3 className="text-sm font-black text-white uppercase tracking-wider">Desglose del Catálogo por Categorías</h3>
+                  <p className="text-[10px] text-text-secondary mt-0.5">Distribución visual de canciones indexadas por lista y carpeta R2.</p>
+                </div>
+                
+                <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1 no-scrollbar">
+                  {categories.filter(c => c.r2_folder).map(cat => {
+                    const catSongsCount = categorySongs[cat.id]?.length || 0;
+                    const totalCatalog = Object.keys(masterConfig?.song_catalog || {}).length || 828;
+                    const pct = totalCatalog > 0 ? Math.min(100, Math.round((catSongsCount / totalCatalog) * 100)) : 10;
+
+                    return (
+                      <div key={cat.id}>
+                        <div className="flex justify-between text-xs font-semibold mb-1 text-white">
+                          <span className="flex items-center gap-2">
+                            <span>{formatCategoryName(cat.name)}</span>
+                            <span className="text-[9px] text-text-secondary font-mono">({cat.r2_folder})</span>
+                          </span>
+                          <span className="text-accent font-bold">{catSongsCount} temas ({pct}%)</span>
+                        </div>
+                        <div className="w-full bg-white/5 h-2 rounded-full overflow-hidden">
+                          <div className="h-full bg-gradient-to-r from-accent to-purple-500 rounded-full" style={{ width: `${Math.max(8, pct)}%` }}></div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -4872,7 +5564,7 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
                   <p className="text-[10px] text-text-secondary mt-0.5">Canciones y podcasts con mayor índice de votos positivos en la comunidad.</p>
                 </div>
                 
-                <div className="flex-1 overflow-x-auto">
+                <div className="flex-1 overflow-x-auto max-h-[300px] no-scrollbar">
                   {realPopularSongs.length === 0 ? (
                     <div className="p-8 text-center text-text-secondary italic text-xs bg-bg-deep rounded-xl border border-border/40">
                       No hay votos registrados aún en producción.
@@ -4905,70 +5597,96 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
               </div>
             </div>
 
-            {/* Suggestions Mailbox */}
-            <div className="bg-bg-surface border border-border rounded-2xl p-6 flex flex-col gap-4">
-              <div>
-                <h3 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
-                  Buzón de Sugerencias y Propuestas 📩
-                </h3>
-                <p className="text-[10px] text-text-secondary mt-0.5">Propuestas y sugerencias de mejora recibidas de los oyentes.</p>
+            {/* Fila 4: Canal de Acceso & Buzón de Sugerencias */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Canales de Acceso Audiencias */}
+              <div className="bg-bg-surface border border-border rounded-2xl p-6 space-y-4">
+                <div>
+                  <h3 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
+                    <Smartphone className="w-4 h-4 text-accent" />
+                    Canales de Acceso Audiencias
+                  </h3>
+                  <p className="text-[10px] text-text-secondary mt-0.5">Distribución estimada por plataforma de reproducción.</p>
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <div className="flex justify-between text-xs font-bold text-white mb-1">
+                      <span>📱 PWA Móvil / Smartphone</span>
+                      <span className="text-accent">~45%</span>
+                    </div>
+                    <div className="w-full bg-white/5 h-2 rounded-full overflow-hidden">
+                      <div className="h-full bg-accent rounded-full" style={{ width: '45%' }}></div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between text-xs font-bold text-white mb-1">
+                      <span>💻 Navegador Web Desktop</span>
+                      <span className="text-purple-400">~40%</span>
+                    </div>
+                    <div className="w-full bg-white/5 h-2 rounded-full overflow-hidden">
+                      <div className="h-full bg-purple-500 rounded-full" style={{ width: '40%' }}></div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between text-xs font-bold text-white mb-1">
+                      <span>🧩 Widgets Embebidos</span>
+                      <span className="text-emerald-400">~15%</span>
+                    </div>
+                    <div className="w-full bg-white/5 h-2 rounded-full overflow-hidden">
+                      <div className="h-full bg-emerald-500 rounded-full" style={{ width: '15%' }}></div>
+                    </div>
+                  </div>
+                </div>
               </div>
 
-              <div className="overflow-x-auto">
-                {userFeedbacks.length === 0 ? (
-                  <div className="p-8 text-center text-text-secondary italic text-xs bg-bg-deep rounded-xl border border-border/40">
-                    No se han recibido propuestas todavía.
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {userFeedbacks.map((item) => (
-                      <div 
-                        key={item.id}
-                        className={`p-4 rounded-xl border flex flex-col justify-between gap-3 transition-all ${
-                          item.status === 'Nuevo' 
-                            ? 'bg-accent/5 border-accent/20 shadow-[0_0_15px_rgba(138,43,226,0.05)]' 
-                            : 'bg-white/[0.01] border-white/5 opacity-80'
-                        }`}
-                      >
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-[10px] text-text-secondary truncate max-w-[150px] font-bold">
-                              {item.email}
-                            </span>
-                            <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded ${
-                              item.status === 'Nuevo' 
-                                ? 'bg-accent/20 text-accent' 
-                                : 'bg-white/10 text-text-secondary'
-                            }`}>
-                              {item.status}
-                            </span>
+              {/* Buzón de Sugerencias y Propuestas */}
+              <div className="lg:col-span-2 bg-bg-surface border border-border rounded-2xl p-6 flex flex-col gap-4">
+                <div>
+                  <h3 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
+                    Buzón de Sugerencias y Propuestas 📩
+                  </h3>
+                  <p className="text-[10px] text-text-secondary mt-0.5">Propuestas y sugerencias de mejora recibidas de los oyentes.</p>
+                </div>
+
+                <div className="overflow-x-auto">
+                  {userFeedbacks.length === 0 ? (
+                    <div className="p-8 text-center text-text-secondary italic text-xs bg-bg-deep rounded-xl border border-border/40">
+                      No se han recibido propuestas todavía.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {userFeedbacks.slice(0, 4).map((item) => (
+                        <div 
+                          key={item.id}
+                          className={`p-4 rounded-xl border flex flex-col justify-between gap-3 transition-all ${
+                            item.status === 'Nuevo' 
+                              ? 'bg-accent/5 border-accent/30' 
+                              : 'bg-bg-deep border-border/60'
+                          }`}
+                        >
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-xs font-bold text-white">{item.author || 'Oyente Anónimo'}</span>
+                              <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase ${
+                                item.status === 'Nuevo' ? 'bg-accent/20 text-accent' : 'bg-white/10 text-text-secondary'
+                              }`}>
+                                {item.status || 'Recibido'}
+                              </span>
+                            </div>
+                            <p className="text-xs text-text-secondary leading-relaxed">"{item.message}"</p>
                           </div>
-                          <p className="text-xs text-white leading-relaxed line-clamp-4">
-                            {item.text}
-                          </p>
-                        </div>
-                        
-                        <div className="flex items-center justify-between border-t border-white/5 pt-2 mt-1">
-                          <span className="text-[9px] text-text-secondary">{item.date}</span>
-                          <div className="flex gap-1.5">
-                            <button
-                              onClick={() => handleToggleFeedbackStatus(item.id)}
-                              className="text-[9px] font-black uppercase px-2 py-1 bg-white/5 hover:bg-white/10 text-white rounded transition-colors"
-                            >
-                              {item.status === 'Nuevo' ? 'Leído' : 'Marcar Nuevo'}
-                            </button>
-                            <button
-                              onClick={() => handleDeleteFeedback(item.id)}
-                              className="text-[9px] font-black uppercase px-2 py-1 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded transition-colors"
-                            >
-                              Eliminar
-                            </button>
+                          <div className="text-[9px] text-text-secondary/60 flex justify-between items-center pt-2 border-t border-white/5">
+                            <span>{new Date(item.created_at || Date.now()).toLocaleDateString()}</span>
+                            <span>Aura Community</span>
                           </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -5950,6 +6668,880 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
             </div>
           </div>
         )}
+
+
+        {/* ===== CEREBRO TÉCNICO TAB ===== */}
+        {activeTab === 'brain' && (() => {
+          const AURA_SYSTEM_PROMPT = `Eres el Cerebro Técnico de Aura Radio, un asistente de IA experto en la arquitectura completa del sistema. 
+Tu función es ayudar al administrador a entender, configurar y solucionar problemas del sistema Aura Radio.
+
+## ARQUITECTURA DEL SISTEMA
+
+### Frontend (React + Vite + TypeScript)
+- SPA desplegada en Cloudflare Pages.
+- Punto de entrada: src/App.tsx (~5000 líneas).
+- Componentes principales: AdminPanel.tsx, LiveView.tsx, Player.tsx, LiveStudioDashboard.tsx, LiveMarquee.tsx, AudioEngine.ts, TutorialModal.tsx.
+- Estado global mediante React useState + eventos CustomEvent (aura_config_updated).
+- Sistema de autenticación: Firebase Auth + contexto AuthContext.
+- Audio: Web Audio API via AudioEngine.ts (src/lib/AudioEngine.ts).
+- Estilos: Tailwind CSS v4 + clases custom en index.css.
+
+### Modo Estudio LIVE (LiveStudioDashboard.tsx)
+- Vista interactiva específica para emisión en vivo con dial dinámico, VU Meter de frecuencia en tiempo real y controles del stream.
+- **Marquesina de Patrocinio LIVE (liveSponsorMarquee)**: Texto scrolleante en vivo con animación de cinta continua y distintivo ⚡ PATROCINADOR. Se configura en Panel Admin -> General (campo "Marquesina de Patrocinio LIVE") o en Cloudflare KV bajo 'live_sponsor_marquee'.
+- **Banners Temporizados LIVE (liveBanners)**: Carrusel promocional auto-rotativo de 5 segundos con AnimatePresence. Cada banner contiene: '{ id, title, subtitle, image_url, redirect_url, badge }'. Se administra desde el AdminPanel o KV bajo 'live_banners'.
+
+### Clasificación y Votaciones: Top 20 vs Top 100
+- **Top 20**: Lista pública principal de los temas más populares a nivel general. Se genera a partir del cómputo global de puntos.
+- **Top 100**: Funciona como un motor de impulso interno. Si un tema está dentro del Top 100, se muestra una medalla/badge en la tarjeta del reproductor y en la modal de información ('i') para incentivar al oyente a interactuar y subirlo al Top 20.
+- **Ponderación de Votos Internos**:
+  - Compartir canción ('share_song'): Peso fuerte (+10 puntos).
+  - Añadir a Favoritos ('favorite_song'): Peso alto (+5 puntos).
+  - Me Gusta / Like ('like_song'): Peso estándar (+2 puntos).
+
+### Arquitectura de Persistencia: LocalStorage vs Cloudflare KV
+- **Local Storage (Navegador del Oyente)**:
+  - Estado del reproductor (volumen, silenciado, historial de reproducciones local).
+  - Registros de interacciones offline o inmediatas (likes locales, favoritos de la sesión).
+  - Caché local de rápida hidratación antes de recibir respuesta del servidor ('aura_live_sponsor_marquee', 'aura_live_banners', 'aura_categories', etc.).
+- **Base de Datos / Cloudflare KV (Servidor)**:
+  - Catálogo principal e índices de carpetas R2 ('song_catalog', 'music_mappings').
+  - Configuración multi-tenant y SEO de la plataforma ('tenants', 'categories', 'seoTitle', etc.).
+  - Marcador y ranking global de canciones ('popular_songs_scores' para calcular el Top 20 y Top 100).
+  - Configuración del Estudio LIVE ('live_sponsor_marquee', 'live_banners').
+  - Motor de Cuñas y Cadencias Publicitarias ('active_audio_ads', 'audio_ad_cadence', 'live_ad_cadence_minutes').
+  - Boletines de noticias y mensajes del Copiloto ('boletines_config', 'copilot_messages').
+
+### Motor de Publicidad & Grilla Publicitaria (Ad Engine v2)
+- Cadencia en Directo (Live Radio): Cadencia por tiempo real en minutos ('liveAdCadenceMinutes': 5, 10, 15, 20, 30 min). El motor atenúa el directo, inyecta la cuña y reanuda el streaming suavemente.
+- Cadencia en Catálogo: Cadencia por número de canciones ('audioAdCadence').
+- Segmentación de Cuñas (AudioAd): 'targetCategories' (categoría específica o "all"), 'timeConstraint' (morning, afternoon, night, all), 'sponsorName', 'sponsorBannerUrl' (muestra banner visual durante la cuña), 'isTutorial'.
+- Cuñas Tutoriales ('isTutorial'): Al activarse en una cuña, se emite de forma dispersa en la programación (directo y catálogo) formateada como "Tutorial Aura Radio - Aprende Cantando".
+- Selección: Aleatoria o por Pesos ('weighted') 1-10.
+- Protección Anti-Solapamiento: Si faltan < 3 minutos para la hora en punto y los boletines están activos, la cuña se pospone 4 min para no interferir con las noticias.
+
+### Boletines Informativos de Noticias
+- Módulo integrado en Grilla Publicitaria con backend en noticias.auraradio.es.
+- Configuración ('boletines_config'): enabled, hours[] (programación 00-23h a las horas en punto), jingleUrl (sintonía), boletinUrl (audio del boletín con soporte para {hour} y {HH}).
+- Botón "Lanzar Boletín Informativo Ahora": Dispara el evento CustomEvent trigger-bulletin-now en tiempo real.
+- Secuencia: jingle → boletín → reanudación automática de emisión en directo o música.
+
+### Modo Enfoque Admin (Pausado Local de Audio)
+- Estado: 'isAdminFocusMode' (localStorage['aura_admin_focus_mode']).
+- Botón en la barra superior del Admin: 🎧 Modo Enfoque / 🤫 Modo Enfoque (Audio Pausado).
+- Pausa/silencia únicamente el audio de la emisión principal en el navegador del administrador para hacer configuraciones en calma.
+- Modo Preescucha: Permite escuchar audios de preescucha individuales (cuñas, canciones, intros) dentro del admin sin mezcla.
+
+### Sistema de Configuración (config.json en KV)
+Campos principales:
+- categories[]: { id, name, r2_folder, alias, live_url, ... }
+- tenants[]: { id, name, customSongNames, copilotName, ... }
+- custom_song_names: Record<songId, { title, artist, meaning, lyrics }>
+- song_sponsors: Record<songId, { name, link, bannerUrl }>
+- live_sponsor_marquee: texto marquesina LIVE
+- live_banners: array de banners rotativos LIVE
+- copilot_messages[]: mensajes programados del sistema
+- circadian_schedule: programación de categorías por hora
+- active_visual_banners[], active_audio_ads[] (con targetCategories, timeConstraint, isTutorial)
+- live_stream_url, live_stream_url_hls, live_source
+- boletines_config: { enabled, hours[], jingleUrl, boletinUrl }
+
+### Panel de Admin (AdminPanel.tsx)
+Pestañas: General, Canciones, Grilla Publicitaria, Banners, Podcasts, Widget, Users, Interstitials, Estadísticas, Moderación, Circadiano, Copiloto, Cerebro, CRM SaaS, SEO.
+- "General": Configuración del stream, Marquesina de Patrocinio LIVE y Banners rotativos.
+- "Grilla Publicitaria": Control unificado de cadencias (minutos/canciones), gestor de cuñas con edición inline, cuñas tutoriales y módulo de Boletines Informativos.
+- "Canciones": Editor de metadatos de canciones (título, artista, significado, letras [lyrics], patrocinio).
+- "Cerebro": Asistente de inteligencia artificial.
+
+### LiveView (Visualizador)
+- Componente: src/components/LiveView.tsx
+- Muestra: carátula, título/artista, visualizador de barras, letras (customMetadata.lyrics), significado, citas rotativas.
+
+### Gemini API
+- Usado en Cerebro Técnico y StoryGenerator.
+- Endpoint: REST API v1beta /models/gemini-1.5-flash:generateContent (con fallback a gemini-2.5-flash y gemini-1.5-pro).
+- Payload: systemInstruction (camelCase).
+
+Responde siempre en español, de forma técnica, clara y precisa.`;
+
+          const sendBrainMessage = async () => {
+            if (!brainInput.trim() || isBrainLoading) return;
+            const key = brainApiKey || localStorage.getItem('aura_gemini_api_key') || '';
+            if (!key) {
+              setBrainMessages(prev => [...prev, { role: 'model', text: '⚠️ Necesito una API Key de Gemini para funcionar. Introduce tu clave en el campo de arriba y guárdala.', ts: Date.now() }]);
+              return;
+            }
+            const userMsg = brainInput.trim();
+            setBrainInput('');
+            setBrainMessages(prev => [...prev, { role: 'user', text: userMsg, ts: Date.now() }]);
+            setIsBrainLoading(true);
+
+            try {
+              const history = brainMessages.map(m => ({
+                role: m.role,
+                parts: [{ text: m.text }]
+              }));
+
+              const modelsToTry = ['gemini-1.5-flash', 'gemini-2.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash-exp'];
+              let reply = '';
+              let apiErrorMessage = '';
+
+              for (const model of modelsToTry) {
+                try {
+                  const response = await fetch(
+                    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+                    {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        systemInstruction: { parts: [{ text: AURA_SYSTEM_PROMPT }] },
+                        contents: [
+                          ...history,
+                          { role: 'user', parts: [{ text: userMsg }] }
+                        ],
+                        generationConfig: {
+                          temperature: 0.7,
+                          maxOutputTokens: 2048
+                        }
+                      })
+                    }
+                  );
+                  const data = await response.json();
+                  if (response.ok && data.candidates?.[0]?.content?.parts?.[0]?.text) {
+                    reply = data.candidates[0].content.parts[0].text;
+                    break;
+                  } else if (data.error?.message) {
+                    apiErrorMessage = data.error.message;
+                  }
+                } catch (err: any) {
+                  apiErrorMessage = err.message || 'Error de red al conectar con Google Gemini.';
+                }
+              }
+
+              if (reply) {
+                setBrainMessages(prev => [...prev, { role: 'model', text: reply, ts: Date.now() }]);
+              } else {
+                setBrainMessages(prev => [...prev, { 
+                  role: 'model', 
+                  text: `❌ Error de Gemini API: ${apiErrorMessage || 'No se pudo obtener respuesta'}. Comprueba que la API Key es válida en el botón superior "API Key".`, 
+                  ts: Date.now() 
+                }]);
+              }
+            } catch (err) {
+              setBrainMessages(prev => [...prev, { role: 'model', text: '❌ Error inesperado al procesar la solicitud.', ts: Date.now() }]);
+            } finally {
+              setIsBrainLoading(false);
+              setTimeout(() => brainEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+            }
+          };
+
+          return (
+            <motion.div
+              key="brain"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="h-full flex flex-col bg-[#080810]"
+            >
+              {/* Header */}
+              <div className="p-5 border-b border-purple-500/20 flex items-center justify-between gap-4 flex-shrink-0 bg-gradient-to-r from-purple-950/60 to-bg-deep">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-purple-600 to-indigo-700 flex items-center justify-center shadow-lg shadow-purple-500/30">
+                    <Brain className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-black text-white tracking-wide">Cerebro Técnico</h2>
+                    <p className="text-[10px] text-purple-300/70">Asistente IA con conocimiento completo del sistema Aura Radio</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowBrainApiKey(p => !p)}
+                  className="flex items-center gap-1.5 text-[10px] text-purple-400 hover:text-purple-300 transition-colors cursor-pointer"
+                >
+                  <Key className="w-3.5 h-3.5" />
+                  API Key
+                  <ChevronRight className={`w-3 h-3 transition-transform ${showBrainApiKey ? 'rotate-90' : ''}`} />
+                </button>
+              </div>
+
+              {/* API Key Input (collapsible) */}
+              <AnimatePresence>
+                {showBrainApiKey && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    className="overflow-hidden border-b border-purple-500/10 flex-shrink-0"
+                  >
+                    <div className="p-4 flex gap-3 items-center bg-purple-950/20">
+                      <Key className="w-4 h-4 text-purple-400 shrink-0" />
+                      <input
+                        type="password"
+                        value={brainApiKey}
+                        onChange={e => setBrainApiKey(e.target.value)}
+                        placeholder="AIzaSy... (Gemini API Key)"
+                        className="flex-1 bg-[#13131A] border border-purple-500/30 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-purple-500 placeholder:text-text-secondary/40"
+                      />
+                      <button
+                        onClick={() => {
+                          localStorage.setItem('aura_gemini_api_key', brainApiKey);
+                          setShowBrainApiKey(false);
+                        }}
+                        className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
+                      >
+                        Guardar
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Messages Area */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-4 no-scrollbar">
+                {brainMessages.length === 0 && (
+                  <div className="flex flex-col items-center justify-center h-full gap-4 text-center py-12">
+                    <div className="w-16 h-16 rounded-3xl bg-gradient-to-br from-purple-600/30 to-indigo-700/30 border border-purple-500/20 flex items-center justify-center">
+                      <Brain className="w-8 h-8 text-purple-400" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-white mb-1">Cerebro Técnico de Aura Radio</p>
+                      <p className="text-xs text-text-secondary max-w-sm">Pregúntame cualquier cosa sobre el sistema: banners y marquesina LIVE, Top 20 y Top 100, LocalStorage vs Base de Datos, boletines de noticias...</p>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-md w-full">
+                      {[
+                        '¿Cómo configurar los banners y marquesina del Estudio LIVE?',
+                        '¿Qué va en LocalStorage y qué en la Base de Datos KV?',
+                        '¿Cómo funciona el ranking Top 20 y Top 100 de canciones?',
+                        '¿Cómo funciona el flujo de boletines de noticias?'
+                      ].map(q => (
+                        <button
+                          key={q}
+                          onClick={() => { setBrainInput(q); }}
+                          className="text-left px-3 py-2.5 bg-purple-950/30 border border-purple-500/15 rounded-xl text-[10px] text-purple-300/80 hover:border-purple-500/40 hover:text-purple-200 transition-all cursor-pointer"
+                        >
+                          <Sparkles className="w-3 h-3 inline mr-1 text-purple-400" />
+                          {q}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {brainMessages.map((msg, i) => (
+                  <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    {msg.role === 'model' && (
+                      <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-purple-600 to-indigo-700 flex items-center justify-center shrink-0 mt-0.5">
+                        <Brain className="w-4 h-4 text-white" />
+                      </div>
+                    )}
+                    <div className={`max-w-[80%] rounded-2xl px-4 py-3 text-xs leading-relaxed whitespace-pre-wrap break-words ${
+                      msg.role === 'user'
+                        ? 'bg-purple-600/80 text-white rounded-br-sm'
+                        : 'bg-white/5 border border-white/8 text-white/90 rounded-bl-sm'
+                    }`}>
+                      {msg.text}
+                    </div>
+                    {msg.role === 'user' && (
+                      <div className="w-8 h-8 rounded-xl bg-white/10 flex items-center justify-center shrink-0 mt-0.5">
+                        <User2 className="w-4 h-4 text-white/70" />
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                {isBrainLoading && (
+                  <div className="flex gap-3 justify-start">
+                    <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-purple-600 to-indigo-700 flex items-center justify-center shrink-0 animate-pulse">
+                      <Brain className="w-4 h-4 text-white" />
+                    </div>
+                    <div className="bg-white/5 border border-white/8 rounded-2xl rounded-bl-sm px-4 py-3 flex items-center gap-2">
+                      <div className="flex gap-1">
+                        {[0, 1, 2].map(i => (
+                          <div key={i} className="w-1.5 h-1.5 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
+                        ))}
+                      </div>
+                      <span className="text-[10px] text-purple-300/70">Analizando...</span>
+                    </div>
+                  </div>
+                )}
+
+                <div ref={brainEndRef} />
+              </div>
+
+              {/* Input Area */}
+              <div className="p-4 border-t border-purple-500/15 flex-shrink-0 bg-gradient-to-t from-[#080810] to-transparent">
+                <div className="flex gap-2">
+                  <textarea
+                    value={brainInput}
+                    onChange={e => setBrainInput(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        sendBrainMessage();
+                      }
+                    }}
+                    placeholder="Pregunta sobre el sistema... (Enter para enviar, Shift+Enter nueva línea)"
+                    rows={2}
+                    className="flex-1 bg-white/5 border border-purple-500/20 rounded-xl px-4 py-3 text-xs text-white placeholder:text-text-secondary/40 focus:outline-none focus:border-purple-500/60 resize-none"
+                  />
+                  <button
+                    onClick={sendBrainMessage}
+                    disabled={isBrainLoading || !brainInput.trim()}
+                    className="px-4 self-end py-3 bg-purple-600 hover:bg-purple-500 disabled:opacity-40 text-white rounded-xl transition-all cursor-pointer disabled:cursor-not-allowed shadow-lg shadow-purple-500/20 flex items-center gap-2"
+                  >
+                    <Send className="w-4 h-4" />
+                  </button>
+                </div>
+                <p className="text-[9px] text-text-secondary/40 mt-2 text-center">
+                  Powered by Gemini 2.0 Flash · Tiene conocimiento completo de la arquitectura de Aura Radio
+                </p>
+              </div>
+            </motion.div>
+          );
+        })()}
+
+        {/* ===== GRILLA PUBLICITARIA TAB ===== */}
+        {activeTab === 'ads' && (() => {
+          const handleAddAudioAd = () => {
+            if (!newAdForm.url.trim()) return;
+            let fullUrl = newAdForm.url.trim();
+            if (!fullUrl.startsWith('http')) {
+              fullUrl = `https://audioads.aurabusiness.es/${fullUrl}`;
+            }
+
+            const newAdObj: AudioAd = {
+              id: `ad-${Date.now()}`,
+              url: fullUrl,
+              weight: newAdForm.weight,
+              sponsorName: newAdForm.sponsorName.trim() || undefined,
+              targetCategories: newAdForm.targetCategory === 'all' ? [] : [newAdForm.targetCategory],
+              timeConstraint: newAdForm.timeConstraint,
+              sponsorBannerUrl: newAdForm.sponsorBannerUrl.trim() || undefined,
+              isTutorial: newAdForm.isTutorial
+            };
+
+            setAdPool(prev => [...prev, newAdObj]);
+            setNewAdForm({
+              url: '',
+              sponsorName: '',
+              weight: 5,
+              targetCategory: 'all',
+              timeConstraint: 'all',
+              sponsorBannerUrl: '',
+              isTutorial: false
+            });
+          };
+
+          return (
+            <motion.div
+              key="ads"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="h-full overflow-y-auto p-6 md:p-8 bg-bg-deep space-y-8 no-scrollbar"
+            >
+              {/* Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border pb-6">
+                <div>
+                  <h2 className="text-2xl font-black text-white uppercase tracking-widest flex items-center gap-3">
+                    <Megaphone className="w-7 h-7 text-amber-400 animate-pulse" />
+                    Grilla Publicitaria & Motor de Cuñas
+                  </h2>
+                  <p className="text-xs text-text-secondary mt-1">
+                    Orquesta cadencias de emisión para Radio en Directo (minutos) y Catálogo (canciones), segmenta por patrocinadores y categorías.
+                  </p>
+                </div>
+                <button
+                  onClick={saveConfigToWorker}
+                  disabled={isSaving}
+                  className="px-6 py-3 bg-amber-500 hover:bg-amber-400 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-amber-500/20 flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  Guardar Grilla Publicitaria
+                </button>
+              </div>
+
+              {/* Grid Layout: Config Reglas + Formulario */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+                {/* Card 1: Cadencias y Reglas de Emisión */}
+                <div className="bg-bg-surface border border-border rounded-2xl p-6 space-y-6">
+                  <div className="flex items-center gap-2 border-b border-border/60 pb-3">
+                    <Clock className="w-5 h-5 text-amber-400" />
+                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">Reglas & Cadencias</h3>
+                  </div>
+
+                  {/* Cadencia Radio en Directo (Minutos) */}
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                      <Radio className="w-4 h-4 text-amber-400" />
+                      Cadencia en Radio en Directo (Live)
+                    </label>
+                    <p className="text-[10px] text-text-secondary leading-normal">
+                      Cada cuántos minutos de emisión continua de la señal en directo se pausará suavemente para emitir una cuña.
+                    </p>
+                    <div className="flex items-center gap-3 pt-1">
+                      <select
+                        value={liveAdCadenceMinutes}
+                        onChange={(e) => setLiveAdCadenceMinutes(parseInt(e.target.value) || 15)}
+                        className="flex-1 bg-bg-deep border border-border rounded-xl px-4 py-2.5 text-xs text-white focus:border-amber-400"
+                      >
+                        <option value={5}>Cada 5 minutos</option>
+                        <option value={10}>Cada 10 minutos</option>
+                        <option value={15}>Cada 15 minutos (Recomendado)</option>
+                        <option value={20}>Cada 20 minutos</option>
+                        <option value={30}>Cada 30 minutos</option>
+                        <option value={45}>Cada 45 minutos</option>
+                        <option value={60}>Cada 60 minutos</option>
+                      </select>
+                      <span className="text-xs font-mono text-amber-400 font-bold">{liveAdCadenceMinutes} min</span>
+                    </div>
+                  </div>
+
+                  {/* Cadencia Catálogo / Canciones */}
+                  <div className="space-y-2 pt-3 border-t border-white/5">
+                    <label className="text-xs font-bold text-accent flex items-center gap-1.5">
+                      <Music className="w-4 h-4 text-accent" />
+                      Cadencia en Catálogo / Listas
+                    </label>
+                    <p className="text-[10px] text-text-secondary leading-normal">
+                      Cada cuántas canciones de catálogo bajo demanda se intercalará una cuña publicitaria.
+                    </p>
+                    <div className="flex items-center gap-3 pt-1">
+                      <input
+                        type="number"
+                        min={1}
+                        max={30}
+                        value={audioAdCadence}
+                        onChange={(e) => setAudioAdCadence(parseInt(e.target.value) || 5)}
+                        className="w-24 bg-bg-deep border border-border rounded-xl px-4 py-2.5 text-xs text-white focus:border-accent"
+                      />
+                      <span className="text-xs text-text-secondary">canciones</span>
+                    </div>
+                  </div>
+
+                  {/* Modo Selección: Aleatorio vs Pesos */}
+                  <div className="space-y-2 pt-3 border-t border-white/5">
+                    <label className="text-xs font-bold text-white uppercase tracking-wider block">Modo de Selección de Cuñas</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => setAdMode('random')}
+                        className={`p-3 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer ${
+                          adMode === 'random' ? 'bg-amber-500/20 border-amber-400 text-amber-300' : 'bg-white/5 border-white/5 text-text-secondary hover:text-white'
+                        }`}
+                      >
+                        🎲 Aleatorio
+                      </button>
+                      <button
+                        onClick={() => setAdMode('weighted')}
+                        className={`p-3 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer ${
+                          adMode === 'weighted' ? 'bg-amber-500/20 border-amber-400 text-amber-300' : 'bg-white/5 border-white/5 text-text-secondary hover:text-white'
+                        }`}
+                      >
+                        ⚖️ Por Pesos
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Sección Informativa Boletines */}
+                  <div className="p-4 bg-purple-950/30 border border-purple-500/30 rounded-2xl space-y-4 pt-4 mt-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <FileText className="w-5 h-5 text-purple-400" />
+                        <h4 className="text-xs font-bold text-purple-200 uppercase tracking-wider">Boletines de Noticias</h4>
+                      </div>
+                      <button
+                        onClick={() => setBoletinesConfig(prev => ({ ...prev, enabled: !prev.enabled }))}
+                        className={`px-3 py-1 rounded-full text-[10px] font-bold transition-all cursor-pointer border ${
+                          boletinesConfig.enabled 
+                            ? 'bg-purple-600 text-white border-purple-400 shadow-md shadow-purple-500/20' 
+                            : 'bg-white/5 text-text-secondary border-white/10'
+                        }`}
+                      >
+                        {boletinesConfig.enabled ? '✓ Activados' : 'Desactivados'}
+                      </button>
+                    </div>
+
+                    <p className="text-[10px] text-purple-300/80 leading-relaxed">
+                      Sintonía + Boletín Informativo automatizado desde <span className="text-white font-mono font-bold">noticias.auraradio.es</span> a las horas en punto.
+                    </p>
+
+                    {/* Action Trigger Button */}
+                    <button
+                      onClick={() => {
+                        // Turn off focus mode locally so admin can hear the bulletin
+                        if (isAdminFocusMode) {
+                          setIsAdminFocusMode(false);
+                        }
+
+                        // Local DOM event
+                        window.dispatchEvent(new CustomEvent('trigger-bulletin-now'));
+
+                        // Cross-tab BroadcastChannel
+                        try {
+                          const bc = new BroadcastChannel('aura-radio-events');
+                          bc.postMessage({ type: 'trigger-bulletin-now', timestamp: Date.now() });
+                          bc.close();
+                        } catch (e) {}
+
+                        // Remote server trigger for all listeners worldwide
+                        const updatedBoletinesConfig = {
+                          ...boletinesConfig,
+                          last_manual_trigger: Date.now()
+                        };
+                        setBoletinesConfig(updatedBoletinesConfig);
+                        localStorage.setItem('aura_trigger_bulletin_now', String(Date.now()));
+
+                        // FIX: Persistir en el Worker KV para que los oyentes remotos
+                        // (otros dispositivos/navegadores) reciban la señal en su polling de 3s.
+                        if (masterConfig) {
+                          const remotePayload = {
+                            ...masterConfig,
+                            boletines_config: updatedBoletinesConfig,
+                            last_updated: new Date().toISOString(),
+                          };
+                          fetch(`${API_CONFIG.BASE_URL}/api/admin/save-config`, {
+                            method: 'POST',
+                            headers: {
+                              'Content-Type': 'application/json',
+                              'X-User-Email': 'holasolonet@gmail.com',
+                              'X-User-Role': 'superadmin'
+                            },
+                            body: JSON.stringify(remotePayload)
+                          }).catch(() => {}); // fire-and-forget: no bloquea el UI
+                        }
+
+                        const toast = document.createElement('div');
+                        toast.className = 'fixed bottom-10 left-1/2 -translate-x-1/2 bg-purple-600 text-white px-5 py-2.5 rounded-full text-xs font-bold shadow-2xl z-[300] animate-bounce';
+                        toast.textContent = '⚡ ¡Boletín Informativo Lanzado en Vivo!';
+                        document.body.appendChild(toast);
+                        setTimeout(() => toast.remove(), 3500);
+                      }}
+                      className="w-full py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-purple-500/20 flex items-center justify-center gap-2 transition-all cursor-pointer"
+                    >
+                      <Zap className="w-4 h-4 fill-current text-yellow-300" />
+                      Lanzar Boletín Informativo Ahora
+                    </button>
+
+                    {/* Horas en Punto Scheduler */}
+                    <div className="space-y-2 pt-2 border-t border-purple-500/20">
+                      <label className="text-[10px] font-bold text-purple-300 uppercase tracking-wider block">Horas de Emisión en Punto</label>
+                      <div className="grid grid-cols-6 gap-1">
+                        {Array.from({ length: 24 }).map((_, h) => {
+                          const active = boletinesConfig.hours.includes(h);
+                          return (
+                            <button
+                              key={h}
+                              onClick={() => {
+                                setBoletinesConfig(prev => {
+                                  const hours = active 
+                                    ? prev.hours.filter(x => x !== h) 
+                                    : [...prev.hours, h].sort((a,b) => a-b);
+                                  return { ...prev, hours };
+                                });
+                              }}
+                              className={`py-1 rounded text-[10px] font-mono font-bold transition-all cursor-pointer ${
+                                active
+                                  ? 'bg-purple-500 text-white shadow-sm'
+                                  : 'bg-white/5 text-white/40 hover:text-white'
+                              }`}
+                              title={`${h.toString().padStart(2, '0')}:00 h`}
+                            >
+                              {h.toString().padStart(2, '0')}h
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* URLs de Noticias */}
+                    <div className="space-y-2 pt-2 border-t border-purple-500/20">
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-bold text-purple-300 uppercase">URL Sintonía Jingle Noticias</label>
+                        <input
+                          type="text"
+                          value={boletinesConfig.jingleUrl}
+                          onChange={e => setBoletinesConfig(prev => ({ ...prev, jingleUrl: e.target.value }))}
+                          className="w-full bg-bg-deep border border-purple-500/20 rounded-lg px-2.5 py-1.5 text-[10px] font-mono text-purple-200 focus:border-purple-400 focus:outline-none"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-bold text-purple-300 uppercase">URL Audio Boletín Noticias</label>
+                        <input
+                          type="text"
+                          value={boletinesConfig.boletinUrl || ''}
+                          onChange={e => setBoletinesConfig(prev => ({ ...prev, boletinUrl: e.target.value }))}
+                          className="w-full bg-bg-deep border border-purple-500/20 rounded-lg px-2.5 py-1.5 text-[10px] font-mono text-purple-200 focus:border-purple-400 focus:outline-none"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-bold text-purple-300 uppercase flex items-center justify-between">
+                          <span>URL Fondo de Cama / Música (10% volumen)</span>
+                          <span className="text-yellow-400 font-mono font-bold">10% vol</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={boletinesConfig.backgroundBedUrl || ''}
+                          placeholder="https://audioads.aurabusiness.es/jingles/jingles_noticias_1.mp3"
+                          onChange={e => setBoletinesConfig(prev => ({ ...prev, backgroundBedUrl: e.target.value }))}
+                          className="w-full bg-bg-deep border border-purple-500/20 rounded-lg px-2.5 py-1.5 text-[10px] font-mono text-purple-200 focus:border-purple-400 focus:outline-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Card 2: Formulario Alta de Cuña / Patrocinio */}
+                <div className="lg:col-span-2 bg-bg-surface border border-border rounded-2xl p-6 space-y-5">
+                  <div className="flex items-center justify-between border-b border-border/60 pb-3">
+                    <div className="flex items-center gap-2">
+                      <Plus className="w-5 h-5 text-amber-400" />
+                      <h3 className="text-sm font-bold text-white uppercase tracking-wider">Añadir Cuña / Patrocinador al Pool</h3>
+                    </div>
+                    <span className="text-[10px] text-amber-400 font-mono font-bold bg-amber-400/10 px-2.5 py-1 rounded-full border border-amber-400/20">
+                      {adPool.length} Cuñas Activas
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {/* URL de la Cuña */}
+                    <div className="sm:col-span-2 space-y-1">
+                      <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">URL del Audio (MP3 en R2 o enlace)</label>
+                      <input
+                        type="text"
+                        placeholder="Ej: Aura Display.mp3  o  https://audioads.aurabusiness.es/cuña_patrocinador.mp3"
+                        value={newAdForm.url}
+                        onChange={e => setNewAdForm(prev => ({ ...prev, url: e.target.value }))}
+                        className="w-full bg-bg-deep border border-border rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-amber-400"
+                      />
+                    </div>
+
+                    {/* Nombre del Patrocinador */}
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Patrocinador / Cliente (Opcional)</label>
+                      <input
+                        type="text"
+                        placeholder="Ej. Comercial Huelva, Cafés El Puerto..."
+                        value={newAdForm.sponsorName}
+                        onChange={e => setNewAdForm(prev => ({ ...prev, sponsorName: e.target.value }))}
+                        className="w-full bg-bg-deep border border-border rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-amber-400"
+                      />
+                    </div>
+
+                    {/* Banner Publicitario Visual */}
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">URL Banner Visual (Pantalla Opcional)</label>
+                      <input
+                        type="text"
+                        placeholder="https://... (Imagen a mostrar durante la cuña)"
+                        value={newAdForm.sponsorBannerUrl}
+                        onChange={e => setNewAdForm(prev => ({ ...prev, sponsorBannerUrl: e.target.value }))}
+                        className="w-full bg-bg-deep border border-border rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-amber-400"
+                      />
+                    </div>
+
+                    {/* Segmentación por Categoría */}
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Categoría Objetivo</label>
+                      <select
+                        value={newAdForm.targetCategory}
+                        onChange={e => setNewAdForm(prev => ({ ...prev, targetCategory: e.target.value }))}
+                        className="w-full bg-bg-deep border border-border rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-amber-400"
+                      >
+                        <option value="all">Aplica a Todas las Categorías</option>
+                        {categories.map(cat => (
+                          <option key={cat.id} value={cat.id}>{cat.name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Franja Horaria */}
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Franja Horaria</label>
+                      <select
+                        value={newAdForm.timeConstraint}
+                        onChange={e => setNewAdForm(prev => ({ ...prev, timeConstraint: e.target.value as any }))}
+                        className="w-full bg-bg-deep border border-border rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-amber-400"
+                      >
+                        <option value="all">Cualquier Hora (24h)</option>
+                        <option value="morning">Mañana (06:00 - 11:59)</option>
+                        <option value="afternoon">Tarde (12:00 - 19:59)</option>
+                        <option value="night">Noche (20:00 - 05:59)</option>
+                      </select>
+                    </div>
+                    {/* Tipo de Cuña: Comercial vs Tutorial */}
+                    <div className="sm:col-span-2 flex items-center gap-3 p-3 bg-white/5 border border-white/8 rounded-xl">
+                      <input
+                        type="checkbox"
+                        id="isTutorialCheck"
+                        checked={newAdForm.isTutorial}
+                        onChange={e => setNewAdForm(prev => ({ ...prev, isTutorial: e.target.checked }))}
+                        className="w-4 h-4 accent-amber-400 rounded cursor-pointer"
+                      />
+                      <label htmlFor="isTutorialCheck" className="text-xs text-white font-bold cursor-pointer flex items-center gap-2">
+                        <span>🎓 Es una Cuña Tutorial / Formativa (Aprende Cantando)</span>
+                        <span className="text-[9px] text-text-secondary font-normal">(Se presentará como contenido educativo de la app)</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Peso Deslizante + Botón */}
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2 border-t border-white/5">
+                    <div className="flex items-center gap-3 w-full sm:w-auto">
+                      <span className="text-xs font-bold text-text-secondary uppercase">Peso / Probabilidad:</span>
+                      <input
+                        type="range"
+                        min="1"
+                        max="10"
+                        value={newAdForm.weight}
+                        onChange={e => setNewAdForm(prev => ({ ...prev, weight: parseInt(e.target.value) || 5 }))}
+                        className="w-32 accent-amber-400"
+                      />
+                      <span className="text-xs font-mono font-bold text-amber-400">{newAdForm.weight}/10</span>
+                    </div>
+
+                    <button
+                      onClick={handleAddAudioAd}
+                      disabled={!newAdForm.url.trim()}
+                      className="w-full sm:w-auto px-6 py-2.5 bg-amber-500 hover:bg-amber-400 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-amber-500/20 disabled:opacity-40 cursor-pointer"
+                    >
+                      + Agregar Cuña al Pool
+                    </button>
+                  </div>
+
+                  {/* Tabla de Cuñas Configuradas */}
+                  <div className="pt-4 border-t border-border space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-bold text-white uppercase tracking-wider">Cuñas Configuradas en el Pool</h4>
+                      <span className="text-[10px] text-text-secondary font-medium">Haz clic en los badges o controles para modificar cuñas existentes</span>
+                    </div>
+                    
+                    {adPool.length === 0 ? (
+                      <div className="p-8 text-center border border-dashed border-white/10 rounded-2xl">
+                        <Megaphone className="w-8 h-8 text-text-secondary/40 mx-auto mb-2" />
+                        <p className="text-xs text-text-secondary">No hay cuñas publicitarias configuradas.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3 max-h-[450px] overflow-y-auto pr-1 no-scrollbar">
+                        {adPool.map((ad, idx) => {
+                          const cleanName = decodeURIComponent(ad.url.split('/').pop() || ad.url);
+                          const isPlaying = playingAdUrl === ad.url;
+
+                          return (
+                            <div key={idx} className="p-4 bg-bg-deep border border-border/70 rounded-2xl space-y-3 hover:border-amber-400/40 transition-colors">
+                              {/* Top row: Play + Name / Sponsor + Delete */}
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="flex items-center gap-3 min-w-0 flex-1">
+                                  <button
+                                    onClick={() => togglePlayAd(ad.url)}
+                                    className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-colors cursor-pointer ${
+                                      isPlaying ? 'bg-amber-500 text-white' : 'bg-white/5 text-amber-400 hover:bg-amber-500/20'
+                                    }`}
+                                  >
+                                    {isPlaying ? <Square className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 ml-0.5 fill-current" />}
+                                  </button>
+                                  <div className="min-w-0 flex-1">
+                                    <input
+                                      type="text"
+                                      value={ad.sponsorName || ''}
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        setAdPool(prev => prev.map((a, i) => i === idx ? { ...a, sponsorName: val || undefined } : a));
+                                      }}
+                                      placeholder="Nombre patrocinador..."
+                                      className="text-xs font-bold text-white bg-transparent border-b border-transparent hover:border-white/20 focus:border-amber-400 focus:bg-white/5 rounded px-1.5 py-0.5 w-full focus:outline-none transition-colors"
+                                    />
+                                    <p className="text-[10px] text-text-secondary/60 truncate font-mono px-1.5" title={ad.url}>
+                                      {cleanName}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <button
+                                  onClick={() => setAdPool(prev => prev.filter((_, i) => i !== idx))}
+                                  className="p-2 text-text-secondary hover:text-red-400 opacity-60 hover:opacity-100 transition-opacity cursor-pointer shrink-0"
+                                  title="Eliminar cuña del pool"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+
+                              {/* Controls row: Tutorial Toggle + Category + Time + Weight */}
+                              <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-white/5 text-[10px]">
+                                {/* Toggle Tutorial / Comercial */}
+                                <button
+                                  onClick={() => {
+                                    setAdPool(prev => prev.map((a, i) => i === idx ? { ...a, isTutorial: !a.isTutorial } : a));
+                                  }}
+                                  className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer border ${
+                                    ad.isTutorial
+                                      ? 'bg-amber-500/20 border-amber-400/50 text-amber-300 shadow-sm'
+                                      : 'bg-white/5 border-white/10 text-text-secondary hover:text-white'
+                                  }`}
+                                  title="Haz clic para cambiar entre Tutorial y Comercial"
+                                >
+                                  {ad.isTutorial ? '🎓 Tutorial App' : '📢 Comercial'}
+                                </button>
+
+                                {/* Selector de Categoría */}
+                                <select
+                                  value={ad.targetCategories && ad.targetCategories.length > 0 ? ad.targetCategories[0] : 'all'}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setAdPool(prev => prev.map((a, i) => i === idx ? { ...a, targetCategories: val === 'all' ? [] : [val] } : a));
+                                  }}
+                                  className="bg-white/5 border border-white/10 text-white rounded-lg px-2 py-1 text-[10px] focus:outline-none focus:border-amber-400 cursor-pointer"
+                                >
+                                  <option value="all" className="bg-bg-deep text-white">Todas las Categorías</option>
+                                  {categories.map(c => (
+                                    <option key={c.id} value={c.id} className="bg-bg-deep text-white">{c.name}</option>
+                                  ))}
+                                </select>
+
+                                {/* Selector de Franja Horaria */}
+                                <select
+                                  value={ad.timeConstraint || 'all'}
+                                  onChange={(e) => {
+                                    const val = e.target.value as any;
+                                    setAdPool(prev => prev.map((a, i) => i === idx ? { ...a, timeConstraint: val } : a));
+                                  }}
+                                  className="bg-white/5 border border-white/10 text-white rounded-lg px-2 py-1 text-[10px] focus:outline-none focus:border-amber-400 cursor-pointer"
+                                >
+                                  <option value="all" className="bg-bg-deep text-white">Todas las horas (24h)</option>
+                                  <option value="morning" className="bg-bg-deep text-white">Mañana (06-12h)</option>
+                                  <option value="afternoon" className="bg-bg-deep text-white">Tarde (12-20h)</option>
+                                  <option value="night" className="bg-bg-deep text-white">Noche (20-06h)</option>
+                                </select>
+
+                                {/* Weight Slider */}
+                                <div className="flex items-center gap-1.5 ml-auto bg-white/5 border border-white/10 rounded-lg px-2 py-1">
+                                  <span className="text-text-secondary font-bold">Peso:</span>
+                                  <input
+                                    type="range"
+                                    min="1"
+                                    max="10"
+                                    value={ad.weight || 5}
+                                    onChange={(e) => {
+                                      const w = parseInt(e.target.value) || 5;
+                                      setAdPool(prev => prev.map((a, i) => i === idx ? { ...a, weight: w } : a));
+                                    }}
+                                    className="w-16 h-1 accent-amber-400"
+                                  />
+                                  <span className="font-mono font-bold text-amber-400 w-3">{ad.weight || 5}</span>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+              </div>
+            </motion.div>
+          );
+        })()}
 
       </main>
 

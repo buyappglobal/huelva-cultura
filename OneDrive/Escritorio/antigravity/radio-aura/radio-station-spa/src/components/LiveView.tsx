@@ -4,6 +4,7 @@ import { Radio, Heart, Share2, Maximize2, Minimize2, Sparkles, Sun, Moon, Sunris
 import { Song, CircadianQuote, AudioVisualizerConfig, API_CONFIG } from '../types';
 import { audioEngine } from '../lib/AudioEngine';
 import { triggerHaptic } from '../lib/haptics';
+import { buildShareMessage } from '../lib/shareHelper';
 
 interface LiveViewProps {
   currentSong: Song | null;
@@ -526,6 +527,47 @@ export const LiveView: React.FC<LiveViewProps> = ({
   const [quoteIndex, setQuoteIndex] = useState(0);
   const [userVizIndex, setUserVizIndex] = useState<number | null>(null);
   const [showExtraDetails, setShowExtraDetails] = useState<boolean>(true);
+  const [shareToast, setShareToast] = useState<string | null>(null);
+
+  const handleShareSong = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    triggerHaptic(10);
+
+    if (currentSong) {
+      // Register share interaction with backend API (+5.0 points ranking boost)
+      fetch(`${API_CONFIG.BASE_URL}/api/songs/react`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ song_id: currentSong.id, reaction: 'share' })
+      }).catch(() => {});
+
+      const shareData = buildShareMessage(currentSong, customMetadata, 'Aura Radio', null);
+
+      if (navigator.share) {
+        try {
+          await navigator.share({
+            title: shareData.title,
+            text: shareData.text,
+            url: shareData.url
+          });
+          setShareToast('¡Canción compartida! +5 pts sumados al Top 20');
+          setTimeout(() => setShareToast(null), 3500);
+        } catch (err) {
+          console.warn('Native share cancelled or failed', err);
+        }
+      } else {
+        try {
+          await navigator.clipboard.writeText(shareData.text);
+          setShareToast('¡Enlace de canción copiado! +5 pts impulsados al Top 20');
+          setTimeout(() => setShareToast(null), 3500);
+        } catch (err) {
+          console.error('Failed to copy share text', err);
+        }
+      }
+    } else {
+      if (onShare) onShare(e);
+    }
+  };
 
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -1251,8 +1293,13 @@ export const LiveView: React.FC<LiveViewProps> = ({
               transition={{ duration: 0.6 }}
               className="space-y-3"
             >
-              <h1 className="text-2xl sm:text-4xl font-black text-white tracking-tight drop-shadow-[0_4px_25px_rgba(0,0,0,0.8)]">
-                {currentSong?.title || "Emisión en Directo Aura Radio"}
+              <h1 className="text-2xl sm:text-4xl font-black text-white tracking-tight drop-shadow-[0_4px_25px_rgba(0,0,0,0.8)] flex items-center justify-center gap-3 flex-wrap">
+                <span>{currentSong?.title || "Emisión en Directo Aura Radio"}</span>
+                {currentSong && (currentSong.isExplicit || currentSong.explicit) && (
+                  <span className="px-2 py-0.5 text-xs font-black bg-red-500/30 text-red-300 border border-red-500/50 rounded-md uppercase tracking-wider shadow-[0_0_12px_rgba(239,68,68,0.3)]">
+                    EXPLÍCITA
+                  </span>
+                )}
               </h1>
               <p className="text-sm sm:text-base text-white/80 font-medium max-w-md mx-auto line-clamp-2">
                 {currentSong?.artist || "Flujo continuo de música inteligente libre de derechos"}
@@ -1270,14 +1317,25 @@ export const LiveView: React.FC<LiveViewProps> = ({
                   className="w-full flex flex-col items-center overflow-hidden"
                 >
                   {/* Dynamic Lyrics & Meaning Integrated Drawer */}
-                  {customMetadata?.lyrics && (
-                    <div className="w-full max-w-md mt-4 bg-black/40 border border-white/10 rounded-2xl p-4 backdrop-blur-md max-h-40 overflow-y-auto no-scrollbar shadow-inner text-center">
-                      <p className="text-[9px] font-black uppercase tracking-wider text-accent mb-2">Letra de la canción</p>
-                      <p className="text-xs text-white/90 leading-relaxed font-medium whitespace-pre-line select-text">
-                        {customMetadata.lyrics}
-                      </p>
-                    </div>
-                  )}
+                  {(() => {
+                    const effectiveLyrics = customMetadata?.lyrics || currentSong?.lyrics || customMetadata?.meaning;
+                    if (!effectiveLyrics) return null;
+                    return (
+                      <div className="w-full max-w-md mt-4 bg-black/85 border border-white/20 rounded-2xl p-5 backdrop-blur-xl max-h-48 overflow-y-auto no-scrollbar shadow-[0_10px_30px_rgba(0,0,0,0.8)] text-center relative z-20">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-accent mb-2 flex items-center justify-center gap-1.5">
+                          <span>Letra / Poema de la canción</span>
+                          {currentSong && (currentSong.isExplicit || currentSong.explicit) && (
+                            <span className="px-1.5 py-0.2 text-[8px] font-black bg-red-500/20 text-red-400 border border-red-500/30 rounded uppercase tracking-wider ml-1">
+                              [E]
+                            </span>
+                          )}
+                        </p>
+                        <p className="text-xs sm:text-sm text-white leading-relaxed font-semibold whitespace-pre-line select-text drop-shadow-md">
+                          {effectiveLyrics}
+                        </p>
+                      </div>
+                    );
+                  })()}
 
                   {/* Rotating Subtle Inspirational Quote (Aura TV v-2.0 Style) */}
                   <div className="h-10 mt-3 flex items-center justify-center">
@@ -1345,6 +1403,21 @@ export const LiveView: React.FC<LiveViewProps> = ({
         </div>
       )}
 
+      {/* Floating Share Success Toast Notification */}
+      <AnimatePresence>
+        {shareToast && (
+          <motion.div
+            initial={{ opacity: 0, y: 20, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.9 }}
+            className="absolute bottom-24 left-1/2 -translate-x-1/2 z-50 bg-accent text-white px-5 py-2.5 rounded-full text-xs font-black shadow-2xl backdrop-blur-md border border-white/20 flex items-center gap-2"
+          >
+            <Sparkles className="w-4 h-4 text-amber-300 animate-bounce" />
+            <span>{shareToast}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* FOOTER ACTIONS: Play Toggle, Favorite & Share */}
       <div className="relative z-20 flex items-center justify-between border-t border-white/10 pt-6">
         <div className="flex items-center gap-3">
@@ -1363,11 +1436,11 @@ export const LiveView: React.FC<LiveViewProps> = ({
           )}
 
           <button
-            onClick={onShare}
-            className="p-3 bg-black/40 hover:bg-black/60 text-white/80 hover:text-white rounded-full border border-white/10 backdrop-blur-md transition-all active:scale-95 cursor-pointer shadow-md"
-            title="Compartir Emisión en Directo"
+            onClick={handleShareSong}
+            className="p-3 bg-black/40 hover:bg-black/60 text-white/80 hover:text-white rounded-full border border-white/10 backdrop-blur-md transition-all active:scale-95 cursor-pointer shadow-md relative"
+            title="Compartir esta canción (+5 pts Top 20)"
           >
-            <Share2 className="w-5 h-5" />
+            <Share2 className="w-5 h-5 text-accent" />
           </button>
         </div>
 
