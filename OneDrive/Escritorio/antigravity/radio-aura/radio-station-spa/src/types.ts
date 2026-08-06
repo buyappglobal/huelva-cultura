@@ -222,6 +222,14 @@ export interface TenantConfig {
     jingleUrl: string;
     boletinUrl?: string;
     backgroundBedUrl?: string;
+    aiEnabled?: boolean;
+    geminiApiKey?: string;
+    elevenLabsApiKey?: string;
+    elevenLabsVoices?: { id: string; name: string }[];
+    voiceRotationMode?: 'random' | 'sequential';
+    customPrompt?: string;
+    lastGeneratedAt?: string;
+    lastGeneratedScript?: string;
   };
   liveSponsorMarquee?: string;
   liveBanners?: LiveSponsorBanner[];

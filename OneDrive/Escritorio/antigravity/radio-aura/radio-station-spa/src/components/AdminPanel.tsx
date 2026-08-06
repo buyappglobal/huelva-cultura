@@ -799,8 +799,32 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
     hours: number[];
     jingleUrl: string;
     boletinUrl?: string;
+    backgroundBedUrl?: string;
+    aiEnabled?: boolean;
+    geminiApiKey?: string;
+    elevenLabsApiKey?: string;
+    elevenLabsVoices?: { id: string; name: string }[];
+    voiceRotationMode?: 'random' | 'sequential';
+    customPrompt?: string;
+    lastGeneratedAt?: string;
+    lastGeneratedScript?: string;
   }>(() => {
     const saved = localStorage.getItem('aura_boletines_config');
+    const defaultPrompt = `Eres el redactor jefe y locutor principal de Aura Radio (Huelva). 
+Busca las noticias más destacadas de HOY en la provincia de Huelva y redacta un boletín informativo de radio directo, fresco y profesional.
+
+Estructura obligatoria del boletín (duración estimada: 90 segundos, unas 200-240 palabras):
+1. Saludo breve: "Noticias en Aura Radio. Saludos de la redacción informativa..."
+2. Noticia de la Sierra de Huelva: Actualidad reciente de la Sierra de Aracena y Picos de Aroche / Jabugo.
+3. Noticia Provincial: Noticia destacada de la provincia o capital onubense.
+4. Noticia Deportiva: Actualidad del Recreativo de Huelva o deporte local.
+5. El Tiempo: Pronóstico del tiempo para el día de hoy en Huelva.
+6. Cierre: "Toda la información al minuto en Aura Radio. Seguimos con más música."
+
+REGLAS CRÍTICAS:
+- No incluyas anotaciones de producción entre corchetes o paréntesis como [Música de fondo] o (Pausa).
+- Escribe ÚNICAMENTE el texto directo listo para ser locutado por voz artificial de alta calidad.`;
+
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
@@ -809,6 +833,15 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
         }
         if (!parsed.jingleUrl) {
           parsed.jingleUrl = 'https://boletines.auraradio.es/jingles%20noticias%201.mp3';
+        }
+        if (!parsed.customPrompt) {
+          parsed.customPrompt = defaultPrompt;
+        }
+        if (!parsed.elevenLabsVoices || parsed.elevenLabsVoices.length === 0) {
+          parsed.elevenLabsVoices = [
+            { id: '21m00Tcm4TlvDq8ikWAM', name: 'Voz Femenina 1 (Mañanas - Rachel)' },
+            { id: 'AZnzlk1XvdvUeBnXmlld', name: 'Voz Femenina 2 (Tardes - Domi)' }
+          ];
         }
         return parsed;
       } catch (e) {
@@ -819,9 +852,25 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
       enabled: true,
       hours: [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21],
       jingleUrl: 'https://boletines.auraradio.es/jingles%20noticias%201.mp3',
-      boletinUrl: 'https://boletines.auraradio.es/boletines/boletin_latest.mp3'
+      boletinUrl: 'https://boletines.auraradio.es/boletines/boletin_latest.mp3',
+      aiEnabled: false,
+      geminiApiKey: '',
+      elevenLabsApiKey: '',
+      elevenLabsVoices: [
+        { id: '21m00Tcm4TlvDq8ikWAM', name: 'Voz Femenina 1 (Mañanas - Rachel)' },
+        { id: 'AZnzlk1XvdvUeBnXmlld', name: 'Voz Femenina 2 (Tardes - Domi)' }
+      ],
+      voiceRotationMode: 'random',
+      customPrompt: defaultPrompt
     };
   });
+
+  // AI Bulletin Generator Local State
+  const [newVoiceForm, setNewVoiceForm] = useState({ id: '', name: '' });
+  const [isAiGenerating, setIsAiGenerating] = useState(false);
+  const [aiGenStatus, setAiGenStatus] = useState<string>('');
+  const [aiGenScriptResult, setAiGenScriptResult] = useState<string>('');
+  const [showApiKeys, setShowApiKeys] = useState(false);
 
   // Interstitials State
   const [interstitialAds, setInterstitialAds] = useState<any[]>(() => {
@@ -7384,6 +7433,319 @@ Responde siempre en español, de forma técnica, clara y precisa.`;
                           onChange={e => setBoletinesConfig(prev => ({ ...prev, backgroundBedUrl: e.target.value }))}
                           className="w-full bg-bg-deep border border-purple-500/20 rounded-lg px-2.5 py-1.5 text-[10px] font-mono text-purple-200 focus:border-purple-400 focus:outline-none"
                         />
+                      </div>
+                    </div>
+
+                    {/* Módulo de Auto-Generación de Boletines con IA (Gemini + ElevenLabs) */}
+                    <div className="pt-4 border-t border-purple-500/20 space-y-4">
+                      <div className="flex items-center justify-between bg-purple-900/40 p-3 rounded-xl border border-purple-500/30">
+                        <div className="flex items-center gap-2">
+                          <Sparkles className="w-4 h-4 text-yellow-300 animate-pulse" />
+                          <div>
+                            <h5 className="text-xs font-bold text-white uppercase tracking-wider">Redactor Automático con IA</h5>
+                            <p className="text-[9px] text-purple-300">Búsqueda diaria en Gemini + Locución en ElevenLabs</p>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => setBoletinesConfig(prev => ({ ...prev, aiEnabled: !prev.aiEnabled }))}
+                          className={`px-3 py-1 rounded-full text-[10px] font-bold transition-all cursor-pointer border ${
+                            boletinesConfig.aiEnabled
+                              ? 'bg-yellow-400 text-purple-950 border-yellow-300 shadow-md shadow-yellow-400/20 font-extrabold'
+                              : 'bg-white/5 text-purple-300 border-white/10'
+                          }`}
+                        >
+                          {boletinesConfig.aiEnabled ? '⚡ Auto-IA Activada' : 'Manual / Desactivado'}
+                        </button>
+                      </div>
+
+                      {/* Configuración de API Keys */}
+                      <div className="space-y-3 bg-black/20 p-3 rounded-xl border border-purple-500/20">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[10px] font-bold text-purple-200 uppercase tracking-wider flex items-center gap-1.5">
+                            <Key className="w-3.5 h-3.5 text-purple-400" />
+                            Claves API para Auto-Generación
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => setShowApiKeys(!showApiKeys)}
+                            className="text-[9px] text-purple-300 hover:text-white underline cursor-pointer"
+                          >
+                            {showApiKeys ? '🔒 Ocultar Claves' : '👁️ Mostrar Claves'}
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-bold text-purple-300 uppercase">Gemini API Key (Google AI Studio)</label>
+                            <input
+                              type={showApiKeys ? 'text' : 'password'}
+                              placeholder="AIzaSy..."
+                              value={boletinesConfig.geminiApiKey || ''}
+                              onChange={e => setBoletinesConfig(prev => ({ ...prev, geminiApiKey: e.target.value }))}
+                              className="w-full bg-bg-deep border border-purple-500/20 rounded-lg px-2.5 py-1.5 text-[10px] font-mono text-yellow-200 focus:border-purple-400 focus:outline-none"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-bold text-purple-300 uppercase">ElevenLabs API Key</label>
+                            <input
+                              type={showApiKeys ? 'text' : 'password'}
+                              placeholder="sk_..."
+                              value={boletinesConfig.elevenLabsApiKey || ''}
+                              onChange={e => setBoletinesConfig(prev => ({ ...prev, elevenLabsApiKey: e.target.value }))}
+                              className="w-full bg-bg-deep border border-purple-500/20 rounded-lg px-2.5 py-1.5 text-[10px] font-mono text-yellow-200 focus:border-purple-400 focus:outline-none"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Prompt Personalizable de Redacción en Gemini */}
+                      <div className="space-y-2 bg-black/20 p-3 rounded-xl border border-purple-500/20">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[10px] font-bold text-purple-200 uppercase tracking-wider flex items-center gap-1.5">
+                            <Bot className="w-3.5 h-3.5 text-purple-400" />
+                            Prompt de Búsqueda y Redacción de Gemini
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const defaultPrompt = `Eres el redactor jefe y locutor principal de Aura Radio (Huelva). 
+Busca las noticias más destacadas de HOY en la provincia de Huelva y redacta un boletín informativo de radio directo, fresco y profesional.
+
+Estructura obligatoria del boletín (duración estimada: 90 segundos, unas 200-240 palabras):
+1. Saludo breve: "Noticias en Aura Radio. Saludos de la redacción informativa..."
+2. Noticia de la Sierra de Huelva: Actualidad reciente de la Sierra de Aracena y Picos de Aroche / Jabugo.
+3. Noticia Provincial: Noticia destacada de la provincia o capital onubense.
+4. Noticia Deportiva: Actualidad del Recreativo de Huelva o deporte local.
+5. El Tiempo: Pronóstico del tiempo para el día de hoy en Huelva.
+6. Cierre: "Toda la información al minuto en Aura Radio. Seguimos con más música."
+
+REGLAS CRÍTICAS:
+- No incluyas anotaciones de producción entre corchetes o paréntesis como [Música de fondo] o (Pausa).
+- Escribe ÚNICAMENTE el texto directo listo para ser locutado por voz artificial de alta calidad.`;
+                              setBoletinesConfig(prev => ({ ...prev, customPrompt: defaultPrompt }));
+                            }}
+                            className="text-[9px] text-purple-400 hover:text-purple-200 underline cursor-pointer"
+                          >
+                            🔄 Restablecer Prompt Original
+                          </button>
+                        </div>
+                        <p className="text-[9px] text-purple-300/80">
+                          Puedes modificar las secciones, pueblos de la Sierra o áreas de enfoque que Gemini buscará en tiempo real cada día.
+                        </p>
+                        <textarea
+                          rows={6}
+                          value={boletinesConfig.customPrompt || ''}
+                          onChange={e => setBoletinesConfig(prev => ({ ...prev, customPrompt: e.target.value }))}
+                          className="w-full bg-bg-deep border border-purple-500/30 rounded-xl p-3 text-[10px] font-mono text-purple-100 focus:border-purple-400 focus:outline-none leading-relaxed"
+                          placeholder="Escribe aquí las instrucciones personalizadas para Gemini..."
+                        />
+                      </div>
+
+                      {/* Gestor de Rotación de Voces ElevenLabs */}
+                      <div className="space-y-3 bg-black/20 p-3 rounded-xl border border-purple-500/20">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[10px] font-bold text-purple-200 uppercase tracking-wider flex items-center gap-1.5">
+                            <Volume2 className="w-3.5 h-3.5 text-purple-400" />
+                            Pool & Rotación de Voces ElevenLabs
+                          </label>
+                          <select
+                            value={boletinesConfig.voiceRotationMode || 'random'}
+                            onChange={e => setBoletinesConfig(prev => ({ ...prev, voiceRotationMode: e.target.value as any }))}
+                            className="bg-purple-950 border border-purple-500/30 rounded px-2 py-0.5 text-[9px] text-purple-200 focus:outline-none"
+                          >
+                            <option value="random">🔀 Rotación Aleatoria</option>
+                            <option value="sequential">🔄 Turno Secuencial por Horas</option>
+                          </select>
+                        </div>
+
+                        {/* Lista de Voces Configurada */}
+                        <div className="space-y-1.5">
+                          {(boletinesConfig.elevenLabsVoices || []).map((voice, idx) => (
+                            <div key={idx} className="flex items-center justify-between bg-purple-950/60 border border-purple-500/20 px-3 py-1.5 rounded-lg">
+                              <div className="flex items-center gap-2">
+                                <span className="text-[9px] font-mono font-bold text-purple-400">#{idx + 1}</span>
+                                <div>
+                                  <p className="text-[10px] font-bold text-white">{voice.name}</p>
+                                  <p className="text-[8px] font-mono text-purple-300/60">{voice.id}</p>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setBoletinesConfig(prev => ({
+                                    ...prev,
+                                    elevenLabsVoices: (prev.elevenLabsVoices || []).filter((_, i) => i !== idx)
+                                  }));
+                                }}
+                                className="text-red-400 hover:text-red-300 p-1 text-[10px] cursor-pointer"
+                                title="Eliminar voz del pool"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Formulario Añadir Nueva Voz */}
+                        <div className="grid grid-cols-1 sm:grid-cols-5 gap-1.5 pt-1">
+                          <input
+                            type="text"
+                            placeholder="Nombre (ej: Carlos - Noticiero)"
+                            value={newVoiceForm.name}
+                            onChange={e => setNewVoiceForm(prev => ({ ...prev, name: e.target.value }))}
+                            className="sm:col-span-2 bg-bg-deep border border-purple-500/20 rounded-lg px-2.5 py-1 text-[10px] text-purple-200 focus:outline-none"
+                          />
+                          <input
+                            type="text"
+                            placeholder="Voice ID (ej: 21m00Tcm...)"
+                            value={newVoiceForm.id}
+                            onChange={e => setNewVoiceForm(prev => ({ ...prev, id: e.target.value }))}
+                            className="sm:col-span-2 bg-bg-deep border border-purple-500/20 rounded-lg px-2.5 py-1 text-[10px] font-mono text-purple-200 focus:outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!newVoiceForm.id.trim() || !newVoiceForm.name.trim()) return;
+                              setBoletinesConfig(prev => ({
+                                ...prev,
+                                elevenLabsVoices: [...(prev.elevenLabsVoices || []), { id: newVoiceForm.id.trim(), name: newVoiceForm.name.trim() }]
+                              }));
+                              setNewVoiceForm({ id: '', name: '' });
+                            }}
+                            className="bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-[10px] font-bold py-1 px-2 cursor-pointer transition-all"
+                          >
+                            + Añadir
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Botón Probar Auto-Generación Ahora */}
+                      <div className="pt-2">
+                        <button
+                          type="button"
+                          disabled={isAiGenerating}
+                          onClick={async () => {
+                            const apiKeyGemini = boletinesConfig.geminiApiKey || process.env.GEMINI_API_KEY;
+                            const apiKeyEleven = boletinesConfig.elevenLabsApiKey;
+                            const voices = boletinesConfig.elevenLabsVoices || [];
+
+                            if (!apiKeyGemini) {
+                              alert('Por favor introduce tu Gemini API Key en el panel para probar la auto-generación.');
+                              return;
+                            }
+
+                            setIsAiGenerating(true);
+                            setAiGenStatus('📡 Buscando noticias de Huelva en vivo con Gemini API...');
+                            setAiGenScriptResult('');
+
+                            try {
+                              // 1. Llamada a Gemini con Google Search
+                              const promptText = boletinesConfig.customPrompt || 'Noticias de Huelva hoy';
+                              const urlGemini = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKeyGemini}`;
+                              
+                              const resGemini = await fetch(urlGemini, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  contents: [{ parts: [{ text: promptText }] }],
+                                  tools: [{ google_search: {} }]
+                                })
+                              });
+
+                              if (!resGemini.ok) {
+                                throw new Error(`Error en Gemini API (${resGemini.status}): ${await resGemini.text()}`);
+                              }
+
+                              const dataGemini = await resGemini.json();
+                              const scriptText = dataGemini.candidates?.[0]?.content?.parts?.[0]?.text;
+
+                              if (!scriptText) throw new Error('Gemini no devolvió texto.');
+
+                              const cleanedScript = scriptText.replace(/[\*\_]/g, '').replace(/^#+\s+/gm, '').trim();
+                              setAiGenScriptResult(cleanedScript);
+
+                              // 2. Selección de Voz de ElevenLabs
+                              let selectedVoiceId = voices.length > 0 ? voices[0].id : '21m00Tcm4TlvDq8ikWAM';
+                              if (voices.length > 1 && boletinesConfig.voiceRotationMode === 'random') {
+                                const randIdx = Math.floor(Math.random() * voices.length);
+                                selectedVoiceId = voices[randIdx].id;
+                              }
+
+                              if (apiKeyEleven) {
+                                setAiGenStatus(`🎙️ Sintetizando voz con ElevenLabs (Voz ID: ${selectedVoiceId})...`);
+                                const resEleven = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${selectedVoiceId}`, {
+                                  method: 'POST',
+                                  headers: {
+                                    'xi-api-key': apiKeyEleven,
+                                    'Content-Type': 'application/json',
+                                    'Accept': 'audio/mpeg'
+                                  },
+                                  body: JSON.stringify({
+                                    text: cleanedScript,
+                                    model_id: 'eleven_turbo_v2_5',
+                                    voice_settings: { stability: 0.5, similarity_boost: 0.85 }
+                                  })
+                                });
+
+                                if (!resEleven.ok) {
+                                  throw new Error(`Error en ElevenLabs API (${resEleven.status}): ${await resEleven.text()}`);
+                                }
+
+                                const audioBlob = await resEleven.blob();
+                                const audioBlobUrl = URL.createObjectURL(audioBlob);
+                                setBoletinesConfig(prev => ({
+                                  ...prev,
+                                  boletinUrl: audioBlobUrl,
+                                  lastGeneratedAt: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
+                                  lastGeneratedScript: cleanedScript
+                                }));
+                                setAiGenStatus('✅ ¡Boletín redactado y locutado con éxito! Escúchalo en la previa.');
+                              } else {
+                                setAiGenStatus('✅ Guión generado con éxito por Gemini. (Introduce tu ElevenLabs API Key para generar el audio MP3 en vivo).');
+                              }
+                            } catch (e: any) {
+                              console.error('Error en prueba IA boletín:', e);
+                              setAiGenStatus(`❌ Error: ${e.message || 'Fallo durante la generación'}`);
+                            } finally {
+                              setIsAiGenerating(false);
+                            }
+                          }}
+                          className={`w-full py-2.5 rounded-xl text-xs font-extrabold shadow-lg flex items-center justify-center gap-2 transition-all cursor-pointer border ${
+                            isAiGenerating
+                              ? 'bg-purple-900 text-purple-300 border-purple-500/30'
+                              : 'bg-gradient-to-r from-yellow-400 via-amber-500 to-yellow-500 hover:from-yellow-300 hover:to-amber-400 text-purple-950 border-yellow-300 shadow-yellow-500/20'
+                          }`}
+                        >
+                          {isAiGenerating ? (
+                            <>
+                              <RefreshCw className="w-4 h-4 animate-spin text-purple-300" />
+                              <span>Generando Noticias en Vivo...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="w-4 h-4 fill-current text-purple-950" />
+                              <span>Probar Auto-Generación con IA Ahora Mismo</span>
+                            </>
+                          )}
+                        </button>
+
+                        {/* Mensaje de Estado de Generación */}
+                        {aiGenStatus && (
+                          <div className="mt-2 p-2.5 bg-black/40 border border-purple-500/30 rounded-lg text-[10px] font-mono text-purple-200">
+                            {aiGenStatus}
+                          </div>
+                        )}
+
+                        {/* Previsualización del Guión Redactado por Gemini */}
+                        {aiGenScriptResult && (
+                          <div className="mt-2 space-y-1 bg-purple-950/80 border border-purple-500/40 p-3 rounded-xl">
+                            <span className="text-[9px] font-bold text-yellow-300 uppercase tracking-wider block">📜 Guión Redactado por Gemini:</span>
+                            <div className="max-h-40 overflow-y-auto text-[10px] text-purple-100 font-sans leading-relaxed whitespace-pre-wrap pr-1">
+                              {aiGenScriptResult}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
