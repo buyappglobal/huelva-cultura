@@ -147,10 +147,13 @@ export default function Player({
       
       if (navigator.share) {
         try {
+          // Deliberately omit `url` here: shareData.text already ends with the encoded
+          // share link, and WhatsApp (and some other share targets) append a *separate*,
+          // differently-encoded copy of `url` after the text when both are present —
+          // that second copy loses its %20 encoding and renders as a broken link.
           await navigator.share({
             title: shareData.title,
-            text: shareData.text,
-            url: shareData.url
+            text: shareData.text
           });
         } catch (err) {
           console.warn('Native share failed or cancelled', err);

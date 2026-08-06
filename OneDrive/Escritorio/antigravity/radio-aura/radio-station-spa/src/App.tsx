@@ -3521,7 +3521,9 @@ export default function App() {
 
     if (navigator.share) {
       try {
-        await navigator.share({ title: shareData.title, text: shareData.text, url: shareData.url });
+        // No separate `url` — shareData.text already ends with the encoded link, and
+        // passing both makes WhatsApp append its own mangled (unencoded-spaces) copy.
+        await navigator.share({ title: shareData.title, text: shareData.text });
       } catch (err) {
         console.warn('Native share failed or cancelled', err);
       }

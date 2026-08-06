@@ -723,10 +723,11 @@ export const LiveView: React.FC<LiveViewProps> = ({
 
       if (navigator.share) {
         try {
+          // No separate `url` — already embedded at the end of shareData.text; passing
+          // both makes WhatsApp append its own mangled (unencoded-spaces) second copy.
           await navigator.share({
             title: shareData.title,
-            text: shareData.text,
-            url: shareData.url
+            text: shareData.text
           });
           setShareToast('¡Canción compartida! +5 pts sumados al Top 20');
           setTimeout(() => setShareToast(null), 3500);

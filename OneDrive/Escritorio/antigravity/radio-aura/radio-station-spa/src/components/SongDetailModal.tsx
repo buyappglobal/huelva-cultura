@@ -390,10 +390,11 @@ export default function SongDetailModal({
                       const currentStation = stationName || tenantConfig?.name || 'Aura Radio';
                       const shareData = buildShareMessage(song, customMetadata, currentStation, tenantConfig);
                       if (navigator.share) {
+                        // No separate `url` — already embedded at the end of shareData.text;
+                        // passing both makes WhatsApp append its own mangled second copy.
                         navigator.share({
                           title: shareData.title,
-                          text: shareData.text,
-                          url: shareData.url
+                          text: shareData.text
                         }).catch(() => {});
                       } else {
                         navigator.clipboard.writeText(shareData.text).then(() => {
