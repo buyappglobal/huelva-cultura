@@ -821,9 +821,12 @@ Estructura obligatoria del boletín (duración estimada: 90 segundos, unas 200-2
 5. El Tiempo: Pronóstico del tiempo para el día de hoy en Huelva.
 6. Cierre: "Toda la información al minuto en Aura Radio. Seguimos con más música."
 
-REGLAS CRÍTICAS:
-- No incluyas anotaciones de producción entre corchetes o paréntesis como [Música de fondo] o (Pausa).
-- Escribe ÚNICAMENTE el texto directo listo para ser locutado por voz artificial de alta calidad.`;
+REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
+1. PROHIBIDO SÍMBOLOS MARKDOWN: No uses asteriscos, símbolos # ni acotaciones entre paréntesis o corchetes.
+2. PROHIBIDO NÚMEROS ROMANOS: Escribe siempre los números romanos con palabras (ej: escribe 'siglo veintiuno' en vez de XXI, 'Felipe sexto' en vez de Felipe VI).
+3. TELÉFONOS Y EMERGENCIAS: Escribe los teléfonos o emergencias dígito a dígito (ej: el 112 escríbelo como 'uno uno dos').
+4. ABREVIATURAS Y SIGLAS: Escribe las palabras completas (ej: 'autovía A cuarenta y nueve' en vez de A-49, 'doctor' en vez de Dr., 'kilómetros' en vez de km).
+5. PUNTUACIÓN Y RITMO: Usa comas y puntos para marcar las pausas naturales de respiración del locutor.`;
 
     if (saved) {
       try {
