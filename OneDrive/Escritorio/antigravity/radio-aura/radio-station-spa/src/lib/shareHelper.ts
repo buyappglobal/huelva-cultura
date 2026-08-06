@@ -46,6 +46,22 @@ export function buildShareUrl(songOrId: string | Song, tenantConfig?: TenantConf
 }
 
 /**
+ * Constructs the canonical share URL for a category, respecting tenant domains & params.
+ */
+export function buildCategoryShareUrl(categoryId: string, tenantConfig?: TenantConfig | null): string {
+  const baseUrl = getTenantBaseUrl(tenantConfig);
+  const encodedId = encodeURIComponent(categoryId);
+  let path = `/categoria/${encodedId}`;
+
+  const hasCustomDomain = !!(tenantConfig?.canonicalUrl || tenantConfig?.domain);
+  if (!hasCustomDomain && tenantConfig?.id && tenantConfig.id !== 'aura-radio') {
+    path += `?tenant=${encodeURIComponent(tenantConfig.id)}`;
+  }
+
+  return `${baseUrl}${path}`;
+}
+
+/**
  * Constructs the share URL for the station main page.
  */
 export function buildStationShareUrl(tenantConfig?: TenantConfig | null): string {
@@ -90,6 +106,38 @@ export function buildShareMessage(
 
   return {
     title: isSameArtist ? `${title} - ${effectiveStationName}` : `${title} - ${artist}`,
+    text: parts.join('\n'),
+    url: shareUrl
+  };
+}
+
+export function buildCategoryShareMessage(
+  categoryId: string,
+  categoryName: string,
+  stationName: string = 'Aura Radio',
+  tenantConfig?: TenantConfig | null
+) {
+  const effectiveStationName = tenantConfig?.name || stationName || 'Aura Radio';
+  const shareUrl = buildCategoryShareUrl(categoryId, tenantConfig);
+
+  const mainLine = `🎧 Descubre "${categoryName}" en ${effectiveStationName}!`;
+  const parts = [mainLine];
+
+  const aiNoticeEnabled = tenantConfig?.shareAiNoticeEnabled !== false;
+  const aiNotice = tenantConfig?.shareAiNotice ?? '✨ Música creada con IA';
+  if (aiNoticeEnabled && aiNotice.trim()) {
+    parts.push(aiNotice.trim());
+  }
+
+  const hashtags = tenantConfig?.shareHashtags ?? `#MúsicaIA #${effectiveStationName.replace(/\s+/g, '')} #IA #SunoAI`;
+  if (hashtags && hashtags.trim()) {
+    parts.push(hashtags.trim());
+  }
+
+  parts.push(shareUrl);
+
+  return {
+    title: `${categoryName} - ${effectiveStationName}`,
     text: parts.join('\n'),
     url: shareUrl
   };

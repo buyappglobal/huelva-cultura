@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Megaphone, 
-  ExternalLink, 
-  Sparkles, 
-  Play, 
-  ChevronLeft, 
+import {
+  Megaphone,
+  ExternalLink,
+  Sparkles,
+  Play,
+  ChevronLeft,
   ChevronRight,
   Music,
-  Radio
+  Radio,
+  Share2
 } from 'lucide-react';
 import { LiveSponsorBanner, Category } from '../types';
 
@@ -22,6 +23,7 @@ interface CategoryHeroBannerProps {
   categoryBannersOverride?: LiveSponsorBanner[];
   onPlayCategory?: () => void;
   onOpenVisualizer?: () => void;
+  onShareCategory?: () => void;
   accentColor?: string;
 }
 
@@ -54,6 +56,7 @@ export const CategoryHeroBanner: React.FC<CategoryHeroBannerProps> = ({
   categoryBannersOverride,
   onPlayCategory,
   onOpenVisualizer,
+  onShareCategory,
   accentColor = '#6366f1'
 }) => {
   const [currentSlideIndex, setCurrentSlideIndex] = useState<number>(0);
@@ -185,6 +188,17 @@ export const CategoryHeroBanner: React.FC<CategoryHeroBannerProps> = ({
                 >
                   <Sparkles className="w-4 h-4 text-accent" />
                   <span className="hidden lg:inline">Modo Inmersivo</span>
+                </button>
+              )}
+
+              {onShareCategory && (
+                <button
+                  onClick={onShareCategory}
+                  className="flex-1 md:flex-none px-4 py-3 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/15 text-white font-bold text-xs uppercase tracking-wider transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+                  title="Compartir esta categoría"
+                >
+                  <Share2 className="w-4 h-4 text-accent" />
+                  <span className="hidden lg:inline">Compartir</span>
                 </button>
               )}
             </div>

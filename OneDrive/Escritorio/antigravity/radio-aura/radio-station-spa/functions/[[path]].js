@@ -131,8 +131,13 @@ export async function onRequest(context) {
     }
   }
 
-  // Skip other static media extension requests
-  if (url.pathname.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot|mp3|mp4|webm)$/i)) {
+  const isSongPath = url.pathname.startsWith('/cancion/') || url.pathname.startsWith('/song/');
+  const isCategoryPath = url.pathname.startsWith('/categoria/');
+  const isShareablePath = isSongPath || isCategoryPath;
+
+  // Skip other static media extension requests (but not share links, whose
+  // ID may itself end in .mp3/etc. — those must fall through to the SPA)
+  if (!isShareablePath && url.pathname.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot|mp3|mp4|webm)$/i)) {
     const assetRes = await next();
     const assetType = assetRes.headers.get('content-type') || '';
     if (assetRes.status === 404 || assetType.includes('text/html')) {
@@ -141,10 +146,9 @@ export async function onRequest(context) {
     return assetRes;
   }
 
-  const isSongPath = url.pathname.startsWith('/cancion/') || url.pathname.startsWith('/song/');
   let response;
 
-  if (isSongPath && context.env && context.env.ASSETS) {
+  if (isShareablePath && context.env && context.env.ASSETS) {
     try {
       response = await context.env.ASSETS.fetch(new URL('/index.html', request.url));
     } catch (e) {
@@ -257,6 +261,22 @@ export async function onRequest(context) {
       };
 
       jsonLdScript = JSON.stringify(jsonLd);
+    } else if (isCategoryPath) {
+      const rawCategoryId = url.pathname.replace(/^\/categoria\//, '');
+      const decodedCategoryId = decodeURIComponent(rawCategoryId);
+
+      const categories = configData.categories || [];
+      const targetCategory = categories.find(c => c.id === decodedCategoryId || c.id === rawCategoryId);
+      const categoryName = targetCategory?.name || decodedCategoryId;
+
+      seoTitle = `${categoryName} - ${activeTenant.name}`;
+      seoDescription = `Descubre "${categoryName}" en ${activeTenant.name}: música creada con IA, streaming en directo y sin cortes.`;
+
+      const categoryBanner = targetCategory?.sponsorBanners?.[0]?.image_url;
+      if (categoryBanner) {
+        socialImage = categoryBanner;
+        if (!socialImage.startsWith('http')) socialImage = `https://${socialImage.replace(/^\//, '')}`;
+      }
     }
 
     let rewriter = new HTMLRewriter()
@@ -277,9 +297,11 @@ export async function onRequest(context) {
       element(el) {
         if (jsonLdScript) {
           el.append(`<script type="application/ld+json">${jsonLdScript}</script>`, { html: true });
+        }
+        if (isShareablePath) {
           el.append(`<link rel="canonical" href="${canonicalUrl}" />`, { html: true });
         }
-        el.append(`<meta property="og:type" content="music.song" />`, { html: true });
+        el.append(`<meta property="og:type" content="${isSongPath ? 'music.song' : 'website'}" />`, { html: true });
         el.append(`<meta property="og:image:secure_url" content="${socialImage}" />`, { html: true });
         el.append(`<meta property="og:image:type" content="image/png" />`, { html: true });
         el.append(`<meta property="og:image:width" content="600" />`, { html: true });
@@ -291,7 +313,14 @@ export async function onRequest(context) {
       }
     });
 
-    return rewriter.transform(response);
+    const finalResponse = rewriter.transform(response);
+    if (isShareablePath) {
+      // Share URLs must never be edge-cached: a song ID can itself end in
+      // .mp3/.mp4/etc. and previously got misclassified as a static asset,
+      // caching a 404 at the CDN edge and permanently breaking that share link.
+      finalResponse.headers.set('Cache-Control', 'no-store');
+    }
+    return finalResponse;
   } catch (error) {
     console.error('Pages Function Error:', error);
   }

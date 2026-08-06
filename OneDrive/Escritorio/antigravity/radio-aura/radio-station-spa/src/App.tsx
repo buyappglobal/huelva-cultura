@@ -31,6 +31,7 @@ import InstallInterstitialModal from './components/InstallInterstitialModal';
 import { LiveStudioDashboard } from './components/LiveStudioDashboard';
 import { CategoryHeroBanner } from './components/CategoryHeroBanner';
 import { getFallbackMeaning } from './lib/fallbackMeanings';
+import { buildCategoryShareMessage } from './lib/shareHelper';
 
 // Detects whether a newer build has been deployed since this tab loaded, by comparing
 // the hashed entry-chunk path referenced in a freshly-fetched (uncached) index.html
@@ -831,6 +832,7 @@ export default function App() {
   const copilotLastShownRef = useRef<Record<string, number>>({});
   const lastMarqueeMessageTimeRef = useRef<number>(0);
   const isSharedSongRef = useRef(false);
+  const appliedCategoryShareRef = useRef(false);
   const isFirstConfigLoadRef = useRef(true);
 
   // Trigger system messages organically when songs change / start playing
@@ -1783,6 +1785,29 @@ export default function App() {
       });
     }
   }, [allKnownSongs, currentSong, dynamicCategories, activeCategory, isSyncing, isLoading, songCatalog, r2KeyToId]);
+
+  // Handle shared category routing via /categoria/categoryId — opens directly on that category
+  useEffect(() => {
+    if (appliedCategoryShareRef.current) return;
+    if (!window.location.pathname.startsWith('/categoria/')) return;
+    if (isLoading) return; // Wait for the category catalog to load
+
+    const rawId = window.location.pathname.split('/categoria/')[1]?.replace(/\/+$/, '');
+    if (!rawId) return;
+
+    let categoryId = rawId;
+    try { categoryId = decodeURIComponent(rawId); } catch (e) {}
+
+    const matchedCat = dynamicCategories.find(c => c.id === categoryId);
+    if (!matchedCat) return; // Catalog may still be filling in; retry on next render
+
+    appliedCategoryShareRef.current = true;
+    if (activeCategory !== matchedCat.id) {
+      setActiveCategory(matchedCat.id);
+    }
+    fetchSongs(matchedCat.id);
+  }, [dynamicCategories, isLoading, activeCategory]);
+
   // Trigger sponsor modal automatically for shared sponsored songs
   useEffect(() => {
     if (currentSong && isSharedSongRef.current && songSponsors[currentSong.id]) {
@@ -3327,15 +3352,41 @@ export default function App() {
     const shareUrl = `${window.location.origin}${window.location.pathname}?mix=${encodeURIComponent(mixQuery)}`;
     
     navigator.clipboard.writeText(shareUrl).then(() => {
-      window.dispatchEvent(new CustomEvent('aura-system-msg', { 
-        detail: { 
-          text: "¡Enlace de emisora personalizada copiado! Comparte tu AuraMix a tu medida.", 
-          user_name: 'AURA SYSTEM' 
-        } 
+      window.dispatchEvent(new CustomEvent('aura-system-msg', {
+        detail: {
+          text: "¡Enlace de emisora personalizada copiado! Comparte tu AuraMix a tu medida.",
+          user_name: 'AURA SYSTEM'
+        }
       }));
     }).catch(err => {
       console.warn("Could not copy mix url:", err);
     });
+  };
+
+  const handleShareCategory = async (categoryId: string, categoryName: string) => {
+    triggerHaptic(10);
+    const shareData = buildCategoryShareMessage(categoryId, categoryName, stationName, activeTenantConfig);
+
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: shareData.title, text: shareData.text, url: shareData.url });
+      } catch (err) {
+        console.warn('Native share failed or cancelled', err);
+      }
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(shareData.text);
+      window.dispatchEvent(new CustomEvent('aura-system-msg', {
+        detail: {
+          text: `¡Enlace de "${categoryName}" copiado! Compártelo directamente.`,
+          user_name: 'AURA SYSTEM'
+        }
+      }));
+    } catch (err) {
+      console.warn('Could not copy category share text:', err);
+    }
   };
 
   const handleDragScrollMouseDown = (e: React.MouseEvent, ref: React.RefObject<HTMLDivElement | null>, axis: 'x' | 'y' = 'x') => {
@@ -4323,6 +4374,7 @@ export default function App() {
                                 if (sourceSongs.length > 0) handleSongSelect(sourceSongs[0]);
                               }}
                               onOpenVisualizer={() => setShowLiveView(true)}
+                              onShareCategory={() => handleShareCategory(activeCategory, activeCategoryName)}
                               accentColor={accentColor}
                             />
                           )}
