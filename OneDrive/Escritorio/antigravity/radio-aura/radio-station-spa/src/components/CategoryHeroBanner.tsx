@@ -98,11 +98,61 @@ export const CategoryHeroBanner: React.FC<CategoryHeroBannerProps> = ({
         </div>
       </div>
 
+      {/* ===== ACTION BUTTONS ROW ===== */}
+      {/* Lives outside the hero card so it never gets clipped by the carousel's
+          overflow-hidden or covered by its prev/next arrows; wraps freely on mobile
+          instead of overflowing the viewport. */}
+      <div className="flex flex-wrap items-center gap-2.5">
+        {currentBanner.redirect_url && (
+          <a
+            href={currentBanner.redirect_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-4 py-2.5 sm:px-5 sm:py-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs uppercase tracking-wider shadow-xl transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
+          >
+            <span>Saber Más</span>
+            <ExternalLink className="w-4 h-4" />
+          </a>
+        )}
+
+        {onPlayCategory && (
+          <button
+            onClick={onPlayCategory}
+            className="px-4 py-2.5 sm:px-5 sm:py-3 rounded-2xl bg-gradient-to-r from-accent to-purple-600 hover:from-accent/90 hover:to-purple-600/90 text-white font-bold text-xs uppercase tracking-wider shadow-xl shadow-accent/25 transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
+          >
+            <Play className="w-4 h-4 fill-current" />
+            <span>Reproducir Mix</span>
+          </button>
+        )}
+
+        {onOpenVisualizer && (
+          <button
+            onClick={onOpenVisualizer}
+            className="px-4 py-2.5 sm:py-3 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/15 text-white font-bold text-xs uppercase tracking-wider transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
+            title="Abrir Modo Inmersivo"
+          >
+            <Sparkles className="w-4 h-4 text-accent" />
+            <span>Modo Inmersivo</span>
+          </button>
+        )}
+
+        {onShareCategory && (
+          <button
+            onClick={onShareCategory}
+            className="px-4 py-2.5 sm:py-3 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/15 text-white font-bold text-xs uppercase tracking-wider transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
+            title="Compartir esta categoría"
+          >
+            <Share2 className="w-4 h-4 text-accent" />
+            <span>Compartir</span>
+          </button>
+        )}
+      </div>
+
       {/* ===== HERO BANNER CARD WITH CAROUSEL ===== */}
-      <div 
+      <div
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
-        className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#0F0E1A] via-[#151426] to-[#0A0914] border border-white/10 shadow-2xl group min-h-[200px] md:min-h-[230px] flex items-center"
+        className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#0F0E1A] via-[#151426] to-[#0A0914] border border-white/10 shadow-2xl group min-h-[160px] md:min-h-[180px] flex items-center"
       >
         <AnimatePresence mode="wait">
           <motion.div
@@ -116,10 +166,10 @@ export const CategoryHeroBanner: React.FC<CategoryHeroBannerProps> = ({
             {/* Background Image Overlay with Gradient Mask */}
             {currentBanner.image_url && (
               <div className="absolute inset-0 z-0 opacity-30 overflow-hidden">
-                <img 
-                  src={currentBanner.image_url} 
-                  alt={currentBanner.title} 
-                  className="w-full h-full object-cover scale-105 filter blur-sm" 
+                <img
+                  src={currentBanner.image_url}
+                  alt={currentBanner.title}
+                  className="w-full h-full object-cover scale-105 filter blur-sm"
                 />
                 <div className="absolute inset-0 bg-gradient-to-r from-[#0F0E1A] via-[#0F0E1A]/85 to-transparent" />
               </div>
@@ -154,53 +204,6 @@ export const CategoryHeroBanner: React.FC<CategoryHeroBannerProps> = ({
                   </p>
                 )}
               </div>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex items-center gap-3 shrink-0 w-full md:w-auto relative z-10">
-              {currentBanner.redirect_url && (
-                <a
-                  href={currentBanner.redirect_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex-1 md:flex-none px-5 py-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs uppercase tracking-wider shadow-xl transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <span>Saber Más</span>
-                  <ExternalLink className="w-4 h-4" />
-                </a>
-              )}
-
-              {onPlayCategory && (
-                <button
-                  onClick={onPlayCategory}
-                  className="flex-1 md:flex-none px-5 py-3 rounded-2xl bg-gradient-to-r from-accent to-purple-600 hover:from-accent/90 hover:to-purple-600/90 text-white font-bold text-xs uppercase tracking-wider shadow-xl shadow-accent/25 transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <Play className="w-4 h-4 fill-current" />
-                  <span>Reproducir Mix</span>
-                </button>
-              )}
-
-              {onOpenVisualizer && (
-                <button
-                  onClick={onOpenVisualizer}
-                  className="flex-1 md:flex-none px-4 py-3 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/15 text-white font-bold text-xs uppercase tracking-wider transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
-                  title="Abrir Modo Inmersivo"
-                >
-                  <Sparkles className="w-4 h-4 text-accent" />
-                  <span className="hidden lg:inline">Modo Inmersivo</span>
-                </button>
-              )}
-
-              {onShareCategory && (
-                <button
-                  onClick={onShareCategory}
-                  className="flex-1 md:flex-none px-4 py-3 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/15 text-white font-bold text-xs uppercase tracking-wider transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
-                  title="Compartir esta categoría"
-                >
-                  <Share2 className="w-4 h-4 text-accent" />
-                  <span className="hidden lg:inline">Compartir</span>
-                </button>
-              )}
             </div>
           </motion.div>
         </AnimatePresence>

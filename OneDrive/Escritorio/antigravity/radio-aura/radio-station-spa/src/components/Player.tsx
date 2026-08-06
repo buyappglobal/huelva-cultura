@@ -115,7 +115,6 @@ export default function Player({
   const [sleepTimer, setSleepTimer] = useState<number | null>(null);
   const [showTimerMenu, setShowTimerMenu] = useState(false);
   const [showSeekMenu, setShowSeekMenu] = useState(false);
-  const [showEQMenu, setShowEQMenu] = useState(false);
   const [eqPreset, setEqPreset] = useState(() => audioEngine.getEQPreset());
   const [eqIsAuto, setEqIsAuto] = useState(() => audioEngine.isEQAuto());
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -688,48 +687,16 @@ export default function Player({
 
         {/* Desktop Only Volume & Timer Controls (On mobile, accessible via Options Drawer) */}
         <div className="hidden md:flex items-center gap-2 md:gap-6 w-auto md:w-[250px] justify-end">
-          {/* Equalizer Presets */}
-          <div className="relative">
-            <button
-              onClick={() => setShowEQMenu(!showEQMenu)}
-              className={`w-10 h-10 flex flex-col items-center justify-center gap-1 transition-colors ${!eqIsAuto ? 'text-accent' : 'text-text-secondary hover:text-white'}`}
-              title="Ecualizador"
-            >
-              <Sliders className="w-5 h-5" />
-            </button>
-
-            <AnimatePresence>
-              {showEQMenu && (
-                <motion.div
-                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                  className="absolute bottom-full right-0 mb-4 bg-bg-pill border border-border rounded-xl p-2 min-w-[160px] shadow-2xl backdrop-blur-xl"
-                >
-                  <p className="text-[9px] font-black text-text-secondary uppercase tracking-widest mb-2 px-2">Ecualizador</p>
-                  <div className="grid grid-cols-1 gap-1 max-h-64 overflow-y-auto no-scrollbar">
-                    <button
-                      onClick={() => { audioEngine.clearEQManualOverride(); setShowEQMenu(false); }}
-                      className="text-left px-3 py-1.5 rounded-lg text-xs text-white hover:bg-white/5 transition-colors flex justify-between items-center"
-                    >
-                      <span>Auto (según categoría)</span>
-                      {eqIsAuto && <div className="w-1.5 h-1.5 bg-accent rounded-full shrink-0" />}
-                    </button>
-                    {Object.entries(EQ_PRESETS).map(([key, preset]) => (
-                      <button
-                        key={key}
-                        onClick={() => { audioEngine.setEQPreset(key); setShowEQMenu(false); }}
-                        className="text-left px-3 py-1.5 rounded-lg text-xs text-white hover:bg-white/5 transition-colors flex justify-between items-center"
-                      >
-                        <span>{preset.label}</span>
-                        {!eqIsAuto && eqPreset === key && <div className="w-1.5 h-1.5 bg-accent rounded-full shrink-0" />}
-                      </button>
-                    ))}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
+          {/* Equalizer — opens the same full controls modal used on mobile
+              (was a separate cramped dropdown that visually collided with the
+              favorites sidebar on desktop) */}
+          <button
+            onClick={() => setShowMobileControlsDrawer(true)}
+            className={`w-10 h-10 flex flex-col items-center justify-center gap-1 transition-colors ${!eqIsAuto ? 'text-accent' : 'text-text-secondary hover:text-white'}`}
+            title="Ecualizador"
+          >
+            <Sliders className="w-5 h-5" />
+          </button>
 
           {/* Sleep Timer */}
           <div className="relative">
@@ -806,12 +773,12 @@ export default function Player({
         </div>
       </div>
 
-      {/* ===== MOBILE CONTROLS DRAWER MODAL ===== */}
+      {/* ===== CONTROLS DRAWER MODAL (shared by mobile "Más Controles" and desktop "Ecualizador") ===== */}
       <AnimatePresence>
         {showMobileControlsDrawer && currentSong && !isAd && (
-          <div className="md:hidden fixed inset-0 z-[150] flex flex-col justify-end bg-black/70 backdrop-blur-md">
+          <div className="fixed inset-0 z-[150] flex flex-col justify-end bg-black/70 backdrop-blur-md">
             {/* Backdrop Tap to Close */}
-            <div 
+            <div
               className="flex-1 w-full"
               onClick={() => setShowMobileControlsDrawer(false)}
             />
@@ -822,7 +789,7 @@ export default function Player({
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: "100%", opacity: 0 }}
               transition={{ type: "spring", damping: 25, stiffness: 300 }}
-              className="bg-[#0E0E17] border-t border-white/15 rounded-t-[2.5rem] p-6 space-y-6 shadow-2xl relative z-10"
+              className="bg-[#0E0E17] border-t border-white/15 rounded-t-[2.5rem] p-6 space-y-6 shadow-2xl relative z-10 md:max-w-lg md:mx-auto"
             >
               {/* Drag Handle & Close Header */}
               <div className="flex items-center justify-between pb-2 border-b border-white/5">
