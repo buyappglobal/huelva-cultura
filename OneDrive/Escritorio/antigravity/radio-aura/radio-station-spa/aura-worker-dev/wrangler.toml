@@ -1,0 +1,31 @@
+name = "aura-radio-api-v2"
+main = "index.js"
+compatibility_date = "2024-03-20"
+
+[vars]
+FRONTEND_URL = "https://appradio.aurabusiness.es"
+
+[[kv_namespaces]]
+binding = "AURA_CONFIG_KV"
+id = "1abd42c542004064b0f7cee8a4aaf9ab"
+
+[[r2_buckets]]
+binding = "MUSIC_BUCKET"
+bucket_name = "aura-media-library"
+
+[[r2_buckets]]
+binding = "ADS_BUCKET"
+bucket_name = "ads-radio-aura"
+
+[[r2_buckets]]
+binding = "BOLETIN_BUCKET"
+bucket_name = "aura-boletines"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "aura-users-db"
+database_id = "fcc710f5-781c-4a92-86ab-28aa389ad39d"
+
+[triggers]
+crons = ["0 6 * * *", "0 12 * * *", "0 18 * * *"]
+
