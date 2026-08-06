@@ -3316,13 +3316,18 @@ export default function App() {
     } else {
       let song = allKnownSongs.get(cfg.itemId) || null;
       if (!song) {
+        // itemId is either a numeric catalog id (songCatalog lookup handles it) or already the
+        // raw R2 path itself — never run a path through r2KeyToId (that map goes path -> numeric
+        // id; some songs exist in it without a matching songCatalog entry, so doing that here
+        // corrupts a perfectly valid path into a numeric id and produces a broken stream URL).
         const catalogEntry = songCatalog[cfg.itemId];
-        const resolvedKey = catalogEntry?.r2_key || r2KeyToId[cfg.itemId] || cfg.itemId;
+        const resolvedKey = catalogEntry?.r2_key || cfg.itemId;
         const mediaBase = `${API_CONFIG.BASE_URL}/api/stream/music/`;
         const cleanPath = resolvedKey.replace(/^\//, '');
+        const filenameTitle = (resolvedKey.split('/').pop() || resolvedKey).replace(/\.[^/.]+$/, '');
         song = {
           id: cfg.itemId,
-          title: catalogEntry?.title || customSongNames[cfg.itemId]?.title || generateEpicTitle(resolvedKey),
+          title: catalogEntry?.title || customSongNames[cfg.itemId]?.title || filenameTitle || generateEpicTitle(resolvedKey),
           artist: catalogEntry?.artist || customSongNames[cfg.itemId]?.artist || 'Aura Radio',
           streamUrl: mediaBase + cleanPath.split('/').map(segment => encodeURIComponent(segment)).join('/'),
           coverUrl: `https://api.dicebear.com/7.x/shapes/svg?seed=${encodeURIComponent(cfg.itemId)}`,
