@@ -7503,8 +7503,8 @@ Responde siempre en español, de forma técnica, clara y precisa.`;
                       </div>
 
                       {/* Prompt Personalizable de Redacción en Gemini */}
-                      <div className="space-y-2 bg-black/20 p-3 rounded-xl border border-purple-500/20">
-                        <div className="flex items-center justify-between">
+                      <div className="space-y-3 bg-black/20 p-3 rounded-xl border border-purple-500/20">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
                           <label className="text-[10px] font-bold text-purple-200 uppercase tracking-wider flex items-center gap-1.5">
                             <Bot className="w-3.5 h-3.5 text-purple-400" />
                             Prompt de Búsqueda y Redacción de Gemini
@@ -7523,9 +7523,12 @@ Estructura obligatoria del boletín (duración estimada: 90 segundos, unas 200-2
 5. El Tiempo: Pronóstico del tiempo para el día de hoy en Huelva.
 6. Cierre: "Toda la información al minuto en Aura Radio. Seguimos con más música."
 
-REGLAS CRÍTICAS:
-- No incluyas anotaciones de producción entre corchetes o paréntesis como [Música de fondo] o (Pausa).
-- Escribe ÚNICAMENTE el texto directo listo para ser locutado por voz artificial de alta calidad.`;
+REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
+1. PROHIBIDO SÍMBOLOS MARKDOWN: No uses asteriscos, símbolos # ni acotaciones entre paréntesis o corchetes.
+2. PROHIBIDO NÚMEROS ROMANOS: Escribe siempre los números romanos con palabras (ej: escribe 'siglo veintiuno' en vez de XXI, 'Felipe sexto' en vez de Felipe VI).
+3. TELÉFONOS Y EMERGENCIAS: Escribe los teléfonos o emergencias dígito a dígito (ej: el 112 escríbelo como 'uno uno dos').
+4. ABREVIATURAS Y SIGLAS: Escribe las palabras completas (ej: 'autovía A cuarenta y nueve' en vez de A-49, 'doctor' en vez de Dr., 'kilómetros' en vez de km).
+5. PUNTUACIÓN Y RITMO: Usa comas y puntos para marcar las pausas naturales de respiración del locutor.`;
                               setBoletinesConfig(prev => ({ ...prev, customPrompt: defaultPrompt }));
                             }}
                             className="text-[9px] text-purple-400 hover:text-purple-200 underline cursor-pointer"
@@ -7533,8 +7536,93 @@ REGLAS CRÍTICAS:
                             🔄 Restablecer Prompt Original
                           </button>
                         </div>
+                        {/* Plantillas de Prompts Rápidos */}
+                        <div className="space-y-1">
+                          <span className="text-[9px] font-bold text-purple-300/80 block uppercase">Cargar Plantilla Rápida de Enfoque:</span>
+                          <div className="flex flex-wrap gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const sierraPrompt = `Eres el redactor jefe de Aura Radio (Huelva). 
+Redacta un boletín informativo centrado especialmente en la Sierra de Aracena y Picos de Aroche (Cortegana, Jabugo, Aracena, Aroche, Alájar).
+
+Estructura obligatoria (90 segundos, 200-240 palabras):
+1. Saludo: "Informativo especial Sierra de Huelva en Aura Radio..."
+2. Noticia 1 Sierra: Actualidad o evento cultural/económico en la Sierra.
+3. Noticia 2 Sierra: Segunda noticia destacada de los municipios serranos.
+4. Noticia Provincial breve: Resumen provincial.
+5. El Tiempo: Pronóstico del tiempo para hoy en la Sierra de Huelva (temperaturas y cielos).
+6. Cierre: "Información serrana en Aura Radio. Continuamos con música."
+
+REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
+1. PROHIBIDO SÍMBOLOS MARKDOWN: No uses asteriscos, símbolos # ni acotaciones.
+2. PROHIBIDO NÚMEROS ROMANOS: Escribe siempre números romanos con palabras (ej: 'siglo veintiuno').
+3. TELÉFONOS Y EMERGENCIAS: Escribe dígitos sueltos (ej: 'uno uno dos').
+4. ABREVIATURAS Y SIGLAS: Escribe palabras completas.
+5. PUNTUACIÓN Y RITMO: Usa comas y puntos para pausas naturales.`;
+                                setBoletinesConfig(prev => ({ ...prev, customPrompt: sierraPrompt }));
+                              }}
+                              className="px-2.5 py-1.5 rounded-lg bg-purple-900/60 hover:bg-purple-800 text-purple-200 text-[10px] font-bold border border-purple-500/30 cursor-pointer transition-all flex items-center gap-1"
+                            >
+                              🌲 Especial Sierra de Huelva (2 noticias)
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const medievalPrompt = `Eres el redactor jefe de Aura Radio (Huelva). 
+Busca la información más reciente sobre las Jornadas Medievales de Cortegana y eventos festivos/culturales de HOY en la provincia de Huelva. Redacta un boletín especial de radio.
+
+Estructura obligatoria (90 segundos, 200-240 palabras):
+1. Saludo: "Boletín especial en Aura Radio. Hoy nos trasladamos con la información a la Sierra..."
+2. Noticia Principal Evento: Toda la actualidad de las Jornadas Medievales de Cortegana (programación, ambiente, actividades).
+3. Noticia 2 Sierra / Provincia: Otra noticia cultural o turística relevante de Huelva.
+4. El Tiempo: Tiempo previsto para hoy en Cortegana y la Sierra de Huelva.
+5. Cierre: "Disfruten de las fiestas en Aura Radio. Seguimos en directo."
+
+REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
+1. PROHIBIDO SÍMBOLOS MARKDOWN.
+2. PROHIBIDO NÚMEROS ROMANOS.
+3. TELÉFONOS Y EMERGENCIAS: Escribe dígitos sueltos (ej: 'uno uno dos').
+4. ABREVIATURAS Y SIGLAS: Escribe palabras completas.
+5. PUNTUACIÓN Y RITMO: Usa comas y puntos para pausas.`;
+                                setBoletinesConfig(prev => ({ ...prev, customPrompt: medievalPrompt }));
+                              }}
+                              className="px-2.5 py-1.5 rounded-lg bg-amber-900/60 hover:bg-amber-800 text-amber-200 text-[10px] font-bold border border-amber-500/30 cursor-pointer transition-all flex items-center gap-1"
+                            >
+                              🏰 Especial Jornadas Medievales / Fiestas
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const deportesPrompt = `Eres el redactor deportivo de Aura Radio (Huelva).
+Busca las últimas novedades deportivas de HOY sobre el Recreativo de Huelva y el deporte provincial.
+
+Estructura obligatoria (90 segundos):
+1. Saludo: "Toda la actualidad del deporte onubense en Aura Radio..."
+2. Recreativo de Huelva: Noticia del Recre (entrenamientos, fichajes, partido).
+3. Deporte Provincial y Sierra: Noticias de otros clubes de la provincia y Sierra de Huelva.
+4. El Tiempo: Previsión del tiempo para la jornada deportiva de hoy.
+5. Cierre: "Deportes Aura Radio. Seguimos con música."
+
+REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
+1. PROHIBIDO SÍMBOLOS MARKDOWN.
+2. PROHIBIDO NÚMEROS ROMANOS.
+3. TELÉFONOS Y EMERGENCIAS: Escribe dígitos sueltos (ej: 'uno uno dos').
+4. ABREVIATURAS Y SIGLAS: Escribe palabras completas.
+5. PUNTUACIÓN Y RITMO: Usa comas y puntos.`;
+                                setBoletinesConfig(prev => ({ ...prev, customPrompt: deportesPrompt }));
+                              }}
+                              className="px-2.5 py-1.5 rounded-lg bg-blue-900/60 hover:bg-blue-800 text-blue-200 text-[10px] font-bold border border-blue-500/30 cursor-pointer transition-all flex items-center gap-1"
+                            >
+                              ⚽ Especial Deportes / Recreativo
+                            </button>
+                          </div>
+                        </div>
+
                         <p className="text-[9px] text-purple-300/80">
-                          Puedes modificar las secciones, pueblos de la Sierra o áreas de enfoque que Gemini buscará en tiempo real cada día.
+                          Puedes editar libremente las instrucciones del cuadro de texto inferior:
                         </p>
                         <textarea
                           rows={6}
