@@ -1,4 +1,5 @@
 import React, { useMemo, useRef, useEffect, useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { Share2, ChevronLeft, ChevronRight, Lock, Sparkles, Search, X, LayoutGrid } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Category } from '../types';
@@ -801,133 +802,136 @@ export default function CategoryPills({
       )}
 
       {/* Category Grid Modal */}
-      <AnimatePresence>
-        {isGridModalOpen && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
-            {/* Backdrop */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setIsGridModalOpen(false)}
-              className="fixed inset-0 bg-black/80 backdrop-blur-md"
-            />
+      {createPortal(
+        <AnimatePresence>
+          {isGridModalOpen && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
+              {/* Backdrop */}
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setIsGridModalOpen(false)}
+                className="fixed inset-0 bg-black/80 backdrop-blur-md"
+              />
 
-            {/* Modal Box */}
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-              className="relative z-10 w-full max-w-4xl bg-bg-surface/95 border border-white/15 rounded-3xl p-5 sm:p-7 shadow-2xl backdrop-blur-2xl max-h-[85vh] flex flex-col gap-4 overflow-hidden"
-            >
-              {/* Modal Header */}
-              <div className="flex items-center justify-between border-b border-white/10 pb-4 shrink-0">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-2xl bg-accent/20 border border-accent/40 flex items-center justify-center text-accent">
-                    <LayoutGrid className="w-5 h-5 text-accent" />
+              {/* Modal Box */}
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+                className="relative z-10 w-full max-w-4xl bg-bg-surface/95 border border-white/15 rounded-3xl p-5 sm:p-7 shadow-2xl backdrop-blur-2xl max-h-[85vh] flex flex-col gap-4 overflow-hidden"
+              >
+                {/* Modal Header */}
+                <div className="flex items-center justify-between border-b border-white/10 pb-4 shrink-0">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-accent/20 border border-accent/40 flex items-center justify-center text-accent">
+                      <LayoutGrid className="w-5 h-5 text-accent" />
+                    </div>
+                    <div>
+                      <h2 className="text-lg sm:text-xl font-black text-white tracking-wide">
+                        Todas las Categorías
+                      </h2>
+                      <p className="text-xs text-text-secondary">
+                        {categories.length} experiencias musicales disponibles
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <h2 className="text-lg sm:text-xl font-black text-white tracking-wide">
-                      Todas las Categorías
-                    </h2>
-                    <p className="text-xs text-text-secondary">
-                      {categories.length} experiencias musicales disponibles
-                    </p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setIsGridModalOpen(false)}
-                  className="w-9 h-9 rounded-full bg-white/5 hover:bg-white/15 border border-white/10 flex items-center justify-center text-white/70 hover:text-white transition-colors cursor-pointer"
-                  title="Cerrar modal"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              {/* Modal Search Filter */}
-              <div className="relative shrink-0">
-                <Search className="w-4 h-4 text-white/40 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                  type="text"
-                  placeholder="Filtrar categorías..."
-                  value={gridSearchQuery}
-                  onChange={(e) => setGridSearchQuery(e.target.value)}
-                  className="w-full bg-black/40 border border-white/15 focus:border-accent/60 rounded-xl py-2.5 pl-10 pr-9 text-xs text-white placeholder:text-white/40 focus:outline-none transition-all"
-                />
-                {gridSearchQuery && (
                   <button
-                    onClick={() => setGridSearchQuery('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-white/50 hover:text-white"
+                    onClick={() => setIsGridModalOpen(false)}
+                    className="w-9 h-9 rounded-full bg-white/5 hover:bg-white/15 border border-white/10 flex items-center justify-center text-white/70 hover:text-white transition-colors cursor-pointer"
+                    title="Cerrar modal"
                   >
-                    <X className="w-4 h-4" />
+                    <X className="w-5 h-5" />
                   </button>
-                )}
-              </div>
-
-              {/* Modal Grid View */}
-              <div className="overflow-y-auto no-scrollbar flex-1 py-2 pr-1">
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                  {categories
-                    .filter(cat => {
-                      if (!gridSearchQuery.trim()) return true;
-                      const q = gridSearchQuery.toLowerCase();
-                      const name = (cat.name || '').toLowerCase();
-                      const alias = (cat.alias || '').toLowerCase();
-                      return name.includes(q) || alias.includes(q);
-                    })
-                    .map((cat) => {
-                      const isActive = activeCategoryId === cat.id;
-                      const isLocked = isGuest && (cat.requiresAuth || cat.id === 'red-emisoras' || cat.id === 'podcasts');
-                      const themeColor = getCategoryColor(cat);
-                      const catDisplayName = (cat.alias && typeof cat.alias === 'string') 
-                        ? cat.alias 
-                        : (cat.id === 'all' ? cat.name : formatCategoryName(cat.name));
-
-                      return (
-                        <button
-                          key={cat.id}
-                          onClick={() => {
-                            if (isLocked) {
-                              triggerHaptic(12);
-                              onOpenIncentiveModal?.(cat.alias || cat.name);
-                            } else {
-                              triggerHaptic(8);
-                              onSelectCategory(cat.id);
-                              setIsGridModalOpen(false);
-                            }
-                          }}
-                          style={isActive ? {
-                            backgroundColor: themeColor,
-                            borderColor: 'rgba(255, 255, 255, 0.4)',
-                            boxShadow: `0 0 16px ${themeColor}66`
-                          } : undefined}
-                          className={`p-3.5 rounded-2xl text-xs font-bold transition-all border flex items-center gap-2.5 text-left cursor-pointer active:scale-95 backdrop-blur-md relative overflow-hidden group ${
-                            isLocked
-                              ? 'bg-white/5 border-amber-400/30 text-amber-300 hover:border-amber-400 hover:bg-amber-500/10'
-                              : isActive
-                                ? 'text-white shadow-lg border-white/40 font-black'
-                                : 'bg-white/5 hover:bg-white/12 border-white/10 hover:border-white/20 text-white/90 hover:text-white'
-                          }`}
-                        >
-                          {isLocked ? (
-                            <Lock className="w-4 h-4 text-amber-400 shrink-0" />
-                          ) : (
-                            <span 
-                              className={`w-3 h-3 rounded-full shrink-0 transition-transform ${isActive ? 'bg-white scale-110 shadow-[0_0_8px_#ffffff]' : ''}`} 
-                              style={!isActive ? { backgroundColor: themeColor, boxShadow: `0 0 8px ${themeColor}` } : undefined}
-                            />
-                          )}
-                          <span className="truncate flex-1">{catDisplayName}</span>
-                        </button>
-                      );
-                    })}
                 </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+
+                {/* Modal Search Filter */}
+                <div className="relative shrink-0">
+                  <Search className="w-4 h-4 text-white/40 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    placeholder="Filtrar categorías..."
+                    value={gridSearchQuery}
+                    onChange={(e) => setGridSearchQuery(e.target.value)}
+                    className="w-full bg-black/40 border border-white/15 focus:border-accent/60 rounded-xl py-2.5 pl-10 pr-9 text-xs text-white placeholder:text-white/40 focus:outline-none transition-all"
+                  />
+                  {gridSearchQuery && (
+                    <button
+                      onClick={() => setGridSearchQuery('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-white/50 hover:text-white"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Modal Grid View */}
+                <div className="overflow-y-auto no-scrollbar flex-1 py-2 pr-1">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                    {categories
+                      .filter(cat => {
+                        if (!gridSearchQuery.trim()) return true;
+                        const q = gridSearchQuery.toLowerCase();
+                        const name = (cat.name || '').toLowerCase();
+                        const alias = (cat.alias || '').toLowerCase();
+                        return name.includes(q) || alias.includes(q);
+                      })
+                      .map((cat) => {
+                        const isActive = activeCategoryId === cat.id;
+                        const isLocked = isGuest && (cat.requiresAuth || cat.id === 'red-emisoras' || cat.id === 'podcasts');
+                        const themeColor = getCategoryColor(cat);
+                        const catDisplayName = (cat.alias && typeof cat.alias === 'string') 
+                          ? cat.alias 
+                          : (cat.id === 'all' ? cat.name : formatCategoryName(cat.name));
+
+                        return (
+                          <button
+                            key={cat.id}
+                            onClick={() => {
+                              if (isLocked) {
+                                triggerHaptic(12);
+                                onOpenIncentiveModal?.(cat.alias || cat.name);
+                              } else {
+                                triggerHaptic(8);
+                                onSelectCategory(cat.id);
+                                setIsGridModalOpen(false);
+                              }
+                            }}
+                            style={isActive ? {
+                              backgroundColor: themeColor,
+                              borderColor: 'rgba(255, 255, 255, 0.4)',
+                              boxShadow: `0 0 16px ${themeColor}66`
+                            } : undefined}
+                            className={`p-3.5 rounded-2xl text-xs font-bold transition-all border flex items-center gap-2.5 text-left cursor-pointer active:scale-95 backdrop-blur-md relative overflow-hidden group ${
+                              isLocked
+                                ? 'bg-white/5 border-amber-400/30 text-amber-300 hover:border-amber-400 hover:bg-amber-500/10'
+                                : isActive
+                                  ? 'text-white shadow-lg border-white/40 font-black'
+                                  : 'bg-white/5 hover:bg-white/12 border-white/10 hover:border-white/20 text-white/90 hover:text-white'
+                            }`}
+                          >
+                            {isLocked ? (
+                              <Lock className="w-4 h-4 text-amber-400 shrink-0" />
+                            ) : (
+                              <span 
+                                className={`w-3 h-3 rounded-full shrink-0 transition-transform ${isActive ? 'bg-white scale-110 shadow-[0_0_8px_#ffffff]' : ''}`} 
+                                style={!isActive ? { backgroundColor: themeColor, boxShadow: `0 0 8px ${themeColor}` } : undefined}
+                              />
+                            )}
+                            <span className="truncate flex-1">{catDisplayName}</span>
+                          </button>
+                        );
+                      })}
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
     </nav>
   );
 }

@@ -3,6 +3,34 @@ export async function onRequest(context) {
   const url = new URL(request.url);
   const host = url.hostname;
 
+  // 0. Static assets in /assets/ served strictly via ASSETS binding
+  if (url.pathname.startsWith('/assets/')) {
+    if (context.env && context.env.ASSETS) {
+      try {
+        const assetRes = await context.env.ASSETS.fetch(request);
+        const ct = assetRes?.headers?.get('content-type') || '';
+        if (assetRes && assetRes.status === 200 && !ct.includes('text/html')) {
+          return assetRes;
+        }
+      } catch (e) {}
+    }
+    
+    // If it's a JS file that is missing, return a recovery script to break SW cache loops
+    if (url.pathname.endsWith('.js')) {
+      const recoveryScript = `
+        if ('serviceWorker' in navigator) navigator.serviceWorker.getRegistrations().then(function(r) { for(var i=0; i<r.length; i++) r[i].unregister(); });
+        if ('caches' in window) caches.keys().then(function(k) { for(var i=0; i<k.length; i++) caches.delete(k[i]); });
+        if (!sessionStorage.getItem('aura_sw_recovered')) {
+          sessionStorage.setItem('aura_sw_recovered', '1');
+          setTimeout(function() { window.location.reload(true); }, 500);
+        }
+      `;
+      return new Response(recoveryScript, { status: 200, headers: { 'content-type': 'application/javascript; charset=utf-8', 'cache-control': 'no-cache, no-store' } });
+    }
+    
+    return new Response('Asset Not Found', { status: 404, headers: { 'content-type': 'text/plain' } });
+  }
+
   // 1. Intercept sitemap.xml requests
   if (url.pathname === '/sitemap.xml') {
     try {
@@ -103,9 +131,14 @@ export async function onRequest(context) {
     }
   }
 
-  // Skip static assets
-  if (url.pathname.startsWith('/assets/') || url.pathname.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot|mp3|mp4|webm)$/i)) {
-    return next();
+  // Skip other static media extension requests
+  if (url.pathname.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot|mp3|mp4|webm)$/i)) {
+    const assetRes = await next();
+    const assetType = assetRes.headers.get('content-type') || '';
+    if (assetRes.status === 404 || assetType.includes('text/html')) {
+      return new Response('Asset Not Found', { status: 404, headers: { 'content-type': 'text/plain' } });
+    }
+    return assetRes;
   }
 
   const isSongPath = url.pathname.startsWith('/cancion/') || url.pathname.startsWith('/song/');

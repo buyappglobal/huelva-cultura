@@ -3,20 +3,24 @@
   <head>
     <script>
       window.addEventListener('error', function(e) {
-        if (e && e.message && (e.message.indexOf('module script') !== -1 || e.message.indexOf('MIME type') !== -1)) {
+        var isScriptError = (e && e.target && e.target.tagName === 'SCRIPT') || 
+                            (e && e.message && (e.message.indexOf('module script') !== -1 || e.message.indexOf('MIME type') !== -1 || e.message.indexOf('Loading chunk') !== -1));
+        if (isScriptError) {
           if (!sessionStorage.getItem('aura_stale_reloaded')) {
             sessionStorage.setItem('aura_stale_reloaded', '1');
             if ('serviceWorker' in navigator) {
               navigator.serviceWorker.getRegistrations().then(function(regs) {
-                for (var reg of regs) reg.unregister();
+                for (var i = 0; i < regs.length; i++) regs[i].unregister();
               });
             }
             if ('caches' in window) {
               caches.keys().then(function(names) {
-                for (var name of names) caches.delete(name);
+                for (var i = 0; i < names.length; i++) caches.delete(name);
               });
             }
-            window.location.reload();
+            setTimeout(function() {
+              window.location.reload(true);
+            }, 300);
           }
         }
       }, true);

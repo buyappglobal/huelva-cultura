@@ -312,7 +312,10 @@ class AudioEngine {
 
         if (safeUrl.startsWith('https://boletines.auraradio.es/')) {
           // Route through worker proxy for CORS
-          const filePath = safeUrl.slice('https://boletines.auraradio.es/'.length);
+          let filePath = safeUrl.slice('https://boletines.auraradio.es/'.length);
+          if (filePath.startsWith('boletines/')) {
+            filePath = filePath.slice('boletines/'.length);
+          }
           const decodedPath = (() => { try { return decodeURIComponent(filePath); } catch { return filePath; } })();
           const encodedPath = decodedPath.split('/').map(s => encodeURIComponent(s)).join('/');
           safeUrl = WORKER_BOLETINES_BASE + encodedPath;

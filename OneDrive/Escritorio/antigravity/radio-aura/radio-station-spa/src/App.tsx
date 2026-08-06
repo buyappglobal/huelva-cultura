@@ -765,6 +765,7 @@ export default function App() {
   const [showWelcome, setShowWelcome] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('play') || params.get('demo')) return false; // Skip welcome modal if sharing link or in demo iframe
+    if (window.location.pathname.includes('/cancion/') || window.location.pathname.includes('/song/')) return false; // Skip welcome modal for path-based share links (e.g. /cancion/ID)
 
     const swReload = sessionStorage.getItem('aura_sw_reload');
     if (swReload === 'true') {
@@ -1140,8 +1141,8 @@ export default function App() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (!parsed.boletinUrl || parsed.boletinUrl.includes('boletin_preview.mp3')) {
-          parsed.boletinUrl = 'https://audioads.aurabusiness.es/boletines/boletin_latest.mp3';
+        if (!parsed.boletinUrl || parsed.boletinUrl.includes('boletin_preview.mp3') || parsed.boletinUrl.startsWith('blob:')) {
+          parsed.boletinUrl = 'https://boletines.auraradio.es/boletin_latest.mp3';
         }
         if (!parsed.jingleUrl) {
           parsed.jingleUrl = 'https://audioads.aurabusiness.es/jingles/jingles_noticias_1.mp3';
@@ -1153,7 +1154,7 @@ export default function App() {
       enabled: false, 
       hours: [8, 12, 14, 20, 22], 
       jingleUrl: 'https://audioads.aurabusiness.es/jingles/jingles_noticias_1.mp3', 
-      boletinUrl: 'https://audioads.aurabusiness.es/boletines/boletin_latest.mp3' 
+      boletinUrl: 'https://boletines.auraradio.es/boletin_latest.mp3' 
     };
   });
   const [boletinTriggered, setBoletinTriggered] = useState(false);
@@ -1672,6 +1673,13 @@ export default function App() {
       }
     }
 
+    if (!playId && window.location.pathname.includes('/song/')) {
+      const parts = window.location.pathname.split('/song/');
+      if (parts.length > 1 && parts[1]) {
+        playId = parts[1].replace(/\/+$/, '');
+      }
+    }
+
     if (playId && !currentSong && !isSyncing) {
       if (isLoading) return; // Wait for initial category loading to complete
 
@@ -2140,8 +2148,8 @@ export default function App() {
         if (data.boletines_config && typeof data.boletines_config === 'object') {
           const bCfg = data.boletines_config;
           // Patch legacy URL references
-          if (!bCfg.boletinUrl || bCfg.boletinUrl.includes('boletin_preview.mp3')) {
-            bCfg.boletinUrl = 'https://audioads.aurabusiness.es/boletines/boletin_latest.mp3';
+          if (!bCfg.boletinUrl || bCfg.boletinUrl.includes('boletin_preview.mp3') || bCfg.boletinUrl.startsWith('blob:')) {
+            bCfg.boletinUrl = 'https://boletines.auraradio.es/boletin_latest.mp3';
           }
           if (!bCfg.jingleUrl) {
             bCfg.jingleUrl = 'https://audioads.aurabusiness.es/jingles/jingles_noticias_1.mp3';
@@ -3089,12 +3097,14 @@ export default function App() {
         artist: 'Espacio Informativo',
         coverUrl: 'https://images.unsplash.com/photo-1585829365295-ab7cd400c167?w=600&auto=format&fit=crop&q=80',
         streamUrl: (() => {
-          const raw = boletinesConfig.boletinUrl || 'https://boletines.auraradio.es/boletin_latest.mp3';
+          const raw = (boletinesConfig.boletinUrl && !boletinesConfig.boletinUrl.startsWith('blob:'))
+            ? boletinesConfig.boletinUrl 
+            : 'https://boletines.auraradio.es/boletin_latest.mp3';
           const currentHour = new Date().getHours();
           const hh = currentHour.toString().padStart(2, '0');
           let url = raw.replace(/{hour}/g, currentHour.toString()).replace(/{HH}/g, hh);
           if (url.includes('audioads.aurabusiness.es/boletines/')) {
-            url = url.replace('https://audioads.aurabusiness.es/boletines/', 'https://boletines.auraradio.es/boletines/');
+            url = url.replace('https://audioads.aurabusiness.es/boletines/', 'https://boletines.auraradio.es/');
           }
           const separator = url.includes('?') ? '&' : '?';
           return `${url}${separator}t=${Date.now()}`;

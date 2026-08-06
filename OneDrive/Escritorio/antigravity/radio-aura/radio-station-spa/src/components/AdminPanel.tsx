@@ -873,6 +873,7 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
   const [isAiGenerating, setIsAiGenerating] = useState(false);
   const [aiGenStatus, setAiGenStatus] = useState<string>('');
   const [aiGenScriptResult, setAiGenScriptResult] = useState<string>('');
+  const [scriptCopied, setScriptCopied] = useState<boolean>(false);
   const [showApiKeys, setShowApiKeys] = useState(false);
 
   // Interstitials State
@@ -7830,9 +7831,36 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
 
                         {/* Previsualización del Guión Redactado por Gemini */}
                         {aiGenScriptResult && (
-                          <div className="mt-2 space-y-1 bg-purple-950/80 border border-purple-500/40 p-3 rounded-xl">
-                            <span className="text-[9px] font-bold text-yellow-300 uppercase tracking-wider block">📜 Guión Redactado por Gemini:</span>
-                            <div className="max-h-40 overflow-y-auto text-[10px] text-purple-100 font-sans leading-relaxed whitespace-pre-wrap pr-1">
+                          <div className="mt-2 space-y-2 bg-purple-950/80 border border-purple-500/40 p-3 rounded-xl">
+                            <div className="flex items-center justify-between flex-wrap gap-2">
+                              <span className="text-[9px] font-bold text-yellow-300 uppercase tracking-wider block">📜 Guión Redactado por Gemini:</span>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(aiGenScriptResult);
+                                    setScriptCopied(true);
+                                    setTimeout(() => setScriptCopied(false), 2500);
+                                  }}
+                                  className="px-2 py-1 bg-purple-800 hover:bg-purple-700 text-purple-100 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer border border-purple-500/30 active:scale-95 shadow-sm"
+                                  title="Copiar texto del guión redactado al portapapeles"
+                                >
+                                  {scriptCopied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3 text-yellow-300" />}
+                                  <span>{scriptCopied ? '¡Copiado!' : 'Copiar Guión'}</span>
+                                </button>
+                                <a
+                                  href="https://noticias.auraradio.es"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-2 py-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all border border-emerald-400/40 active:scale-95 shadow-sm"
+                                  title="Abrir web noticias.auraradio.es en nueva pestaña para pegar y publicar en 1 clic"
+                                >
+                                  <Globe className="w-3 h-3 text-emerald-200" />
+                                  <span>Abrir noticias.auraradio.es ↗</span>
+                                </a>
+                              </div>
+                            </div>
+                            <div className="max-h-40 overflow-y-auto text-[10px] text-purple-100 font-sans leading-relaxed whitespace-pre-wrap pr-1 bg-black/30 p-2 rounded-lg border border-purple-500/20">
                               {aiGenScriptResult}
                             </div>
                           </div>
