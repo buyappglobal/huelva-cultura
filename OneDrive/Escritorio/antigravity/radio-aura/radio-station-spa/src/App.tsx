@@ -2899,8 +2899,14 @@ export default function App() {
         setSongs(mocks);
         return mocks;
       }
-      
-      if (foldersToFetch.length === 0) foldersToFetch.push('');
+
+      // NOTE: deliberately no blanket "if empty, fetch bucket root" fallback here anymore.
+      // A known category (matched above) with no r2_folder configured on itself or its
+      // subcategories means "no songs for this category", not "list the entire R2 bucket
+      // root" — that used to surface stray root-level files (e.g. an "AuraMix" category
+      // with a blank folder silently showing whatever loose file sat in the bucket root).
+      // The two branches above that DO intend a root listing (circadiano with no matched
+      // blocks, and an unrecognized categoryId) already push '' into foldersToFetch themselves.
 
       let combinedSongs: any[] = [];
       let combinedAds: any[] = [];
@@ -3198,9 +3204,19 @@ export default function App() {
 
     if (!visibleSongs.length && !currentSong?.isAd) {
       const savedDefault = localStorage.getItem('aura_default_category');
-      const fallbackCat = savedDefault && savedDefault !== 'all' && dynamicCategories.find(c => c.id === savedDefault)
+      // 'live' is a valid tenant default (the real circadian live stream) even though it has
+      // no entry in dynamicCategories — it's a special view, not a folder-backed category.
+      const isValidSavedDefault = savedDefault === 'live' || (!!savedDefault && !!dynamicCategories.find(c => c.id === savedDefault));
+      const fallbackCat = savedDefault && savedDefault !== 'all' && isValidSavedDefault
         ? savedDefault
         : (dynamicCategories.find(c => c.id === 'all') ? 'all' : (dynamicCategories[0]?.id || 'all'));
+      if (fallbackCat === 'live') {
+        if (activeCategory !== 'live') {
+          setActiveCategory('live');
+          handlePlayLiveRef.current();
+        }
+        return;
+      }
       if (fallbackCat && fallbackCat !== activeCategory) {
         setActiveCategory(fallbackCat);
         const newSongs = await fetchSongs(fallbackCat);
@@ -3237,9 +3253,17 @@ export default function App() {
     if (nextIndex >= visibleSongs.length) {
       // Reached the end of the list. "si llega a la ultima de la lista comenzar a reproducir la siguiente de la categoria defecto auramix"
       const savedDefault = localStorage.getItem('aura_default_category');
-      const fallbackCat = savedDefault && savedDefault !== 'all' && dynamicCategories.find(c => c.id === savedDefault)
+      const isValidSavedDefault = savedDefault === 'live' || (!!savedDefault && !!dynamicCategories.find(c => c.id === savedDefault));
+      const fallbackCat = savedDefault && savedDefault !== 'all' && isValidSavedDefault
         ? savedDefault
         : (dynamicCategories.find(c => c.id === 'all') ? 'all' : (dynamicCategories[0]?.id || 'all'));
+      if (fallbackCat === 'live') {
+        if (activeCategory !== 'live') {
+          setActiveCategory('live');
+          handlePlayLiveRef.current();
+        }
+        return;
+      }
       if (activeCategory !== fallbackCat) {
         setActiveCategory(fallbackCat);
         const newSongs = await fetchSongs(fallbackCat);
