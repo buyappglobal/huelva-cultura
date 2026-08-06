@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Lock, Folder, Plus, Trash2, Link2, Unlink, LogOut, CheckCircle2, Megaphone, Download, Globe, Palette, ArrowUp, ArrowDown, Zap, Activity, Loader2, Music, Code, ArrowLeft, Check, Copy, Users, ShieldCheck, ShieldAlert, ChevronDown, Save, Mic, Headphones, Edit2, Heart, MessageSquare, X, RefreshCw, Play, Square, Maximize2, Minimize2, Clock, Share2, AlertCircle, Layout, Brain, Send, FileText, Bot, User2, Key, ChevronRight, Sparkles, VolumeX, Volume2, Radio, Smartphone } from 'lucide-react';
-import { API_CONFIG, AudioAd, Song, SpecialBanner, WelcomeJingle, CircadianBlock, TenantConfig, AudioVisualizerConfig, InstallInterstitialConfig } from '../types';
+import { API_CONFIG, AudioAd, Song, SpecialBanner, WelcomeJingle, CircadianBlock, TenantConfig, AudioVisualizerConfig, InstallInterstitialConfig, FeaturedConfig } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import { triggerHaptic } from '../lib/haptics';
 import { audioEngine } from '../lib/AudioEngine';
@@ -139,7 +139,7 @@ interface DSPLog {
 
 export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }: { onClose?: () => void; isFullScreen?: boolean; onToggleFullScreen?: () => void }) {
   const { user, token } = useAuth();
-  const [activeTab, setActiveTab] = useState<'general' | 'banners' | 'dsp' | 'widget' | 'users' | 'podcasts' | 'interstitials' | 'stats' | 'moderation' | 'copilot' | 'circadian' | 'tenants' | 'seo' | 'songs' | 'brain' | 'ads' | 'visualizers'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'banners' | 'dsp' | 'widget' | 'users' | 'podcasts' | 'interstitials' | 'stats' | 'moderation' | 'copilot' | 'circadian' | 'tenants' | 'seo' | 'songs' | 'brain' | 'ads' | 'visualizers' | 'destacado'>('general');
   const [editingTenantId, setEditingTenantId] = useState<string | null>(null);
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
@@ -868,6 +868,24 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
     };
   });
 
+  // Destacado (Featured song/category) Config State
+  const [featuredConfig, setFeaturedConfig] = useState<FeaturedConfig>(() => {
+    const saved = localStorage.getItem('aura_featured_config');
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) { console.warn("Error parsing featured config", e); }
+    }
+    return {
+      enabled: false,
+      type: 'song',
+      itemId: '',
+      phrases: [],
+      targetTenants: ['aura-radio'],
+      frequency: 'daily'
+    };
+  });
+  const [destacadoPickCategoryId, setDestacadoPickCategoryId] = useState('');
+  const [destacadoSongSearch, setDestacadoSongSearch] = useState('');
+
   // AI Bulletin Generator Local State
   const [newVoiceForm, setNewVoiceForm] = useState({ id: '', name: '' });
   const [isAiGenerating, setIsAiGenerating] = useState(false);
@@ -1180,6 +1198,11 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
   }, [boletinesConfig]);
 
   useEffect(() => {
+    localStorage.setItem('aura_featured_config', JSON.stringify(featuredConfig));
+    window.dispatchEvent(new CustomEvent('aura_config_updated', { detail: { featuredConfig, featured_config: featuredConfig } }));
+  }, [featuredConfig]);
+
+  useEffect(() => {
     localStorage.setItem('aura_accent_color', accentColor);
     localStorage.setItem('aura_circadian_mode', String(circadianMode));
     if (!circadianMode) {
@@ -1324,6 +1347,11 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
             localStorage.setItem('aura_boletines_config', JSON.stringify(bConfig));
           }
 
+          if (data.featured_config) {
+            setFeaturedConfig(data.featured_config);
+            localStorage.setItem('aura_featured_config', JSON.stringify(data.featured_config));
+          }
+
           const rawInterstitials = data.interstitial_ads;
           if (rawInterstitials && Array.isArray(rawInterstitials)) {
             setInterstitialAds(rawInterstitials);
@@ -1425,6 +1453,7 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
         config.audio_ad_cadence = audioAdCadence;
         config.live_ad_cadence_minutes = liveAdCadenceMinutes;
         config.boletines_config = boletinesConfig;
+        config.featured_config = featuredConfig;
         config.special_banner = specialBanner;
         config.accent_color = accentColor;
         config.circadian_mode = circadianMode;
@@ -1463,6 +1492,7 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
         if (freshRes.ok) {
           const fresh = await freshRes.json();
           if (fresh.boletines_config) setBoletinesConfig(fresh.boletines_config);
+          if (fresh.featured_config) setFeaturedConfig(fresh.featured_config);
           if (fresh.default_category) setDefaultCategory(fresh.default_category);
           if (fresh.active_audio_ads || fresh.ads) {
             const ads = fresh.active_audio_ads || fresh.ads;
@@ -2596,6 +2626,12 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
                 className={`px-3 md:px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'visualizers' ? 'bg-accent text-white shadow-lg' : 'text-text-secondary hover:text-white'}`}
               >
                 <Sparkles className="w-4 h-4" /> Visualizadores
+              </button>
+              <button
+                onClick={() => setActiveTab('destacado')}
+                className={`px-3 md:px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'destacado' ? 'bg-accent text-white shadow-lg' : 'text-text-secondary hover:text-white'}`}
+              >
+                <Radio className="w-4 h-4" /> Destacado
               </button>
               <button 
                 onClick={() => setActiveTab('copilot')}
@@ -6443,6 +6479,201 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
                   </div>
                 ))
               )}
+            </div>
+          </motion.div>
+        )}
+
+        {activeTab === 'destacado' && (
+          <motion.div
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="p-6 md:p-8 space-y-6 overflow-y-auto h-full pb-24 no-scrollbar"
+          >
+            <div className="flex items-center justify-between border-b border-border pb-4">
+              <div>
+                <h2 className="text-xl font-black text-white uppercase flex items-center gap-3">
+                  <Radio className="text-accent w-6 h-6" /> Destacado
+                </h2>
+                <p className="text-xs text-text-secondary mt-1 max-w-xl">
+                  Una canción o categoría destacada que se presenta a los visitantes justo al entrar, con su propio momento visual mientras suena la sintonía de bienvenida.
+                </p>
+              </div>
+              <button
+                onClick={() => setFeaturedConfig(prev => ({ ...prev, enabled: !prev.enabled }))}
+                className={`px-3 py-1 rounded-full text-[10px] font-bold transition-all cursor-pointer border shrink-0 ${
+                  featuredConfig.enabled
+                    ? 'bg-accent text-white border-accent/60 shadow-md shadow-accent/20'
+                    : 'bg-white/5 text-text-secondary border-white/10'
+                }`}
+              >
+                {featuredConfig.enabled ? '✓ Activado' : 'Desactivado'}
+              </button>
+            </div>
+
+            {/* Type + item picker */}
+            <div className="p-4 bg-bg-surface border border-border rounded-2xl space-y-4">
+              <h4 className="text-xs font-bold text-white uppercase tracking-wider">Qué se destaca</h4>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setFeaturedConfig(prev => ({ ...prev, type: 'song', itemId: '' }))}
+                  className={`flex-1 p-2.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                    featuredConfig.type === 'song' ? 'bg-accent/20 border-accent text-accent' : 'bg-white/5 border-white/5 text-text-secondary hover:text-white'
+                  }`}
+                >
+                  🎵 Canción
+                </button>
+                <button
+                  onClick={() => setFeaturedConfig(prev => ({ ...prev, type: 'category', itemId: '' }))}
+                  className={`flex-1 p-2.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                    featuredConfig.type === 'category' ? 'bg-accent/20 border-accent text-accent' : 'bg-white/5 border-white/5 text-text-secondary hover:text-white'
+                  }`}
+                >
+                  📁 Categoría
+                </button>
+              </div>
+
+              {featuredConfig.type === 'category' ? (
+                <select
+                  value={featuredConfig.itemId}
+                  onChange={(e) => setFeaturedConfig(prev => ({ ...prev, itemId: e.target.value }))}
+                  className="w-full bg-[#13131A] border border-border rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-accent"
+                >
+                  <option value="">— Selecciona una categoría —</option>
+                  {categories.filter(c => c.r2_folder).map(cat => (
+                    <option key={cat.id} value={String(cat.id)}>{formatCategoryName(cat.name)}</option>
+                  ))}
+                </select>
+              ) : (
+                <div className="space-y-3">
+                  <select
+                    value={destacadoPickCategoryId}
+                    onChange={(e) => {
+                      const catId = e.target.value;
+                      setDestacadoPickCategoryId(catId);
+                      const cat = categories.find(c => String(c.id) === catId);
+                      if (cat && !categorySongs[cat.id]) fetchSongsForCategory(cat);
+                    }}
+                    className="w-full bg-[#13131A] border border-border rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-accent"
+                  >
+                    <option value="">— Elige la carpeta donde buscar la canción —</option>
+                    {categories.filter(c => c.r2_folder).map(cat => (
+                      <option key={cat.id} value={String(cat.id)}>{formatCategoryName(cat.name)}</option>
+                    ))}
+                  </select>
+
+                  {destacadoPickCategoryId && (
+                    <>
+                      <input
+                        type="text"
+                        placeholder="Buscar canción..."
+                        value={destacadoSongSearch}
+                        onChange={(e) => setDestacadoSongSearch(e.target.value)}
+                        className="w-full bg-[#13131A] border border-border rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-accent placeholder:text-text-secondary/50"
+                      />
+                      {loadingSongsCatId === destacadoPickCategoryId ? (
+                        <div className="py-6 text-center">
+                          <Loader2 className="w-5 h-5 animate-spin text-accent mx-auto" />
+                        </div>
+                      ) : (
+                        <div className="max-h-64 overflow-y-auto no-scrollbar space-y-1.5">
+                          {(categorySongs[destacadoPickCategoryId] || [])
+                            .filter(song => !destacadoSongSearch || (song.id.toLowerCase().includes(destacadoSongSearch.toLowerCase()) || (song.title || '').toLowerCase().includes(destacadoSongSearch.toLowerCase())))
+                            .map(song => (
+                              <button
+                                key={song.id}
+                                onClick={() => setFeaturedConfig(prev => ({ ...prev, itemId: song.id }))}
+                                className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors flex items-center justify-between gap-2 cursor-pointer ${
+                                  featuredConfig.itemId === song.id ? 'bg-accent/20 border border-accent text-accent' : 'bg-white/5 border border-white/5 text-white hover:bg-white/10'
+                                }`}
+                              >
+                                <span className="truncate">{song.title || (song.id.split('/').pop())}</span>
+                                {featuredConfig.itemId === song.id && <Check className="w-3.5 h-3.5 shrink-0" />}
+                              </button>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+
+              {featuredConfig.itemId && (
+                <p className="text-[10px] text-text-secondary font-mono">
+                  Seleccionado: <span className="text-accent">{featuredConfig.itemId}</span>
+                </p>
+              )}
+            </div>
+
+            {/* Phrases */}
+            <div className="p-4 bg-bg-surface border border-border rounded-2xl space-y-3">
+              <h4 className="text-xs font-bold text-white uppercase tracking-wider">Frases del destacado</h4>
+              <p className="text-[10px] text-text-secondary">Se elige una al azar para acompañar el título en la pantalla de bienvenida.</p>
+              <div className="space-y-2">
+                {featuredConfig.phrases.map((phrase, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={phrase}
+                      placeholder="🔥 La más compartida esta semana"
+                      onChange={(e) => setFeaturedConfig(prev => ({ ...prev, phrases: prev.phrases.map((p, i) => i === idx ? e.target.value : p) }))}
+                      className="flex-1 bg-[#13131A] border border-border rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-accent"
+                    />
+                    <button
+                      onClick={() => setFeaturedConfig(prev => ({ ...prev, phrases: prev.phrases.filter((_, i) => i !== idx) }))}
+                      className="p-2 rounded-lg bg-white/5 hover:bg-red-500/20 text-text-secondary hover:text-red-400 transition-colors cursor-pointer shrink-0"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <button
+                onClick={() => setFeaturedConfig(prev => ({ ...prev, phrases: [...prev.phrases, ''] }))}
+                className="text-xs font-bold text-accent hover:text-accent/80 flex items-center gap-1.5 cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" /> Añadir frase
+              </button>
+            </div>
+
+            {/* Target tenants */}
+            <div className="p-4 bg-bg-surface border border-border rounded-2xl space-y-3">
+              <h4 className="text-xs font-bold text-white uppercase tracking-wider">Dónde se muestra</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {[{ id: 'aura-radio', name: 'Aura Radio Principal' }, ...tenants].map(t => {
+                  const checked = featuredConfig.targetTenants.includes(t.id);
+                  return (
+                    <button
+                      key={t.id}
+                      onClick={() => setFeaturedConfig(prev => ({
+                        ...prev,
+                        targetTenants: checked ? prev.targetTenants.filter(id => id !== t.id) : [...prev.targetTenants, t.id]
+                      }))}
+                      className={`text-left px-3 py-2.5 rounded-xl border text-xs font-bold transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                        checked ? 'bg-accent/20 border-accent text-accent' : 'bg-white/5 border-white/5 text-text-secondary hover:text-white'
+                      }`}
+                    >
+                      <span className="truncate">{t.name}</span>
+                      {checked && <Check className="w-3.5 h-3.5 shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Frequency */}
+            <div className="p-4 bg-bg-surface border border-border rounded-2xl space-y-3">
+              <h4 className="text-xs font-bold text-white uppercase tracking-wider">Frecuencia de aparición</h4>
+              <select
+                value={featuredConfig.frequency}
+                onChange={(e) => setFeaturedConfig(prev => ({ ...prev, frequency: e.target.value as any }))}
+                className="w-full bg-[#13131A] border border-border rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-accent"
+              >
+                <option value="always">Cada visita</option>
+                <option value="session">Una vez por sesión</option>
+                <option value="daily">Una vez al día</option>
+                <option value="once">Una vez para siempre</option>
+              </select>
             </div>
           </motion.div>
         )}

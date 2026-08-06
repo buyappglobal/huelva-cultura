@@ -7,7 +7,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Music, Loader2, Play, Search, X, Lock, Radio, Heart, RefreshCw, CheckCircle2, LogOut, Shield, User, Users, Mic, Clock, Share2, Instagram, Facebook, Twitter, Globe, MessageCircle, Video, Info, Sparkles, Moon, FileText } from 'lucide-react';
 import { triggerHaptic } from './lib/haptics';
-import { Song, API_CONFIG, CATEGORIES, Category, VisualBanner, AudioAd, SpecialBanner, WelcomeJingle, CircadianBlock, TenantConfig } from './types';
+import { Song, API_CONFIG, CATEGORIES, Category, VisualBanner, AudioAd, SpecialBanner, WelcomeJingle, CircadianBlock, TenantConfig, FeaturedConfig } from './types';
 import { audioEngine } from './lib/AudioEngine';
 import { createAvatar } from '@dicebear/core';
 import { shapes } from '@dicebear/collection';
@@ -23,6 +23,7 @@ import TenantSalesPage from './components/TenantSalesPage';
 import InstallPWA from './components/InstallPWA';
 import { useAuth } from './contexts/AuthContext';
 import WelcomeModal from './components/WelcomeModal';
+import FeaturedModal from './components/FeaturedModal';
 import { InterstitialAd } from './components/InterstitialAdModal';
 import { LiveMarquee } from './components/LiveMarquee';
 import { SongSponsorModal } from './components/SongSponsorModal';
@@ -601,6 +602,9 @@ export default function App() {
               if (data.boletines_config && typeof data.boletines_config === 'object') {
                 setBoletinesConfig(data.boletines_config);
               }
+              if (data.featured_config && typeof data.featured_config === 'object') {
+                setFeaturedConfig(data.featured_config);
+              }
             }
           })
           .catch(() => {});
@@ -613,6 +617,17 @@ export default function App() {
         audioEngine.play(currentSong);
       }
       return;
+    }
+
+    // Destacado: if due to show, reveal it in parallel with the jingle and have the
+    // jingle's end hand off to the featured item instead of the normal default-category flow.
+    // Never on a deep-link landing (/cancion/, /categoria/, /song/) — those visitors already
+    // have a specific destination in mind, showing the destacado there would be a bait-and-switch.
+    const isDeepLinkVisit = window.location.pathname.includes('/cancion/') || window.location.pathname.includes('/categoria/') || window.location.pathname.includes('/song/');
+    const showFeatured = !isDeepLinkVisit && !!featuredConfig && shouldShowFeatured(featuredConfig);
+    if (showFeatured && featuredConfig) {
+      setShowFeaturedModal(true);
+      markFeaturedSeen(featuredConfig);
     }
 
     let url = ""; // No fallback default
@@ -642,7 +657,9 @@ export default function App() {
     }
 
     if (!url) {
-      if (playNextRef.current) {
+      if (showFeatured) {
+        playFeaturedRef.current();
+      } else if (playNextRef.current) {
         playNextRef.current();
       }
       return;
@@ -650,11 +667,13 @@ export default function App() {
 
     const audio = new Audio(url);
     audio.volume = 0.5;
-    
+
     audio.addEventListener('ended', () => {
       jingleAudioRef.current = null;
-      // Start the first song automatically for gapless experience!
-      if (playNextRef.current) {
+      // Start the destacado (if due) or the first song automatically for a gapless experience!
+      if (showFeatured) {
+        playFeaturedRef.current();
+      } else if (playNextRef.current) {
         playNextRef.current();
       }
     });
@@ -1037,6 +1056,8 @@ export default function App() {
       if (e.detail.liveSource) setLiveSource(e.detail.liveSource);
       if (e.detail.boletines_config) setBoletinesConfig(e.detail.boletines_config);
       if (e.detail.boletinesConfig) setBoletinesConfig(e.detail.boletinesConfig);
+      if (e.detail.featured_config) setFeaturedConfig(e.detail.featured_config);
+      if (e.detail.featuredConfig) setFeaturedConfig(e.detail.featuredConfig);
     };
 
     window.addEventListener('aura_config_updated', handleConfigUpdate as EventListener);
@@ -1161,6 +1182,15 @@ export default function App() {
   });
   const [boletinTriggered, setBoletinTriggered] = useState(false);
   const [lastBoletinHourPlayed, setLastBoletinHourPlayed] = useState(-1);
+
+  const [featuredConfig, setFeaturedConfig] = useState<FeaturedConfig | null>(() => {
+    const saved = localStorage.getItem('aura_featured_config');
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) {}
+    }
+    return null;
+  });
+  const [showFeaturedModal, setShowFeaturedModal] = useState(false);
 
   // Hourly bulletin auto-trigger check loop (runs every 10 seconds)
   useEffect(() => {
@@ -2181,6 +2211,11 @@ export default function App() {
           }
           setBoletinesConfig(bCfg);
           localStorage.setItem('aura_boletines_config', JSON.stringify(bCfg));
+        }
+
+        if (data.featured_config && typeof data.featured_config === 'object') {
+          setFeaturedConfig(data.featured_config);
+          localStorage.setItem('aura_featured_config', JSON.stringify(data.featured_config));
         }
 
         if (data.accent_color) {
@@ -3233,6 +3268,86 @@ export default function App() {
   const handlePlayLiveRef = useRef<() => void>(() => {});
   const playNextRef = useRef(handlePlayNext);
   playNextRef.current = handlePlayNext;
+
+  // ─── Destacado (Featured song/category) ────────────────────────────────
+  const currentTenantId = activeTenantConfig?.id || 'aura-radio';
+
+  const shouldShowFeatured = (cfg: FeaturedConfig | null): boolean => {
+    if (!cfg || !cfg.enabled || !cfg.itemId) return false;
+    if (!cfg.targetTenants.includes(currentTenantId)) return false;
+
+    // Category existence is verified against the loaded catalog; song existence is
+    // resolved best-effort at play time (same fallback strategy as /cancion/ deep links),
+    // since allKnownSongs is only lazily populated as the visitor browses categories and
+    // would otherwise false-negative for exactly the first-time visitors we want to reach.
+    if (cfg.type === 'category' && !dynamicCategories.some(c => c.id === cfg.itemId)) return false;
+
+    const seenKey = `aura_featured_seen_${cfg.itemId}`;
+    if (cfg.frequency === 'always') return true;
+    if (cfg.frequency === 'session') return !sessionStorage.getItem(seenKey);
+    if (cfg.frequency === 'daily') {
+      const today = new Date().toISOString().slice(0, 10);
+      return localStorage.getItem(seenKey) !== today;
+    }
+    return !localStorage.getItem(seenKey); // 'once'
+  };
+
+  const markFeaturedSeen = (cfg: FeaturedConfig) => {
+    const seenKey = `aura_featured_seen_${cfg.itemId}`;
+    if (cfg.frequency === 'session') sessionStorage.setItem(seenKey, '1');
+    else if (cfg.frequency === 'daily') localStorage.setItem(seenKey, new Date().toISOString().slice(0, 10));
+    else if (cfg.frequency === 'once') localStorage.setItem(seenKey, '1');
+  };
+
+  const playFeatured = async () => {
+    const cfg = featuredConfig;
+    if (!cfg || !cfg.itemId) { playNextRef.current(); return; }
+
+    if (cfg.type === 'category') {
+      const matchedCat = dynamicCategories.find(c => c.id === cfg.itemId);
+      if (!matchedCat) { playNextRef.current(); return; }
+      setActiveCategory(matchedCat.id);
+      const catSongs = await fetchSongs(matchedCat.id);
+      if (catSongs && catSongs.length > 0) {
+        handleSongSelect(catSongs[0]);
+      } else {
+        playNextRef.current();
+      }
+    } else {
+      let song = allKnownSongs.get(cfg.itemId) || null;
+      if (!song) {
+        const catalogEntry = songCatalog[cfg.itemId];
+        const resolvedKey = catalogEntry?.r2_key || r2KeyToId[cfg.itemId] || cfg.itemId;
+        const mediaBase = `${API_CONFIG.BASE_URL}/api/stream/music/`;
+        const cleanPath = resolvedKey.replace(/^\//, '');
+        song = {
+          id: cfg.itemId,
+          title: catalogEntry?.title || customSongNames[cfg.itemId]?.title || generateEpicTitle(resolvedKey),
+          artist: catalogEntry?.artist || customSongNames[cfg.itemId]?.artist || 'Aura Radio',
+          streamUrl: mediaBase + cleanPath.split('/').map(segment => encodeURIComponent(segment)).join('/'),
+          coverUrl: `https://api.dicebear.com/7.x/shapes/svg?seed=${encodeURIComponent(cfg.itemId)}`,
+          category: 'all'
+        } as Song;
+      }
+      handleSongSelect(song);
+    }
+
+    setTimeout(() => setShowFeaturedModal(false), 4000);
+  };
+  const playFeaturedRef = useRef(playFeatured);
+  playFeaturedRef.current = playFeatured;
+
+  const featuredDisplay = React.useMemo(() => {
+    if (!featuredConfig || !featuredConfig.itemId) return { title: '', coverUrl: undefined as string | undefined };
+    if (featuredConfig.type === 'category') {
+      const cat = dynamicCategories.find(c => c.id === featuredConfig.itemId);
+      return { title: cat?.name || featuredConfig.itemId, coverUrl: undefined };
+    }
+    const known = allKnownSongs.get(featuredConfig.itemId);
+    const catalogEntry = songCatalog[featuredConfig.itemId];
+    const title = known?.title || catalogEntry?.title || customSongNames[featuredConfig.itemId]?.title || generateEpicTitle(featuredConfig.itemId);
+    return { title, coverUrl: known?.coverUrl || catalogEntry?.coverUrl };
+  }, [featuredConfig, dynamicCategories, allKnownSongs, songCatalog, customSongNames]);
 
   useEffect(() => {
     audioEngine.onEnded = () => playNextRef.current();
@@ -4703,6 +4818,17 @@ export default function App() {
           userEmail={user?.email}
           userPicture={user?.picture}
           isLoggedIn={isLoggedIn}
+        />
+      )}
+
+      {!isAdmin && showFeaturedModal && featuredConfig && (
+        <FeaturedModal
+          show={showFeaturedModal}
+          type={featuredConfig.type}
+          title={featuredDisplay.title}
+          coverUrl={featuredDisplay.coverUrl}
+          phrases={featuredConfig.phrases}
+          onDismiss={() => setShowFeaturedModal(false)}
         />
       )}
 

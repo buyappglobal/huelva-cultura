@@ -118,6 +118,15 @@ export interface WelcomeJingle {
   timeConstraint: 'all' | 'morning' | 'afternoon' | 'night';
 }
 
+export interface FeaturedConfig {
+  enabled: boolean;
+  type: 'song' | 'category';
+  itemId: string;
+  phrases: string[];
+  targetTenants: string[];
+  frequency: 'always' | 'session' | 'daily' | 'once';
+}
+
 export interface CircadianQuote {
   id: string;
   blockId: string; // 'nocturno' | 'morning' | 'aperitivo' | 'tardeo' | 'sunset' | 'cena' | 'all'
