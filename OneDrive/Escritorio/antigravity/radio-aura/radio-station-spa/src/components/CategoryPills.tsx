@@ -1,5 +1,6 @@
 import React, { useMemo, useRef, useEffect, useState, useCallback } from 'react';
-import { Share2, ChevronLeft, ChevronRight, Lock, Sparkles } from 'lucide-react';
+import { Share2, ChevronLeft, ChevronRight, Lock, Sparkles, Search, X, LayoutGrid } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { Category } from '../types';
 import { triggerHaptic } from '../lib/haptics';
 
@@ -13,6 +14,8 @@ interface CategoryPillsProps {
   isGuest?: boolean;
   onOpenIncentiveModal?: (categoryName?: string) => void;
   onOpenProfile?: () => void;
+  searchQuery?: string;
+  onSearchChange?: (query: string) => void;
 }
 
 const formatCategoryName = (name: string) => {
@@ -362,7 +365,9 @@ export default function CategoryPills({
   pcScrollMode = 'mouse',
   isGuest = false,
   onOpenIncentiveModal,
-  onOpenProfile
+  onOpenProfile,
+  searchQuery = '',
+  onSearchChange
 }: CategoryPillsProps) {
   const mainScrollRef = useRef<HTMLDivElement>(null);
   const subScrollRef = useRef<HTMLDivElement>(null);
@@ -374,6 +379,9 @@ export default function CategoryPills({
   const [showMainRightScroll, setShowMainRightScroll] = useState(false);
   const [showSubLeftScroll, setShowSubLeftScroll] = useState(false);
   const [showSubRightScroll, setShowSubRightScroll] = useState(false);
+
+  const [isGridModalOpen, setIsGridModalOpen] = useState(false);
+  const [gridSearchQuery, setGridSearchQuery] = useState('');
 
   const checkMainOverflow = useCallback(() => {
     const el = mainScrollRef.current;
@@ -574,37 +582,81 @@ export default function CategoryPills({
   }, [subCategories.length]);
 
   return (
-    <nav className="w-full sticky top-0 bg-bg-deep/85 backdrop-blur-xl z-30 px-4 md:px-6 border-b border-border py-3 flex flex-col gap-3 relative">
+    <nav className="w-full sticky top-0 bg-bg-deep/85 backdrop-blur-xl z-30 px-4 md:px-6 border-b border-border py-2.5 flex flex-col gap-2.5 relative">
       
-      {/* First row: Main Categories Wrapper */}
-      <div className="relative max-w-7xl mx-auto w-full group">
-        {/* Left fade & scroll button */}
-        {showMainLeftScroll && (
-          <>
-            <div className="pointer-events-none absolute left-0 top-0 bottom-0 w-10 bg-gradient-to-r from-bg-deep to-transparent z-10" />
-            <button
-              onClick={() => handleScrollBy(mainScrollRef, 'left')}
-              className="hidden md:flex absolute left-1 top-1/2 -translate-y-1/2 z-20 w-8 h-8 rounded-full bg-black/70 border border-white/20 items-center justify-center text-white backdrop-blur-md shadow-xl opacity-0 group-hover:opacity-100 transition-all hover:scale-110 active:scale-95"
-              title="Desplazar a la izquierda"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-          </>
+      {/* Mobile Centered Category Grid Trigger Pill */}
+      <div className="flex md:hidden justify-center w-full">
+        <button
+          onClick={() => {
+            triggerHaptic(10);
+            setIsGridModalOpen(true);
+          }}
+          className="w-full px-4 py-2 rounded-full text-xs font-black uppercase tracking-wider bg-gradient-to-r from-accent/25 via-purple-500/25 to-accent/25 hover:bg-accent/35 border border-accent/40 text-white shadow-[0_0_12px_rgba(99,102,241,0.25)] flex items-center justify-center gap-2 active:scale-95 transition-all cursor-pointer"
+        >
+          <LayoutGrid className="w-4 h-4 text-accent animate-pulse" />
+          <span>Ver todas las categorías</span>
+        </button>
+      </div>
+
+      <div className="max-w-7xl mx-auto w-full flex flex-col md:flex-row items-stretch md:items-center gap-3">
+        
+        {/* Integrated Category Search Input */}
+        {onSearchChange && (
+          <div 
+            className="relative shrink-0 w-full md:w-60 lg:w-64"
+            style={{ WebkitAppRegion: 'no-drag' } as any}
+          >
+            <div className="absolute inset-y-0 left-3.5 flex items-center pointer-events-none text-text-secondary">
+              <Search className="w-3.5 h-3.5 text-white/40" />
+            </div>
+            <input
+              type="text"
+              placeholder="Buscar en esta categoría..."
+              value={searchQuery}
+              onChange={(e) => onSearchChange(e.target.value)}
+              className="w-full bg-black/30 hover:bg-black/40 focus:bg-black/60 border border-white/15 focus:border-accent/60 rounded-full py-2 pl-9 pr-8 text-xs text-white placeholder:text-white/40 focus:outline-none transition-all backdrop-blur-md"
+            />
+            {searchQuery && (
+              <button 
+                onClick={() => onSearchChange('')}
+                className="absolute inset-y-0 right-2.5 flex items-center justify-center text-white/40 hover:text-white transition-colors"
+                title="Limpiar búsqueda"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
         )}
 
-        {/* Right fade & scroll button */}
-        {showMainRightScroll && (
-          <>
-            <div className="pointer-events-none absolute right-0 top-0 bottom-0 w-10 bg-gradient-to-l from-bg-deep to-transparent z-10" />
-            <button
-              onClick={() => handleScrollBy(mainScrollRef, 'right')}
-              className="hidden md:flex absolute right-1 top-1/2 -translate-y-1/2 z-20 w-8 h-8 rounded-full bg-black/70 border border-white/20 items-center justify-center text-white backdrop-blur-md shadow-xl opacity-0 group-hover:opacity-100 transition-all hover:scale-110 active:scale-95"
-              title="Desplazar a la derecha"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </>
-        )}
+        {/* First row: Main Categories Wrapper */}
+        <div className="relative flex-1 min-w-0 group">
+          {/* Left fade & scroll button */}
+          {showMainLeftScroll && (
+            <>
+              <div className="pointer-events-none absolute left-0 top-0 bottom-0 w-10 bg-gradient-to-r from-bg-deep to-transparent z-10" />
+              <button
+                onClick={() => handleScrollBy(mainScrollRef, 'left')}
+                className="hidden md:flex absolute left-1 top-1/2 -translate-y-1/2 z-20 w-8 h-8 rounded-full bg-black/70 border border-white/20 items-center justify-center text-white backdrop-blur-md shadow-xl opacity-0 group-hover:opacity-100 transition-all hover:scale-110 active:scale-95"
+                title="Desplazar a la izquierda"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+            </>
+          )}
+
+          {/* Right fade & scroll button */}
+          {showMainRightScroll && (
+            <>
+              <div className="pointer-events-none absolute right-0 top-0 bottom-0 w-10 bg-gradient-to-l from-bg-deep to-transparent z-10" />
+              <button
+                onClick={() => handleScrollBy(mainScrollRef, 'right')}
+                className="hidden md:flex absolute right-1 top-1/2 -translate-y-1/2 z-20 w-8 h-8 rounded-full bg-black/70 border border-white/20 items-center justify-center text-white backdrop-blur-md shadow-xl opacity-0 group-hover:opacity-100 transition-all hover:scale-110 active:scale-95"
+                title="Desplazar a la derecha"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </>
+          )}
 
         <div 
           ref={mainScrollRef} 
@@ -615,6 +667,19 @@ export default function CategoryPills({
           }`}
         >
           <div className="flex items-center gap-3 w-full min-w-max pb-1 py-1">
+            
+            {/* First Pill: Sticky Category Modal Trigger */}
+            <button
+              onClick={() => {
+                triggerHaptic(10);
+                setIsGridModalOpen(true);
+              }}
+              className="sticky left-0 z-20 shrink-0 px-4 py-2.5 rounded-full text-xs sm:text-sm font-black uppercase tracking-wider bg-gradient-to-r from-accent/90 to-purple-600/90 hover:from-accent hover:to-purple-600 text-white shadow-[0_0_15px_rgba(99,102,241,0.4)] flex items-center justify-center gap-2 transition-all cursor-pointer border border-white/30 backdrop-blur-xl active:scale-95 min-h-[42px]"
+              title="Ver todas las categorías en cuadrícula"
+            >
+              <LayoutGrid className="w-4 h-4 text-white shrink-0 animate-pulse" />
+              <span>Categorías</span>
+            </button>
             {mainCategories.map((category) => (
               <CategoryPill
                 key={category.id}
@@ -658,6 +723,7 @@ export default function CategoryPills({
           </div>
         </div>
       </div>
+    </div>
 
       {/* Second row: Subcategories (rendered only if they exist for the active main category) */}
       {subCategories.length > 0 && (
@@ -733,6 +799,135 @@ export default function CategoryPills({
           </div>
         </div>
       )}
+
+      {/* Category Grid Modal */}
+      <AnimatePresence>
+        {isGridModalOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsGridModalOpen(false)}
+              className="fixed inset-0 bg-black/80 backdrop-blur-md"
+            />
+
+            {/* Modal Box */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              className="relative z-10 w-full max-w-4xl bg-bg-surface/95 border border-white/15 rounded-3xl p-5 sm:p-7 shadow-2xl backdrop-blur-2xl max-h-[85vh] flex flex-col gap-4 overflow-hidden"
+            >
+              {/* Modal Header */}
+              <div className="flex items-center justify-between border-b border-white/10 pb-4 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-accent/20 border border-accent/40 flex items-center justify-center text-accent">
+                    <LayoutGrid className="w-5 h-5 text-accent" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg sm:text-xl font-black text-white tracking-wide">
+                      Todas las Categorías
+                    </h2>
+                    <p className="text-xs text-text-secondary">
+                      {categories.length} experiencias musicales disponibles
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsGridModalOpen(false)}
+                  className="w-9 h-9 rounded-full bg-white/5 hover:bg-white/15 border border-white/10 flex items-center justify-center text-white/70 hover:text-white transition-colors cursor-pointer"
+                  title="Cerrar modal"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Modal Search Filter */}
+              <div className="relative shrink-0">
+                <Search className="w-4 h-4 text-white/40 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  placeholder="Filtrar categorías..."
+                  value={gridSearchQuery}
+                  onChange={(e) => setGridSearchQuery(e.target.value)}
+                  className="w-full bg-black/40 border border-white/15 focus:border-accent/60 rounded-xl py-2.5 pl-10 pr-9 text-xs text-white placeholder:text-white/40 focus:outline-none transition-all"
+                />
+                {gridSearchQuery && (
+                  <button
+                    onClick={() => setGridSearchQuery('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-white/50 hover:text-white"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+
+              {/* Modal Grid View */}
+              <div className="overflow-y-auto no-scrollbar flex-1 py-2 pr-1">
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                  {categories
+                    .filter(cat => {
+                      if (!gridSearchQuery.trim()) return true;
+                      const q = gridSearchQuery.toLowerCase();
+                      const name = (cat.name || '').toLowerCase();
+                      const alias = (cat.alias || '').toLowerCase();
+                      return name.includes(q) || alias.includes(q);
+                    })
+                    .map((cat) => {
+                      const isActive = activeCategoryId === cat.id;
+                      const isLocked = isGuest && (cat.requiresAuth || cat.id === 'red-emisoras' || cat.id === 'podcasts');
+                      const themeColor = getCategoryColor(cat);
+                      const catDisplayName = (cat.alias && typeof cat.alias === 'string') 
+                        ? cat.alias 
+                        : (cat.id === 'all' ? cat.name : formatCategoryName(cat.name));
+
+                      return (
+                        <button
+                          key={cat.id}
+                          onClick={() => {
+                            if (isLocked) {
+                              triggerHaptic(12);
+                              onOpenIncentiveModal?.(cat.alias || cat.name);
+                            } else {
+                              triggerHaptic(8);
+                              onSelectCategory(cat.id);
+                              setIsGridModalOpen(false);
+                            }
+                          }}
+                          style={isActive ? {
+                            backgroundColor: themeColor,
+                            borderColor: 'rgba(255, 255, 255, 0.4)',
+                            boxShadow: `0 0 16px ${themeColor}66`
+                          } : undefined}
+                          className={`p-3.5 rounded-2xl text-xs font-bold transition-all border flex items-center gap-2.5 text-left cursor-pointer active:scale-95 backdrop-blur-md relative overflow-hidden group ${
+                            isLocked
+                              ? 'bg-white/5 border-amber-400/30 text-amber-300 hover:border-amber-400 hover:bg-amber-500/10'
+                              : isActive
+                                ? 'text-white shadow-lg border-white/40 font-black'
+                                : 'bg-white/5 hover:bg-white/12 border-white/10 hover:border-white/20 text-white/90 hover:text-white'
+                          }`}
+                        >
+                          {isLocked ? (
+                            <Lock className="w-4 h-4 text-amber-400 shrink-0" />
+                          ) : (
+                            <span 
+                              className={`w-3 h-3 rounded-full shrink-0 transition-transform ${isActive ? 'bg-white scale-110 shadow-[0_0_8px_#ffffff]' : ''}`} 
+                              style={!isActive ? { backgroundColor: themeColor, boxShadow: `0 0 8px ${themeColor}` } : undefined}
+                            />
+                          )}
+                          <span className="truncate flex-1">{catDisplayName}</span>
+                        </button>
+                      );
+                    })}
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </nav>
   );
 }

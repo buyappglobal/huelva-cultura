@@ -53,6 +53,18 @@ export interface GuestIncentiveConfig {
   ctaSecondaryText?: string;
 }
 
+export interface InstallInterstitialConfig {
+  enabled?: boolean;
+  delaySeconds?: number;
+  countdownSeconds?: number;
+  title?: string;
+  description?: string;
+  bannerUrl?: string;
+  ctaText?: string;
+  autoCloseOnCountdownEnd?: boolean;
+  frequencyHours?: number;
+}
+
 
 export interface VisualBanner {
   id?: string | number;
@@ -199,6 +211,7 @@ export interface TenantConfig {
     website?: string;
   };
   guestIncentiveConfig?: GuestIncentiveConfig;
+  installInterstitialConfig?: InstallInterstitialConfig;
   shareAiNoticeEnabled?: boolean;
   shareAiNotice?: string;
   shareHashtags?: string;
@@ -213,6 +226,8 @@ export interface TenantConfig {
   liveSponsorMarquee?: string;
   liveBanners?: LiveSponsorBanner[];
   categorySponsorBanners?: Record<string, { marqueeText?: string; banners?: LiveSponsorBanner[] }>;
+  circadianQuotes?: CircadianQuote[];
+  customVisualizers?: AudioVisualizerConfig[];
 }
 
 export interface LiveSponsorBanner {

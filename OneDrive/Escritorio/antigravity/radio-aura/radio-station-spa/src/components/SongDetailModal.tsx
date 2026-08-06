@@ -5,6 +5,7 @@ import { Song, API_CONFIG } from '../types';
 import { triggerHaptic } from '../lib/haptics';
 import { buildShareMessage } from '../lib/shareHelper';
 import { audioEngine } from '../lib/AudioEngine';
+import { getFallbackMeaning } from '../lib/fallbackMeanings';
 
 interface SongDetailModalProps {
   isOpen: boolean;
@@ -302,8 +303,8 @@ export default function SongDetailModal({
       return `Este tema evoca una fuerte sensación de ${first.label} (${percentages[first.id]}%) en los oyentes de Aura Radio. Un espacio de sonido único y envolvente.`;
     }
 
-    return "Una composición original de la sintonía de Aura Radio, diseñada para fluir de forma armónica en tu jornada.";
-  }, [topEmotions, percentages, customMetadata]);
+    return getFallbackMeaning(song.id);
+  }, [topEmotions, percentages, customMetadata, song.id]);
 
   if (!isOpen) return null;
 

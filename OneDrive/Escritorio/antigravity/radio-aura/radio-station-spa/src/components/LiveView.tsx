@@ -347,7 +347,7 @@ void main() {
     float a = atan(uv.y, uv.x);
 
     float voicePulse = u_audio_voice * 0.4;
-    float spin = u_time * 0.5 + u_audio_mid * 0.5 + voicePulse * 0.8;
+    float spin = u_time * 0.5 + u_audio_mid * 0.3 + voicePulse * 0.4;
     float spiral = sin(a * 3.0 - r * 12.0 + spin);
 
     float glow = 0.0;
@@ -377,7 +377,7 @@ void main() {
 
     float voiceMod = u_audio_voice * 0.35;
     float tunnelZ = 1.0 / (r + 0.01);
-    float speed = u_time * (2.0 + u_audio_bass * 3.0 + voiceMod * 2.0);
+    float speed = u_time * (2.0 + u_audio_bass * 1.2 + voiceMod * 0.7);
 
     float gridR = sin(tunnelZ * 2.0 - speed) * 0.5 + 0.5;
     float gridA = sin(a * 12.0 + sin(u_time + voiceMod * 4.0) * 1.5) * 0.5 + 0.5;
@@ -434,8 +434,8 @@ void main() {
     float numCols = 30.0;
     float colIdx = floor((uv.x + 0.5) * numCols);
     
-    float voiceBoost = step(6.0, colIdx) * step(colIdx, 20.0) * u_audio_voice * 1.5;
-    float colSpeed = 1.0 + mod(colIdx * 17.0, 3.0) + u_audio_treble * 2.0 + voiceBoost;
+    float voiceBoost = step(6.0, colIdx) * step(colIdx, 20.0) * u_audio_voice * 0.9;
+    float colSpeed = 1.0 + mod(colIdx * 17.0, 3.0) + u_audio_treble * 1.0 + voiceBoost * 0.6;
     float colY = fract(uv.y * 2.0 + u_time * colSpeed * 0.3 + sin(colIdx));
 
     float drop = smoothstep(0.0, 0.8, colY) * (1.0 - smoothstep(0.8, 1.0, colY));
@@ -502,10 +502,188 @@ void main() {
     gl_FragColor = vec4(ringCol * pulseGlow, 1.0);
 }`;
 
-const DEFAULT_VIZ_MODES: AudioVisualizerConfig[] = [
+const NOVA_PLASMA_GLSL = `// Nova de Plasma — Núcleo Explosivo de Energía Orgánica GLSL
+precision highp float;
+uniform vec2 u_resolution;
+uniform float u_time;
+uniform float u_audio_bass;
+uniform float u_audio_voice;
+uniform float u_audio_vocal_presence;
+uniform float u_audio_mid;
+uniform float u_audio_treble;
+uniform float u_audio_air;
+uniform vec3 u_color_primary;
+uniform vec3 u_color_secondary;
+
+void main() {
+    vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution.xy) / u_resolution.y;
+    float r = length(uv);
+    float a = atan(uv.y, uv.x);
+
+    float bassPulse = clamp(u_audio_bass, 0.0, 1.0) * 0.28;
+    float voicePulse = clamp(u_audio_voice, 0.0, 1.0) * 0.22;
+
+    vec2 warp = uv;
+    warp.x += sin(uv.y * 4.0 + u_time * 1.3 + voicePulse * 2.0) * 0.18;
+    warp.y += cos(uv.x * 4.0 - u_time * 1.1 + bassPulse * 1.5) * 0.18;
+    warp += vec2(sin(u_time * 0.7 + a * 3.0), cos(u_time * 0.5 - a * 2.0)) * (0.06 + bassPulse * 0.1 + u_audio_mid * 0.04);
+
+    float wr = length(warp);
+
+    float plasma = sin(wr * 9.0 - u_time * 2.5 + bassPulse * 6.0)
+                 + sin(a * 5.0 + u_time * 1.6 + voicePulse * 4.0)
+                 + sin((warp.x + warp.y) * 6.0 - u_time * 1.8);
+    plasma = plasma * 0.333 + 0.5;
+
+    float coreSize = 0.14 + bassPulse * 0.16 + voicePulse * 0.06;
+    float core = min(coreSize / (r + 0.03), 2.2);
+    float whiteHot = smoothstep(0.5, 0.0, r - coreSize * 0.35) * (0.25 + bassPulse * 0.35);
+
+    vec3 primary = (length(u_color_primary) > 0.01) ? u_color_primary : vec3(1.0, 0.35, 0.1);
+    vec3 secondary = (length(u_color_secondary) > 0.01) ? u_color_secondary : vec3(1.0, 0.75, 0.15);
+
+    vec3 col = mix(primary, secondary, plasma);
+    col *= (0.3 + plasma * 0.75);
+    col += core * mix(secondary, primary, 0.5) * 0.35;
+    col += vec3(1.0, 0.95, 0.85) * whiteHot;
+
+    float sparkle = pow(max(0.0, sin(a * 30.0 + u_time * 4.0 + u_audio_treble * 10.0)), 14.0) * clamp(u_audio_air, 0.0, 1.0) * 0.7;
+    col += sparkle * vec3(1.0, 1.0, 1.0) * smoothstep(0.5, 0.15, r);
+
+    float vignette = smoothstep(1.15, 0.1, r);
+    col = min(col * vignette, vec3(1.0));
+
+    gl_FragColor = vec4(col, 1.0);
+}`;
+
+const KALEIDOSCOPE_GLSL = `// Kaleidoscopio Cuántico — Fractal Simétrico Hipnótico GLSL
+precision highp float;
+uniform vec2 u_resolution;
+uniform float u_time;
+uniform float u_audio_bass;
+uniform float u_audio_voice;
+uniform float u_audio_vocal_presence;
+uniform float u_audio_mid;
+uniform float u_audio_treble;
+uniform vec3 u_color_primary;
+uniform vec3 u_color_secondary;
+
+void main() {
+    vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution.xy) / u_resolution.y;
+    float r = length(uv);
+    float a = atan(uv.y, uv.x);
+
+    float voicePulse = u_audio_voice * 0.5;
+    float bassPulse = u_audio_bass * 0.4;
+
+    float segments = 8.0 + floor(u_audio_mid * 4.0);
+    float segAngle = 6.283185 / segments;
+    a += u_time * 0.15 + voicePulse * 0.3;
+    a = mod(a, segAngle);
+    a = abs(a - segAngle * 0.5);
+
+    vec2 kuv = vec2(cos(a), sin(a)) * r;
+
+    float layered = 0.0;
+    for (float i = 1.0; i <= 5.0; i += 1.0) {
+        float freq = 6.0 + i * 3.0;
+        float phase = u_time * (0.6 + i * 0.15) - bassPulse * 2.0;
+        float band = sin(kuv.x * freq + kuv.y * (freq * 0.6) + phase);
+        layered += smoothstep(0.94, 1.0, abs(band)) / i;
+    }
+
+    float core = (0.02 + bassPulse * 0.04 + voicePulse * 0.05) / (r + 0.02);
+
+    vec3 primary = (length(u_color_primary) > 0.01) ? u_color_primary : vec3(0.55, 0.2, 0.95);
+    vec3 secondary = (length(u_color_secondary) > 0.01) ? u_color_secondary : vec3(0.1, 0.85, 0.95);
+    vec3 vocalColor = vec3(0.95, 0.3, 0.7);
+
+    vec3 col = mix(primary, secondary, sin(r * 8.0 - u_time * 1.5) * 0.5 + 0.5);
+    col = mix(col, vocalColor, clamp(u_audio_vocal_presence * 1.3, 0.0, 0.55));
+    col *= (layered * 1.4 + core * 0.6);
+
+    float glow = smoothstep(1.0, 0.0, r) * 0.15;
+    col += mix(primary, secondary, 0.5) * glow;
+
+    gl_FragColor = vec4(col, 1.0);
+}`;
+
+const AURORA_GLSL = `// Aurora Boreal — Cortinas de Luz Fluidas GLSL
+precision highp float;
+uniform vec2 u_resolution;
+uniform float u_time;
+uniform float u_audio_bass;
+uniform float u_audio_voice;
+uniform float u_audio_mid;
+uniform float u_audio_treble;
+uniform float u_audio_air;
+uniform vec3 u_color_primary;
+uniform vec3 u_color_secondary;
+
+void main() {
+    vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution.xy) / u_resolution.y;
+    vec3 col = vec3(0.01, 0.015, 0.03);
+
+    float voiceMod = u_audio_voice * 0.3;
+    float bassMod = u_audio_bass * 0.25;
+
+    for (float i = 1.0; i <= 5.0; i += 1.0) {
+        float freq = 2.0 + i * 1.3;
+        float speed = u_time * (0.25 + i * 0.08) + voiceMod * 0.6;
+        float sway = sin(uv.x * freq + speed) * (0.22 + i * 0.02 + bassMod * 0.2)
+                   + sin(uv.x * (freq * 2.3) - speed * 1.4) * 0.06;
+        float bandY = sway + (i - 3.0) * 0.16;
+        float dist = abs(uv.y - bandY);
+
+        float thickness = 0.05 + u_audio_mid * 0.05 + voiceMod * 0.03;
+        float ribbon = thickness / (dist * 6.0 + 0.05);
+        ribbon = pow(ribbon, 1.4);
+
+        vec3 primary = (length(u_color_primary) > 0.01) ? u_color_primary : vec3(0.1, 0.85, 0.55);
+        vec3 secondary = (length(u_color_secondary) > 0.01) ? u_color_secondary : vec3(0.25, 0.4, 0.95);
+        vec3 ribbonColor = mix(primary, secondary, i / 5.0 + sin(u_time * 0.3 + i) * 0.15);
+        ribbonColor += vec3(0.6, 0.9, 0.8) * u_audio_treble * 0.25;
+
+        col += ribbonColor * ribbon * (0.5 + u_audio_air * 0.4);
+    }
+
+    float stars = step(0.9975, fract(sin(dot(floor(uv * 220.0), vec2(12.9898, 78.233))) * 43758.5453));
+    col += vec3(stars) * 0.5;
+
+    gl_FragColor = vec4(col, 1.0);
+}`;
+
+export const VISUALIZER_DESCRIPTIONS: Record<string, string> = {
+  atlantic_pulse: 'Esfera de puntos bioluminiscentes cian, reactiva a la voz.',
+  galaxy: 'Galaxia espiral de partículas doradas y violetas.',
+  orb: 'Núcleo de plasma pulsante con anillos concéntricos de energía.',
+  waves: 'Capas de ondas líquidas en movimiento continuo.',
+  tunnel: 'Viaje a través de una rejilla neón en perspectiva 3D.',
+  radial: 'Barras de frecuencia dispuestas en círculo, estilo ecualizador.',
+  matrix: 'Estelas de código cayendo, estética ciberpunk.',
+  neon_bars: 'Barras verticales de neón sincronizadas con el ritmo.',
+  ring_pulse: 'Anillos concéntricos que laten con el bajo y la voz.',
+  nova_plasma: 'Núcleo de energía explosivo con flujo de plasma orgánico.',
+  quantum_kaleidoscope: 'Patrones fractales simétricos e hipnóticos en movimiento.',
+  aurora: 'Cortinas de luz fluidas inspiradas en la aurora polar.',
+};
+
+export const AVAILABLE_VISUALIZERS: AudioVisualizerConfig[] = [
   { id: 'atlantic_pulse', name: 'Atlantic Pulse (Cian)', style: 'custom', enabled: true, customCode: ATLANTIC_PULSE_GLSL },
   { id: 'galaxy', name: 'Constelación Sónica', style: 'custom', enabled: true, customCode: GALAXY_GLSL },
+  { id: 'nova_plasma', name: 'Nova de Plasma', style: 'custom', enabled: true, customCode: NOVA_PLASMA_GLSL },
+  { id: 'quantum_kaleidoscope', name: 'Kaleidoscopio Cuántico', style: 'custom', enabled: true, customCode: KALEIDOSCOPE_GLSL },
+  { id: 'aurora', name: 'Aurora Boreal', style: 'custom', enabled: true, customCode: AURORA_GLSL },
+  { id: 'orb', name: 'Aura Esférica', style: 'custom', enabled: true, customCode: ORB_GLSL },
+  { id: 'waves', name: 'Olas Fluídas', style: 'custom', enabled: true, customCode: WAVES_GLSL },
+  { id: 'tunnel', name: 'Túnel Hiperespacial', style: 'custom', enabled: true, customCode: TUNNEL_GLSL },
+  { id: 'radial', name: 'Espectro Radial', style: 'custom', enabled: true, customCode: RADIAL_GLSL },
+  { id: 'matrix', name: 'Lluvia Digital', style: 'custom', enabled: true, customCode: MATRIX_GLSL },
+  { id: 'neon_bars', name: 'Ecualizador Neón', style: 'custom', enabled: true, customCode: NEON_BARS_GLSL },
+  { id: 'ring_pulse', name: 'Ondas de Choque', style: 'custom', enabled: true, customCode: RING_PULSE_GLSL },
 ];
+
+const DEFAULT_VIZ_MODES: AudioVisualizerConfig[] = AVAILABLE_VISUALIZERS;
 
 export const LiveView: React.FC<LiveViewProps> = ({
   currentSong,
@@ -730,6 +908,20 @@ export const LiveView: React.FC<LiveViewProps> = ({
       alpha: Math.random() * 0.7 + 0.3,
     }));
 
+    // Attack/release envelope per audio band so GLSL uniforms track sustained energy
+    // instead of raw per-frame FFT jitter — raw bins can swing wildly frame-to-frame,
+    // which made shaders that tie animation speed/phase to audio look jumpy/incoherent.
+    // Fast attack keeps punch on transients (kicks, vocal hits); slow release smooths decay.
+    const smoothed = { bass: 0, voice: 0, vocalPresence: 0, mid: 0, treble: 0, air: 0 };
+    const ATTACK = 0.45;
+    const RELEASE = 0.10;
+    const MAX_BAND = 1.15;
+    const smooth = (prev: number, target: number) => {
+      const clamped = Math.min(target, MAX_BAND);
+      const rate = clamped > prev ? ATTACK : RELEASE;
+      return prev + (clamped - prev) * rate;
+    };
+
     const render = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -786,6 +978,13 @@ export const LiveView: React.FC<LiveViewProps> = ({
             air = (aSum / 2 / 255) * (isPlaying ? 1.5 : 0.2);
           }
 
+          smoothed.bass = smooth(smoothed.bass, bass);
+          smoothed.voice = smooth(smoothed.voice, voice);
+          smoothed.vocalPresence = smooth(smoothed.vocalPresence, vocalPresence);
+          smoothed.mid = smooth(smoothed.mid, mid);
+          smoothed.treble = smooth(smoothed.treble, treble);
+          smoothed.air = smooth(smoothed.air, air);
+
           const colorPrimaryRgb = hexToRgbNormalized(phaseInfo.primaryColor);
           const colorSecondaryRgb = hexToRgbNormalized(phaseInfo.secondaryColor);
 
@@ -794,12 +993,12 @@ export const LiveView: React.FC<LiveViewProps> = ({
             canvas.width,
             canvas.height,
             angle * 2.0,
-            bass,
-            voice,
-            vocalPresence,
-            mid,
-            treble,
-            air,
+            smoothed.bass,
+            smoothed.voice,
+            smoothed.vocalPresence,
+            smoothed.mid,
+            smoothed.treble,
+            smoothed.air,
             activeViz.sensitivity || 1.0,
             1.0,
             1.0,

@@ -27,8 +27,47 @@ import { InterstitialAd } from './components/InterstitialAdModal';
 import { LiveMarquee } from './components/LiveMarquee';
 import { SongSponsorModal } from './components/SongSponsorModal';
 import GuestIncentiveModal from './components/GuestIncentiveModal';
+import InstallInterstitialModal from './components/InstallInterstitialModal';
 import { LiveStudioDashboard } from './components/LiveStudioDashboard';
 import { CategoryHeroBanner } from './components/CategoryHeroBanner';
+import { getFallbackMeaning } from './lib/fallbackMeanings';
+
+// Detects whether a newer build has been deployed since this tab loaded, by comparing
+// the hashed entry-chunk path referenced in a freshly-fetched (uncached) index.html
+// against the one this tab is currently running. If it differs, clears the Service
+// Worker + Cache Storage (so the next load can't resurrect stale chunk references)
+// and hard-reloads. Fails open on any error/timeout — this must never block the user
+// from listening just because the version check itself had a hiccup.
+const checkForNewVersionAndReload = async (): Promise<boolean> => {
+  try {
+    const currentSrc = document.querySelector('script[src*="/assets/"]')?.getAttribute('src');
+    if (!currentSrc) return false; // dev server serves unhashed /src/main.tsx — nothing to compare
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2500);
+    const res = await fetch(`/index.html?t=${Date.now()}`, { cache: 'no-store', signal: controller.signal });
+    clearTimeout(timeoutId);
+    if (!res.ok) return false;
+
+    const html = await res.text();
+    const latestSrc = html.match(/src="(\/assets\/[^"]+\.js)"/)?.[1];
+    if (!latestSrc || latestSrc === currentSrc) return false;
+
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(reg => reg.unregister()));
+    }
+    if ('caches' in window) {
+      const names = await caches.keys();
+      await Promise.all(names.map(name => caches.delete(name)));
+    }
+    sessionStorage.setItem('aura_sw_reload', 'true');
+    window.location.reload();
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 // Deterministic random title generator for music files to make them look premium/epic
 const generateEpicTitle = (id: string): string => {
@@ -526,36 +565,46 @@ export default function App() {
   };
 
   const handleWelcomeEnter = () => {
-    // 1. Silent Background Hard-Refresh of KV Data & Catalog Config
-    try {
-      fetch(`${API_CONFIG.BASE_URL}/api/list?carpeta=&t=${Date.now()}`)
-        .then(res => res.ok ? res.json() : null)
-        .then(data => {
-          if (data) {
-            if (data.song_catalog) setSongCatalog(data.song_catalog);
-            if (data.r2_key_to_id) setR2KeyToId(data.r2_key_to_id);
-            if (data.custom_song_names) {
-              setCustomSongNames(prev => ({ ...prev, ...data.custom_song_names }));
-            }
-            const ads = data.audio_ads || data.active_audio_ads || data.ads;
-            if (ads && Array.isArray(ads)) {
-              setAdPool(ads.map((a: any) => typeof a === 'string' ? { url: a, weight: 5 } : a));
-            }
-            if (data.welcome_jingles && Array.isArray(data.welcome_jingles)) {
-              setWelcomeJingles(data.welcome_jingles);
-            }
-            if (data.boletines_config && typeof data.boletines_config === 'object') {
-              setBoletinesConfig(data.boletines_config);
-            }
-          }
-        })
-        .catch(() => {});
-    } catch (e) {}
-
-    // 2. Unlock Audio Engine Context (User Gesture Initialization)
+    // 1. Unlock Audio Engine Context (User Gesture Initialization) — must run first
+    // and synchronously inside the click handler, or Safari/iOS won't count this as
+    // a user gesture and playback will stay locked.
     try {
       audioEngine.resumeContext();
     } catch (e) {}
+
+    // 2. Silent Background Hard-Refresh of the APP ITSELF: if a newer build was
+    // deployed since this tab loaded, detect it and force a clean reload (clearing
+    // the Service Worker + Cache Storage first) before a stale bundle can break.
+    // Non-blocking so it never delays the audio unlock above.
+    checkForNewVersionAndReload().then(didReload => {
+      if (didReload) return; // navigating away — nothing else to do on this tab
+
+      // 3. Silent Background Hard-Refresh of KV Data & Catalog Config
+      try {
+        fetch(`${API_CONFIG.BASE_URL}/api/list?carpeta=&t=${Date.now()}`)
+          .then(res => res.ok ? res.json() : null)
+          .then(data => {
+            if (data) {
+              if (data.song_catalog) setSongCatalog(data.song_catalog);
+              if (data.r2_key_to_id) setR2KeyToId(data.r2_key_to_id);
+              if (data.custom_song_names) {
+                setCustomSongNames(prev => ({ ...prev, ...data.custom_song_names }));
+              }
+              const ads = data.audio_ads || data.active_audio_ads || data.ads;
+              if (ads && Array.isArray(ads)) {
+                setAdPool(ads.map((a: any) => typeof a === 'string' ? { url: a, weight: 5 } : a));
+              }
+              if (data.welcome_jingles && Array.isArray(data.welcome_jingles)) {
+                setWelcomeJingles(data.welcome_jingles);
+              }
+              if (data.boletines_config && typeof data.boletines_config === 'object') {
+                setBoletinesConfig(data.boletines_config);
+              }
+            }
+          })
+          .catch(() => {});
+      } catch (e) {}
+    });
 
     // If we loaded a shared song, play that song directly and skip any jingles or auto-play
     if (isSharedSongRef.current) {
@@ -1450,11 +1499,17 @@ export default function App() {
   const [promoPodcast, setPromoPodcast] = useState<any | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
 
-  const activeCategoryName = dynamicCategories.find(c => c.id === activeCategory)?.name || 
-                              (activeCategory === 'all' ? (activeTenantConfig && activeTenantConfig.id !== 'aura-radio' ? `${activeTenantConfig.name} Mix` : 'AuraMix') : 
-                               activeCategory === 'favorites' ? 'Mis Favoritos' : 
+  const activeCategoryName = dynamicCategories.find(c => c.id === activeCategory)?.name ||
+                              (activeCategory === 'all' ? (activeTenantConfig && activeTenantConfig.id !== 'aura-radio' ? `${activeTenantConfig.name} Mix` : 'AuraMix') :
+                               activeCategory === 'favorites' ? 'Mis Favoritos' :
                                activeCategory === 'circadiano' ? 'Aura Circadiano' :
                                activeCategory);
+
+  // Auto-picks an EQ preset based on the active category's name (e.g. "Rock Sinfonico" -> Rock).
+  // No-ops if the listener has manually chosen a preset from the player controls.
+  useEffect(() => {
+    audioEngine.applyAutoEQForCategory(activeCategoryName);
+  }, [activeCategoryName]);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 60000);
@@ -1902,7 +1957,9 @@ export default function App() {
             seoDescription: data.seoDescription || 'La mejor selección musical sin interrupciones.',
             socialImage: data.socialImage || 'https://cdn.aurabusiness.es/gemini-svg.webp',
             faviconUrl: data.faviconUrl || 'https://cdn.aurabusiness.es/gemini-svg.webp',
-            socialLinks: data.socialLinks || {}
+            socialLinks: data.socialLinks || {},
+            customVisualizers: data.custom_visualizers || [],
+            installInterstitialConfig: data.install_interstitial_config || undefined
           } as any);
 
           document.title = data.seoTitle || 'AURA RADIO - Premium Music Selection';
@@ -2979,6 +3036,9 @@ export default function App() {
     }
 
     // 3) Check if Pitos (time pips) finished -> Play Audio de la Hora (hora_HH.mp3)
+    // Pausa breve antes de arrancar la locución: la campanada final de los pitos
+    // tiene una cola de resonancia (decaimiento exponencial) y sin este respiro
+    // se pisaba con la voz.
     if (currentSong?.isBoletinPitos) {
       const currentHour = new Date().getHours();
       const hh = currentHour.toString().padStart(2, '0');
@@ -2991,13 +3051,17 @@ export default function App() {
         category: 'noticias',
         isBoletinHora: true
       };
-      setCurrentSong(horaAudio);
-      setIsPlaying(true);
-      audioEngine.play(horaAudio);
+      setTimeout(() => {
+        setCurrentSong(horaAudio);
+        setIsPlaying(true);
+        audioEngine.play(horaAudio);
+      }, 700);
       return;
     }
 
     // 4) Check if Audio de la Hora finished -> Play Sintonía Jingle
+    // Misma idea: un respiro tras la última palabra de la locución antes de que
+    // entre la música del jingle, para que no suenen encima.
     if (currentSong?.isBoletinHora) {
       const jingleAudio: Song = {
         id: 'boletin_jingle_' + Date.now(),
@@ -3008,9 +3072,11 @@ export default function App() {
         category: 'noticias',
         isBoletinJingle: true
       };
-      setCurrentSong(jingleAudio);
-      setIsPlaying(true);
-      audioEngine.play(jingleAudio);
+      setTimeout(() => {
+        setCurrentSong(jingleAudio);
+        setIsPlaying(true);
+        audioEngine.play(jingleAudio);
+      }, 500);
       return;
     }
 
@@ -4016,36 +4082,11 @@ export default function App() {
 
         </div>
 
-        {/* Row 3: Full Width Search Input */}
-        <div 
-          className="w-full relative mt-1 z-[40]"
-          style={{ WebkitAppRegion: 'no-drag' } as any}
-        >
-          <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none">
-            <Search className="w-4 h-4 text-text-secondary" />
-          </div>
-          <input
-            type="text"
-            placeholder="Buscar..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-black/20 border border-white/10 focus:border-accent/50 rounded-full py-2.5 pl-12 pr-10 text-sm text-white placeholder:text-text-secondary focus:outline-none transition-all backdrop-blur-md"
-          />
-          {searchQuery && (
-            <button 
-              onClick={() => setSearchQuery('')}
-              className="absolute inset-y-0 right-3 flex items-center justify-center text-text-secondary hover:text-white transition-colors z-50"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          )}
-        </div>
-
       </header>
 
       {/* Category Navigation */}
       <CategoryPills 
-        categories={filteredDisplayCategories}
+        categories={displayCategories}
         activeCategoryId={activeCategory} 
         onSelectCategory={setActiveCategory} 
         onReorderCategories={handleReorderCategories}
@@ -4057,6 +4098,8 @@ export default function App() {
           setShowGuestIncentiveModal(true);
         }}
         onOpenProfile={() => setShowProfilePage(true)}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
       />
 
       {/* Main Content Area */}
@@ -4235,13 +4278,25 @@ export default function App() {
                   <div className="grid grid-cols-1 gap-2">
                     {(() => {
                       const isSearching = searchQuery.trim() !== '';
+                      const categoryBaseSongs = activeCategory === 'favorites' 
+                        ? Array.from(favoriteSongs.values()) 
+                        : (activeCategory === 'podcasts' 
+                            ? (activePodcastSection !== 'Todos' ? podcasts.filter(p => p.podcastSection === activePodcastSection) : podcasts)
+                            : songs);
+
+                      const q = searchQuery.trim().toLowerCase();
                       const sourceSongs = isSearching 
-                        ? globalSearchResults 
-                        : (activeCategory === 'favorites' 
-                            ? Array.from(favoriteSongs.values()) 
-                            : (activeCategory === 'podcasts' 
-                                ? (activePodcastSection !== 'Todos' ? podcasts.filter(p => p.podcastSection === activePodcastSection) : podcasts)
-                                : songs));
+                        ? categoryBaseSongs.filter((song: any) => {
+                            if (!song) return false;
+                            const resolvedMeta = getResolvedSongMetadata(song);
+                            const title = (resolvedMeta?.title || song.title || song.name || '').toLowerCase();
+                            const artist = (resolvedMeta?.artist || song.artist || song.domain || '').toLowerCase();
+                            const lyrics = (resolvedMeta?.lyrics || song.lyrics || '').toLowerCase();
+                            const folder = (song.folder || song.category || '').toLowerCase();
+                            const id = (song.id || '').toLowerCase();
+                            return title.includes(q) || artist.includes(q) || lyrics.includes(q) || folder.includes(q) || id.includes(q);
+                          })
+                        : categoryBaseSongs;
 
                       return (
                         <>
@@ -4266,10 +4321,10 @@ export default function App() {
                             <div className="px-3 py-3 mb-2 bg-accent/10 border border-accent/30 rounded-xl flex items-center justify-between shadow-md">
                               <span className="text-xs font-bold text-white flex items-center gap-2">
                                 <Search className="w-4 h-4 text-accent" />
-                                Búsqueda global en todo el catálogo: "{searchQuery}"
+                                Búsqueda en {activeCategoryName}: "{searchQuery}"
                               </span>
                               <span className="text-[10px] font-bold text-accent px-2.5 py-0.5 bg-accent/20 border border-accent/40 rounded-full">
-                                {sourceSongs.length} temas encontrados
+                                {sourceSongs.length} {sourceSongs.length === 1 ? 'resultado' : 'resultados'}
                               </span>
                             </div>
                           )}
@@ -5140,7 +5195,7 @@ export default function App() {
             if (isUnnamed) {
               meaning = generateEpicPoemMeaning(songId);
             } else {
-              meaning = "Una composición original de la sintonía de Aura Radio, diseñada para fluir de forma armónica en tu jornada.";
+              meaning = getFallbackMeaning(songId);
             }
           }
           
@@ -5281,6 +5336,12 @@ export default function App() {
         onClose={() => setShowGuestIncentiveModal(false)}
         config={activeTenantConfig?.guestIncentiveConfig}
         restrictedCategoryName={incentiveCategoryName}
+      />
+
+      {/* Time-based Install App Interstitial (fires N seconds after entering the app) */}
+      <InstallInterstitialModal
+        active={!showWelcome && !isAdmin}
+        config={activeTenantConfig?.installInterstitialConfig}
       />
     </div>
   );

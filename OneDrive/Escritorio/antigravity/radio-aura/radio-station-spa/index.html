@@ -3,21 +3,21 @@
   <head>
     <script>
       window.addEventListener('error', function(e) {
-        if (e && e.message && (e.message.indexOf('module script') !== -1 || e.message.indexOf('MIME type') !== -1 || e.message.indexOf('text/html') !== -1)) {
-          console.warn('[Aura] Stale JS module detected. Purging cache and reloading...');
-          if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.getRegistrations().then(function(regs) {
-              for (var reg of regs) reg.unregister();
-            });
+        if (e && e.message && (e.message.indexOf('module script') !== -1 || e.message.indexOf('MIME type') !== -1)) {
+          if (!sessionStorage.getItem('aura_stale_reloaded')) {
+            sessionStorage.setItem('aura_stale_reloaded', '1');
+            if ('serviceWorker' in navigator) {
+              navigator.serviceWorker.getRegistrations().then(function(regs) {
+                for (var reg of regs) reg.unregister();
+              });
+            }
+            if ('caches' in window) {
+              caches.keys().then(function(names) {
+                for (var name of names) caches.delete(name);
+              });
+            }
+            window.location.reload();
           }
-          if ('caches' in window) {
-            caches.keys().then(function(names) {
-              for (var name of names) caches.delete(name);
-            });
-          }
-          var url = new URL(window.location.href);
-          url.searchParams.set('_p', Date.now());
-          window.location.replace(url.toString());
         }
       }, true);
     </script>

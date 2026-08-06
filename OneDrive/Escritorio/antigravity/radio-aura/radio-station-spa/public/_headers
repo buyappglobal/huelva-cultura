@@ -7,6 +7,12 @@
 /
   Cache-Control: no-cache, no-store, must-revalidate
 
+/sw.js
+  Cache-Control: no-cache, no-store, must-revalidate
+
+/manifest.json
+  Cache-Control: no-cache, no-store, must-revalidate
+
 # Immutable caching for hashed static assets
 /assets/*
   Cache-Control: public, max-age=31536000, immutable

@@ -1,0 +1,19 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#8A2BE2" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#a855f7"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+  </defs>
+  <!-- Aura glow ring -->
+  <circle cx="256" cy="256" r="230" fill="url(#bg)"/>
+  <circle cx="256" cy="256" r="180" stroke="url(#grad)" stroke-width="8" stroke-opacity="0.25"/>
+  <circle cx="256" cy="256" r="140" stroke="url(#grad)" stroke-width="12" stroke-linecap="round" stroke-dasharray="20 40 10 30"/>
+  <!-- Central premium soundwave star/logo -->
+  <path d="M256 120 L280 220 L380 220 L300 280 L330 380 L256 320 L182 380 L212 280 L132 220 L232 220 Z" fill="url(#grad)" filter="drop-shadow(0px 0px 20px rgba(138,43,226,0.6))"/>
+  <circle cx="256" cy="256" r="30" fill="#ffffff" filter="drop-shadow(0px 0px 10px rgba(255,255,255,0.8))"/>
+</svg>

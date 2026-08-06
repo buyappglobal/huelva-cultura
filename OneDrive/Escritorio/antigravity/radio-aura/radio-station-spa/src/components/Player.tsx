@@ -1,8 +1,8 @@
 import { motion, AnimatePresence } from 'motion/react';
-import { Play, Pause, Volume2, VolumeX, AlertCircle, Loader2, Music, X, Heart, Timer, Share2, ThumbsUp, RotateCcw, RotateCw, FastForward, Info, Sparkles, SlidersHorizontal, ChevronUp } from 'lucide-react';
+import { Play, Pause, Volume2, VolumeX, AlertCircle, Loader2, Music, X, Heart, Timer, Share2, ThumbsUp, RotateCcw, RotateCw, FastForward, Info, Sparkles, SlidersHorizontal, ChevronUp, Sliders } from 'lucide-react';
 import React, { useState, useRef, useEffect } from 'react';
 import { Song, API_CONFIG } from '../types';
-import { audioEngine } from '../lib/AudioEngine';
+import { audioEngine, EQ_PRESETS } from '../lib/AudioEngine';
 import { triggerHaptic } from '../lib/haptics';
 import { useAuth } from '../contexts/AuthContext';
 import { buildShareMessage, buildStationShareUrl } from '../lib/shareHelper';
@@ -115,8 +115,18 @@ export default function Player({
   const [sleepTimer, setSleepTimer] = useState<number | null>(null);
   const [showTimerMenu, setShowTimerMenu] = useState(false);
   const [showSeekMenu, setShowSeekMenu] = useState(false);
+  const [showEQMenu, setShowEQMenu] = useState(false);
+  const [eqPreset, setEqPreset] = useState(() => audioEngine.getEQPreset());
+  const [eqIsAuto, setEqIsAuto] = useState(() => audioEngine.isEQAuto());
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const wakeLockRef = useRef<any>(null);
+
+  useEffect(() => {
+    return audioEngine.addEQListener((preset, isAuto) => {
+      setEqPreset(preset);
+      setEqIsAuto(isAuto);
+    });
+  }, []);
 
   const { user } = useAuth();
   const [showCopied, setShowCopied] = useState(false);
@@ -678,9 +688,52 @@ export default function Player({
 
         {/* Desktop Only Volume & Timer Controls (On mobile, accessible via Options Drawer) */}
         <div className="hidden md:flex items-center gap-2 md:gap-6 w-auto md:w-[250px] justify-end">
+          {/* Equalizer Presets */}
+          <div className="relative">
+            <button
+              onClick={() => setShowEQMenu(!showEQMenu)}
+              className={`w-10 h-10 flex flex-col items-center justify-center gap-1 transition-colors ${!eqIsAuto ? 'text-accent' : 'text-text-secondary hover:text-white'}`}
+              title="Ecualizador"
+            >
+              <Sliders className="w-5 h-5" />
+            </button>
+
+            <AnimatePresence>
+              {showEQMenu && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                  className="absolute bottom-full right-0 mb-4 bg-bg-pill border border-border rounded-xl p-2 min-w-[160px] shadow-2xl backdrop-blur-xl"
+                >
+                  <p className="text-[9px] font-black text-text-secondary uppercase tracking-widest mb-2 px-2">Ecualizador</p>
+                  <div className="grid grid-cols-1 gap-1 max-h-64 overflow-y-auto no-scrollbar">
+                    <button
+                      onClick={() => { audioEngine.clearEQManualOverride(); setShowEQMenu(false); }}
+                      className="text-left px-3 py-1.5 rounded-lg text-xs text-white hover:bg-white/5 transition-colors flex justify-between items-center"
+                    >
+                      <span>Auto (según categoría)</span>
+                      {eqIsAuto && <div className="w-1.5 h-1.5 bg-accent rounded-full shrink-0" />}
+                    </button>
+                    {Object.entries(EQ_PRESETS).map(([key, preset]) => (
+                      <button
+                        key={key}
+                        onClick={() => { audioEngine.setEQPreset(key); setShowEQMenu(false); }}
+                        className="text-left px-3 py-1.5 rounded-lg text-xs text-white hover:bg-white/5 transition-colors flex justify-between items-center"
+                      >
+                        <span>{preset.label}</span>
+                        {!eqIsAuto && eqPreset === key && <div className="w-1.5 h-1.5 bg-accent rounded-full shrink-0" />}
+                      </button>
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
           {/* Sleep Timer */}
           <div className="relative">
-            <button 
+            <button
               onClick={() => setShowTimerMenu(!showTimerMenu)}
               className={`w-10 h-10 flex flex-col items-center justify-center gap-1 transition-colors ${sleepTimer ? 'text-accent' : 'text-text-secondary hover:text-white'}`}
             >
@@ -930,6 +983,38 @@ export default function Player({
                     Cancelar Timer
                   </button>
                 )}
+              </div>
+
+              {/* Equalizer Presets Selector */}
+              <div className="p-4 bg-white/5 border border-white/8 rounded-2xl space-y-2">
+                <div className="flex items-center justify-between text-xs font-bold text-white">
+                  <span className="flex items-center gap-2">
+                    <Sliders className="w-4 h-4 text-accent" />
+                    Ecualizador
+                  </span>
+                  <span className="font-mono text-accent text-[11px]">{eqIsAuto ? 'Auto' : EQ_PRESETS[eqPreset]?.label}</span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 pt-1">
+                  <button
+                    onClick={() => { triggerHaptic(10); audioEngine.clearEQManualOverride(); }}
+                    className={`py-2 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
+                      eqIsAuto ? 'bg-accent text-white shadow-lg shadow-accent/30' : 'bg-white/5 border border-white/5 text-text-secondary hover:text-white'
+                    }`}
+                  >
+                    Auto
+                  </button>
+                  {Object.entries(EQ_PRESETS).map(([key, preset]) => (
+                    <button
+                      key={key}
+                      onClick={() => { triggerHaptic(10); audioEngine.setEQPreset(key); }}
+                      className={`py-2 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
+                        !eqIsAuto && eqPreset === key ? 'bg-accent text-white shadow-lg shadow-accent/30' : 'bg-white/5 border border-white/5 text-text-secondary hover:text-white'
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </motion.div>
           </div>

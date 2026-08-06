@@ -1,16 +1,39 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Lock, Folder, Plus, Trash2, Link2, Unlink, LogOut, CheckCircle2, Megaphone, Download, Globe, Palette, ArrowUp, ArrowDown, Zap, Activity, Loader2, Music, Code, ArrowLeft, Check, Copy, Users, ShieldCheck, ShieldAlert, ChevronDown, Save, Mic, Headphones, Edit2, Heart, MessageSquare, X, RefreshCw, Play, Square, Maximize2, Minimize2, Clock, Share2, AlertCircle, Layout, Brain, Send, FileText, Bot, User2, Key, ChevronRight, Sparkles, VolumeX, Volume2, Radio } from 'lucide-react';
-import { API_CONFIG, AudioAd, Song, SpecialBanner, WelcomeJingle, CircadianBlock, TenantConfig } from '../types';
+import { Lock, Folder, Plus, Trash2, Link2, Unlink, LogOut, CheckCircle2, Megaphone, Download, Globe, Palette, ArrowUp, ArrowDown, Zap, Activity, Loader2, Music, Code, ArrowLeft, Check, Copy, Users, ShieldCheck, ShieldAlert, ChevronDown, Save, Mic, Headphones, Edit2, Heart, MessageSquare, X, RefreshCw, Play, Square, Maximize2, Minimize2, Clock, Share2, AlertCircle, Layout, Brain, Send, FileText, Bot, User2, Key, ChevronRight, Sparkles, VolumeX, Volume2, Radio, Smartphone } from 'lucide-react';
+import { API_CONFIG, AudioAd, Song, SpecialBanner, WelcomeJingle, CircadianBlock, TenantConfig, AudioVisualizerConfig, InstallInterstitialConfig } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import { triggerHaptic } from '../lib/haptics';
 import { audioEngine } from '../lib/AudioEngine';
+import { AVAILABLE_VISUALIZERS, VISUALIZER_DESCRIPTIONS } from './LiveView';
+import { ShaderPreview } from './ShaderPreview';
 
 const SUPERADMIN_EMAILS = [
   "buyappglobal@gmail.com",
   "holasolonet@gmail.com",
   "huelvaturistea@gmail.com"
 ];
+
+// Merges saved enabled/disabled flags onto the current shader catalog, so newly added
+// visualizers show up (enabled by default) for tenants who saved a config before they existed.
+const mergeVisualizerConfig = (saved?: AudioVisualizerConfig[] | null): AudioVisualizerConfig[] => {
+  return AVAILABLE_VISUALIZERS.map(v => {
+    const savedEntry = saved?.find(s => s.id === v.id);
+    return savedEntry ? { ...v, enabled: savedEntry.enabled } : { ...v };
+  });
+};
+
+const DEFAULT_INSTALL_INTERSTITIAL_CONFIG: InstallInterstitialConfig = {
+  enabled: true,
+  delaySeconds: 30,
+  countdownSeconds: 10,
+  title: '',
+  description: '',
+  ctaText: '',
+  bannerUrl: '',
+  autoCloseOnCountdownEnd: false,
+  frequencyHours: 24,
+};
 const generateEpicTitle = (id: string): string => {
   if (!id) return "Melodía de Aura";
   const filename = id.split('/').pop() || id;
@@ -116,7 +139,7 @@ interface DSPLog {
 
 export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }: { onClose?: () => void; isFullScreen?: boolean; onToggleFullScreen?: () => void }) {
   const { user, token } = useAuth();
-  const [activeTab, setActiveTab] = useState<'general' | 'banners' | 'dsp' | 'widget' | 'users' | 'podcasts' | 'interstitials' | 'stats' | 'moderation' | 'copilot' | 'circadian' | 'tenants' | 'seo' | 'songs' | 'brain' | 'ads'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'banners' | 'dsp' | 'widget' | 'users' | 'podcasts' | 'interstitials' | 'stats' | 'moderation' | 'copilot' | 'circadian' | 'tenants' | 'seo' | 'songs' | 'brain' | 'ads' | 'visualizers'>('general');
   const [editingTenantId, setEditingTenantId] = useState<string | null>(null);
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
@@ -663,6 +686,13 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
   const [liveSource, setLiveSource] = useState<'circadian' | 'external'>(() => {
     return localStorage.getItem('aura_live_source') as 'circadian' | 'external' || 'external';
   });
+
+  const [customVisualizers, setCustomVisualizers] = useState<AudioVisualizerConfig[]>(() => AVAILABLE_VISUALIZERS.map(v => ({ ...v })));
+  const toggleVisualizer = (id: string) => {
+    setCustomVisualizers(prev => prev.map(v => v.id === id ? { ...v, enabled: !v.enabled } : v));
+  };
+
+  const [installInterstitialConfig, setInstallInterstitialConfig] = useState<InstallInterstitialConfig>(DEFAULT_INSTALL_INTERSTITIAL_CONFIG);
 
   const [tenants, setTenants] = useState<TenantConfig[]>([]);
   const [activeTenantId, setActiveTenantId] = useState<string>('aura-radio');
@@ -1299,7 +1329,9 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
           customSongNames,
           songSponsors,
           logoUrl,
-          copilotName
+          copilotName,
+          customVisualizers,
+          installInterstitialConfig
         };
       }
 
@@ -1355,6 +1387,8 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
         config.live_sponsor_marquee = liveSponsorMarquee;
         config.live_banners = liveBanners;
         config.category_sponsor_banners = categorySponsorBanners;
+        config.custom_visualizers = customVisualizers;
+        config.install_interstitial_config = installInterstitialConfig;
         localStorage.setItem('aura_category_sponsor_banners', JSON.stringify(categorySponsorBanners));
       }
 
@@ -2091,6 +2125,8 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
       setCustomSongNames(masterConfig.custom_song_names || {});
       setSongSponsors(masterConfig.song_sponsors || {});
       setCopilotName(masterConfig.copilot_name || '');
+      setCustomVisualizers(mergeVisualizerConfig(masterConfig.custom_visualizers));
+      setInstallInterstitialConfig(masterConfig.install_interstitial_config || DEFAULT_INSTALL_INTERSTITIAL_CONFIG);
       setLogoUrl('');
     } else {
       // Load selected tenant configuration
@@ -2108,6 +2144,8 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
         setAccentColor(tenant.accentColor || '#6366f1');
         setCustomSongNames(tenant.customSongNames || {});
         setSongSponsors(tenant.songSponsors || {});
+        setCustomVisualizers(mergeVisualizerConfig(tenant.customVisualizers));
+        setInstallInterstitialConfig(tenant.installInterstitialConfig || DEFAULT_INSTALL_INTERSTITIAL_CONFIG);
         setCopilotName(tenant.copilotName || '');
         setLogoUrl(tenant.logoUrl || '');
       }
@@ -2494,11 +2532,17 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
                   <span className="bg-red-500 text-white text-[10px] px-1.5 rounded-full">{pendingMessages.length}</span>
                 )}
               </button>
-              <button 
+              <button
                 onClick={() => setActiveTab('circadian')}
                 className={`px-3 md:px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'circadian' ? 'bg-accent text-white shadow-lg' : 'text-text-secondary hover:text-white'}`}
               >
                 <Clock className="w-4 h-4" /> Circadiano
+              </button>
+              <button
+                onClick={() => setActiveTab('visualizers')}
+                className={`px-3 md:px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'visualizers' ? 'bg-accent text-white shadow-lg' : 'text-text-secondary hover:text-white'}`}
+              >
+                <Sparkles className="w-4 h-4" /> Visualizadores
               </button>
               <button 
                 onClick={() => setActiveTab('copilot')}
@@ -6350,6 +6394,60 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
           </motion.div>
         )}
 
+        {activeTab === 'visualizers' && (
+          <motion.div
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="p-6 md:p-8 space-y-6 overflow-y-auto h-full pb-24 no-scrollbar"
+          >
+            <div className="flex items-center justify-between border-b border-border pb-4">
+              <div>
+                <h2 className="text-xl font-black text-white uppercase flex items-center gap-3">
+                  <Sparkles className="text-accent w-6 h-6 animate-pulse" /> Visualizadores GLSL
+                </h2>
+                <p className="text-xs text-text-secondary mt-1">
+                  Activa o desactiva los modos visuales del modo inmersivo (LIVE). Cada oyente ve uno elegido automáticamente; solo se muestran los que dejes activados aquí.
+                </p>
+              </div>
+              <span className="text-xs font-bold text-text-secondary bg-bg-surface border border-border px-3 py-1.5 rounded-xl whitespace-nowrap">
+                {customVisualizers.filter(v => v.enabled).length} / {customVisualizers.length} activos
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+              {customVisualizers.map((viz) => (
+                <div
+                  key={viz.id}
+                  className={`bg-bg-surface border rounded-3xl overflow-hidden transition-all ${viz.enabled ? 'border-accent/40 shadow-lg shadow-accent/5' : 'border-border opacity-60'}`}
+                >
+                  <div className="aspect-video bg-black relative">
+                    {viz.customCode && <ShaderPreview code={viz.customCode} className="w-full h-full block" />}
+                    <div className="absolute top-2 right-2">
+                      <button
+                        onClick={() => toggleVisualizer(viz.id)}
+                        className={`relative w-11 h-6 rounded-full transition-colors cursor-pointer ${viz.enabled ? 'bg-accent' : 'bg-white/20'}`}
+                        title={viz.enabled ? 'Desactivar' : 'Activar'}
+                      >
+                        <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${viz.enabled ? 'translate-x-5' : 'translate-x-0'}`} />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="p-4 space-y-1">
+                    <h3 className="text-sm font-bold text-white">{viz.name}</h3>
+                    <p className="text-[11px] text-text-secondary leading-relaxed">{VISUALIZER_DESCRIPTIONS[viz.id] || 'Visualizador reactivo al audio en directo.'}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {customVisualizers.every(v => !v.enabled) && (
+              <div className="text-center py-6 text-amber-400 text-xs bg-amber-500/10 border border-amber-500/20 rounded-2xl">
+                Sin visualizadores activos, el modo inmersivo mostrará todos por defecto. Activa al menos uno para elegir cuáles se muestran.
+              </div>
+            )}
+          </motion.div>
+        )}
+
         {activeTab === 'tenants' && isMasterAdmin && (
           <div className="h-full flex flex-col p-8 gap-8 overflow-y-auto no-scrollbar pb-20">
             <div className="max-w-6xl mx-auto w-full space-y-8">
@@ -7535,6 +7633,119 @@ Responde siempre en español, de forma técnica, clara y precisa.`;
                         })}
                       </div>
                     )}
+                  </div>
+                </div>
+
+                {/* Card 3: Intersticial de Instalación de App (time-based, full width) */}
+                <div className="lg:col-span-3 bg-bg-surface border border-border rounded-2xl p-6 space-y-5">
+                  <div className="flex items-center justify-between border-b border-border/60 pb-3">
+                    <div className="flex items-center gap-2">
+                      <Smartphone className="w-5 h-5 text-emerald-400" />
+                      <h3 className="text-sm font-bold text-white uppercase tracking-wider">Intersticial de Instalación de App</h3>
+                    </div>
+                    <button
+                      onClick={() => setInstallInterstitialConfig(prev => ({ ...prev, enabled: !(prev.enabled !== false) }))}
+                      className={`px-3 py-1 rounded-full text-[10px] font-bold transition-all cursor-pointer border ${
+                        installInterstitialConfig.enabled !== false
+                          ? 'bg-emerald-600 text-white border-emerald-400 shadow-md shadow-emerald-500/20'
+                          : 'bg-white/5 text-text-secondary border-white/10'
+                      }`}
+                    >
+                      {installInterstitialConfig.enabled !== false ? '✓ Activado' : 'Desactivado'}
+                    </button>
+                  </div>
+
+                  <p className="text-[10px] text-text-secondary leading-relaxed">
+                    Aparece automáticamente tras N segundos de uso para incentivar la instalación de la app. El botón de cerrar queda bloqueado (muestra una cuenta atrás) durante los primeros segundos configurados.
+                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-emerald-300 uppercase tracking-wider">Aparece tras (segundos)</label>
+                      <input
+                        type="number"
+                        min={5}
+                        max={600}
+                        value={installInterstitialConfig.delaySeconds ?? 30}
+                        onChange={(e) => setInstallInterstitialConfig(prev => ({ ...prev, delaySeconds: parseInt(e.target.value) || 30 }))}
+                        className="w-full bg-bg-deep border border-border rounded-xl px-3 py-2 text-xs text-white focus:border-emerald-400"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-emerald-300 uppercase tracking-wider">Cuenta atrás para cerrar (seg.)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={60}
+                        value={installInterstitialConfig.countdownSeconds ?? 10}
+                        onChange={(e) => setInstallInterstitialConfig(prev => ({ ...prev, countdownSeconds: parseInt(e.target.value) || 0 }))}
+                        className="w-full bg-bg-deep border border-border rounded-xl px-3 py-2 text-xs text-white focus:border-emerald-400"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-emerald-300 uppercase tracking-wider">No repetir durante (horas)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={720}
+                        value={installInterstitialConfig.frequencyHours ?? 24}
+                        onChange={(e) => setInstallInterstitialConfig(prev => ({ ...prev, frequencyHours: parseInt(e.target.value) || 0 }))}
+                        className="w-full bg-bg-deep border border-border rounded-xl px-3 py-2 text-xs text-white focus:border-emerald-400"
+                      />
+                    </div>
+                  </div>
+
+                  <label className="flex items-center gap-2.5 cursor-pointer select-none pt-1">
+                    <input
+                      type="checkbox"
+                      checked={!!installInterstitialConfig.autoCloseOnCountdownEnd}
+                      onChange={(e) => setInstallInterstitialConfig(prev => ({ ...prev, autoCloseOnCountdownEnd: e.target.checked }))}
+                      className="accent-emerald-500 w-4 h-4"
+                    />
+                    <span className="text-xs text-white/90">Cerrar automáticamente al terminar la cuenta atrás (si no, solo se desbloquea el botón de cerrar)</span>
+                  </label>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-white/5">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Título</label>
+                      <input
+                        type="text"
+                        value={installInterstitialConfig.title || ''}
+                        onChange={(e) => setInstallInterstitialConfig(prev => ({ ...prev, title: e.target.value }))}
+                        placeholder="¡Llévate Aura Radio contigo! 🎧"
+                        className="w-full bg-bg-deep border border-border rounded-xl px-3 py-2 text-xs text-white focus:border-emerald-400"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Texto del botón (CTA)</label>
+                      <input
+                        type="text"
+                        value={installInterstitialConfig.ctaText || ''}
+                        onChange={(e) => setInstallInterstitialConfig(prev => ({ ...prev, ctaText: e.target.value }))}
+                        placeholder="Instalar App Gratis"
+                        className="w-full bg-bg-deep border border-border rounded-xl px-3 py-2 text-xs text-white focus:border-emerald-400"
+                      />
+                    </div>
+                    <div className="sm:col-span-2 space-y-1">
+                      <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Descripción</label>
+                      <textarea
+                        value={installInterstitialConfig.description || ''}
+                        onChange={(e) => setInstallInterstitialConfig(prev => ({ ...prev, description: e.target.value }))}
+                        placeholder="Instala la app gratis: acceso sin límites, sin cortes y funcionando en segundo plano aunque bloquees el móvil."
+                        rows={2}
+                        className="w-full bg-bg-deep border border-border rounded-xl px-3 py-2 text-xs text-white focus:border-emerald-400 resize-none"
+                      />
+                    </div>
+                    <div className="sm:col-span-2 space-y-1">
+                      <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Banner opcional (URL de imagen)</label>
+                      <input
+                        type="text"
+                        value={installInterstitialConfig.bannerUrl || ''}
+                        onChange={(e) => setInstallInterstitialConfig(prev => ({ ...prev, bannerUrl: e.target.value }))}
+                        placeholder="https://cdn.aurabusiness.es/banner-instalar.jpg"
+                        className="w-full bg-bg-deep border border-border rounded-xl px-3 py-2 text-xs text-white font-mono focus:border-emerald-400"
+                      />
+                    </div>
                   </div>
                 </div>
 

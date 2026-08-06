@@ -1,5 +1,47 @@
 import { Song, API_CONFIG } from '../types';
 
+// 5-band graphic EQ: [low-shelf, low-mid, mid, high-mid, high-shelf]
+export const EQ_BANDS: { freq: number; type: BiquadFilterType }[] = [
+  { freq: 100, type: 'lowshelf' },
+  { freq: 500, type: 'peaking' },
+  { freq: 1500, type: 'peaking' },
+  { freq: 5000, type: 'peaking' },
+  { freq: 12000, type: 'highshelf' },
+];
+
+export const EQ_PRESETS: Record<string, { label: string; gains: number[] }> = {
+  flat: { label: 'Plano', gains: [0, 0, 0, 0, 0] },
+  pop: { label: 'Pop', gains: [-1, 1, 3, 2, -1] },
+  rock: { label: 'Rock', gains: [4, 2, -1, 2, 3] },
+  jazz: { label: 'Jazz', gains: [2, 1, 0, 1, 2] },
+  classical: { label: 'Clásica', gains: [3, 2, 0, 1, 3] },
+  electronic: { label: 'Electrónica / Dance', gains: [5, 2, -1, 1, 4] },
+  bass_boost: { label: 'Refuerzo de Graves', gains: [6, 3, 0, 0, 0] },
+  vocal_boost: { label: 'Voz', gains: [-2, 0, 3, 3, 0] },
+  chill: { label: 'Chill / Lounge', gains: [1, 0, -1, 0, 1] },
+};
+
+// Ordered keyword -> preset map used to auto-pick an EQ curve from a category name.
+// First matching keyword wins, so more specific genres are listed before generic ones.
+const EQ_CATEGORY_KEYWORDS: { keywords: string[]; preset: string }[] = [
+  { keywords: ['jazz'], preset: 'jazz' },
+  { keywords: ['classic', 'clásic', 'sinfonic', 'sinfónic', 'orquest', 'orchestral', 'cinemátic', 'cinematic'], preset: 'classical' },
+  { keywords: ['rock', 'metal', 'punk'], preset: 'rock' },
+  { keywords: ['dance', 'electro', 'edm', 'house', 'techno', 'ibiza'], preset: 'electronic' },
+  { keywords: ['vocal', 'acoustic', 'acústic', 'unplugged', 'flamenc'], preset: 'vocal_boost' },
+  { keywords: ['bass', 'trap', 'hip hop', 'hiphop', 'urban', 'reggaeton', 'tribal'], preset: 'bass_boost' },
+  { keywords: ['chill', 'lounge', 'relax', 'sunset', 'meditation', 'zen', 'night', 'midnight', 'nocturno'], preset: 'chill' },
+  { keywords: ['pop', 'top', 'hits', 'mix', 'impulso'], preset: 'pop' },
+];
+
+export function inferEQPresetFromCategory(categoryName: string): string {
+  const name = (categoryName || '').toLowerCase();
+  for (const entry of EQ_CATEGORY_KEYWORDS) {
+    if (entry.keywords.some(kw => name.includes(kw))) return entry.preset;
+  }
+  return 'flat';
+}
+
 class AudioEngine {
   private static instance: AudioEngine;
   private audio: HTMLAudioElement;
@@ -13,6 +55,11 @@ class AudioEngine {
   private hlsInstance: any = null;
   private retryCount: number = 0;
   private currentStreamUrl: string = '';
+  private eqFilters: BiquadFilterNode[] = [];
+  private currentEQPreset: string = 'flat';
+  private eqManualOverride: boolean = false;
+  private lastCategoryName: string = '';
+  private eqListeners: Set<(preset: string, isAuto: boolean) => void> = new Set();
 
   private loadHlsScript(): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -32,6 +79,10 @@ class AudioEngine {
     this.audio = new Audio();
     this.audio.crossOrigin = 'anonymous';
     this.audio.preload = 'auto';
+
+    const savedPreset = localStorage.getItem('aura_eq_preset');
+    if (savedPreset && EQ_PRESETS[savedPreset]) this.currentEQPreset = savedPreset;
+    this.eqManualOverride = localStorage.getItem('aura_eq_manual_override') === 'true';
 
     this.audio.addEventListener('play', () => {
       this.isPlaying = true;
@@ -136,7 +187,24 @@ class AudioEngine {
         this.analyser = this.audioContext.createAnalyser();
         this.analyser.fftSize = 256;
         this.source = this.audioContext.createMediaElementSource(this.audio);
-        this.source.connect(this.analyser);
+
+        // 5-band EQ chain: source -> filter1 -> ... -> filter5 -> analyser -> destination
+        // Analyser sits after the EQ so visualizers react to what's actually audible.
+        this.eqFilters = EQ_BANDS.map(band => {
+          const filter = this.audioContext!.createBiquadFilter();
+          filter.type = band.type;
+          filter.frequency.value = band.freq;
+          if (band.type === 'peaking') filter.Q.value = 1;
+          return filter;
+        });
+        this.applyEQGains(EQ_PRESETS[this.currentEQPreset]?.gains || EQ_PRESETS.flat.gains, true);
+
+        let node: AudioNode = this.source;
+        for (const filter of this.eqFilters) {
+          node.connect(filter);
+          node = filter;
+        }
+        node.connect(this.analyser);
         this.analyser.connect(this.audioContext.destination);
       } catch (e) {
         console.warn("Failed to init AudioContext", e);
@@ -145,6 +213,64 @@ class AudioEngine {
     if (this.audioContext?.state === 'suspended') {
       this.audioContext.resume();
     }
+  }
+
+  private applyEQGains(gains: number[], immediate = false) {
+    this.eqFilters.forEach((filter, i) => {
+      const value = gains[i] ?? 0;
+      if (immediate || !this.audioContext) {
+        filter.gain.value = value;
+      } else {
+        // Short ramp avoids audible clicks/pops when switching presets mid-playback.
+        filter.gain.setTargetAtTime(value, this.audioContext.currentTime, 0.08);
+      }
+    });
+  }
+
+  private notifyEQ() {
+    this.eqListeners.forEach(l => l(this.currentEQPreset, !this.eqManualOverride));
+  }
+
+  addEQListener(listener: (preset: string, isAuto: boolean) => void) {
+    this.eqListeners.add(listener);
+    return () => this.eqListeners.delete(listener);
+  }
+
+  getEQPreset(): string {
+    return this.currentEQPreset;
+  }
+
+  isEQAuto(): boolean {
+    return !this.eqManualOverride;
+  }
+
+  /** User explicitly picks a preset from the UI — sticks until they switch back to Auto. */
+  setEQPreset(presetKey: string) {
+    if (!EQ_PRESETS[presetKey]) return;
+    this.currentEQPreset = presetKey;
+    this.eqManualOverride = true;
+    localStorage.setItem('aura_eq_preset', presetKey);
+    localStorage.setItem('aura_eq_manual_override', 'true');
+    this.applyEQGains(EQ_PRESETS[presetKey].gains);
+    this.notifyEQ();
+  }
+
+  /** Called by the app whenever the active category changes; no-ops if the user has a manual pick. */
+  applyAutoEQForCategory(categoryName: string) {
+    this.lastCategoryName = categoryName;
+    if (this.eqManualOverride) return;
+    const preset = inferEQPresetFromCategory(categoryName);
+    this.currentEQPreset = preset;
+    localStorage.setItem('aura_eq_preset', preset);
+    this.applyEQGains(EQ_PRESETS[preset].gains);
+    this.notifyEQ();
+  }
+
+  /** "Back to Auto" — re-derives the preset from whatever category is currently active. */
+  clearEQManualOverride() {
+    this.eqManualOverride = false;
+    localStorage.setItem('aura_eq_manual_override', 'false');
+    this.applyAutoEQForCategory(this.lastCategoryName);
   }
 
   play(song: Song) {
