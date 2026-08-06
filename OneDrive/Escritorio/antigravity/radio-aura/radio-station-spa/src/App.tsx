@@ -3310,6 +3310,7 @@ export default function App() {
       const catSongs = await fetchSongs(matchedCat.id);
       if (catSongs && catSongs.length > 0) {
         handleSongSelect(catSongs[0]);
+        setActiveDetailSong(catSongs[0]);
       } else {
         playNextRef.current();
       }
@@ -3325,16 +3326,23 @@ export default function App() {
         const mediaBase = `${API_CONFIG.BASE_URL}/api/stream/music/`;
         const cleanPath = resolvedKey.replace(/^\//, '');
         const filenameTitle = (resolvedKey.split('/').pop() || resolvedKey).replace(/\.[^/.]+$/, '');
+        const folder = resolvedKey.includes('/') ? resolvedKey.split('/')[0] : '';
+        const cleanFolder = folder.replace(/^\/|\/$/g, '').toLowerCase();
+        const matchedCat = folder ? dynamicCategories.find(c =>
+          (c.r2_folder || '').split(',').map(f => f.trim().replace(/^\/|\/$/g, '').toLowerCase()).includes(cleanFolder)
+        ) : null;
         song = {
           id: cfg.itemId,
           title: catalogEntry?.title || customSongNames[cfg.itemId]?.title || filenameTitle || generateEpicTitle(resolvedKey),
           artist: catalogEntry?.artist || customSongNames[cfg.itemId]?.artist || 'Aura Radio',
           streamUrl: mediaBase + cleanPath.split('/').map(segment => encodeURIComponent(segment)).join('/'),
           coverUrl: `https://api.dicebear.com/7.x/shapes/svg?seed=${encodeURIComponent(cfg.itemId)}`,
-          category: 'all'
+          category: matchedCat?.id || 'all',
+          folder
         } as Song;
       }
       handleSongSelect(song);
+      setActiveDetailSong(song);
     }
 
     setTimeout(() => setShowFeaturedModal(false), 4000);
@@ -5428,7 +5436,28 @@ export default function App() {
                     <div>
                       <h3 className="text-lg font-black text-white leading-snug">{title}</h3>
                       <p className="text-xs text-accent font-medium mt-0.5">{artist}</p>
+                      {(() => {
+                        const cat = dynamicCategories.find(c => c.id === activeDetailSong.category);
+                        return cat ? (
+                          <span className="inline-flex items-center gap-1 mt-2 px-2.5 py-0.5 rounded-full bg-white/5 border border-white/10 text-text-secondary text-[9px] font-bold uppercase tracking-wider">
+                            {cat.name}
+                          </span>
+                        ) : null;
+                      })()}
                     </div>
+                    {currentSong?.id === activeDetailSong.id && isPlaying && (
+                      <div className="h-5 w-24 opacity-50">
+                        <MiniVisualizer
+                          isPlaying={isPlaying}
+                          barCount={16}
+                          gap="gap-[3px]"
+                          barWidth="w-[3px]"
+                          maxHeight="100%"
+                          minHeight="15%"
+                          className="h-full"
+                        />
+                      </div>
+                    )}
                   </div>
 
                   {/* Letra de la canción (Si está disponible) */}
