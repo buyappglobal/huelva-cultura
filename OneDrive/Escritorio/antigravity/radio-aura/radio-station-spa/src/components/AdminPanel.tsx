@@ -1879,10 +1879,36 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
       const r2Map = { ...(currentMaster.r2_key_to_id || masterConfig?.r2_key_to_id || {}) };
 
       const cleanFilename = songId.split('/').pop() || songId;
-      const numericId = r2Map[songId] || r2Map[cleanFilename] || Object.keys(updatedCatalog).find(id => {
+      let numericId = r2Map[songId] || r2Map[cleanFilename] || Object.keys(updatedCatalog).find(id => {
         const entry = updatedCatalog[id];
         return entry && (entry.r2_key === songId || (entry.r2_key || '').endsWith(cleanFilename));
       });
+
+      // No numeric id yet for this song (e.g. a newly uploaded track nobody ran the
+      // dedicated "Sincronizar R2 (Asignar IDs a Nuevos Temas)" button for) — assign one
+      // right here, same logic as that button, so saving a song's info is always enough
+      // on its own and never depends on a separate manual sync step.
+      if (!numericId) {
+        let maxId = 0;
+        Object.keys(updatedCatalog).forEach(idStr => {
+          const n = parseInt(idStr, 10);
+          if (!isNaN(n) && n > maxId) maxId = n;
+        });
+        numericId = String(maxId + 1).padStart(4, '0');
+        updatedCatalog[numericId] = { id: numericId, r2_key: songId, title: '', artist: '', meaning: '', lyrics: '', sponsor: null };
+        r2Map[songId] = numericId;
+        r2Map[cleanFilename] = numericId;
+      }
+
+      if (numericId) {
+        updatedCustomSongNames[numericId] = {
+          ...(updatedCustomSongNames[numericId] || {}),
+          title: songCustom.title || (updatedCatalog[numericId]?.title || ''),
+          artist: songCustom.artist || (updatedCatalog[numericId]?.artist || ''),
+          meaning: songCustom.meaning || (updatedCatalog[numericId]?.meaning || ''),
+          lyrics: songCustom.lyrics || (updatedCatalog[numericId]?.lyrics || '')
+        };
+      }
 
       if (numericId && updatedCatalog[numericId]) {
         updatedCatalog[numericId] = {
@@ -1900,6 +1926,7 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
         ...masterConfig,
         custom_song_names: updatedCustomSongNames,
         song_catalog: updatedCatalog,
+        r2_key_to_id: r2Map,
         song_sponsors: {
           ...(currentMaster.song_sponsors || {}),
           ...songSponsors
@@ -1920,10 +1947,26 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
 
       if (!saveRes.ok) throw new Error('Error al guardar en el servidor');
 
-      window.dispatchEvent(new CustomEvent('aura-config-updated'));
+      setMasterConfig(payload);
+
+      const detailPayload = {
+        songId,
+        numericId,
+        metadata: {
+          title: songCustom.title || (numericId ? updatedCatalog[numericId]?.title : ''),
+          artist: songCustom.artist || (numericId ? updatedCatalog[numericId]?.artist : ''),
+          meaning: songCustom.meaning || (numericId ? updatedCatalog[numericId]?.meaning : ''),
+          lyrics: songCustom.lyrics || (numericId ? updatedCatalog[numericId]?.lyrics : ''),
+          sponsor: sponsorCustom || (numericId ? updatedCatalog[numericId]?.sponsor : null)
+        },
+        updatedCustomSongNames,
+        updatedCatalog
+      };
+
+      window.dispatchEvent(new CustomEvent('aura-config-updated', { detail: detailPayload }));
       try {
         const bc = new BroadcastChannel('aura_realtime_sync');
-        bc.postMessage({ type: 'song_updated', songId, numericId });
+        bc.postMessage({ type: 'song_updated', songId, numericId, ...detailPayload });
         bc.close();
       } catch (e) {}
 
