@@ -791,6 +791,21 @@ export default function App() {
     }
   }, []);
 
+  // Dynamic theme-color and notch/status-bar background management for Zen Mode / OLED Night
+  useEffect(() => {
+    const metaThemeColor = document.querySelector('meta[name="theme-color"]');
+    if (isZenMode || isDeepZenMode) {
+      if (metaThemeColor) metaThemeColor.setAttribute('content', '#000000');
+      document.documentElement.style.backgroundColor = '#000000';
+      document.body.style.backgroundColor = '#000000';
+    } else {
+      const normalColor = '#0B0C14';
+      if (metaThemeColor) metaThemeColor.setAttribute('content', normalColor);
+      document.documentElement.style.backgroundColor = normalColor;
+      document.body.style.backgroundColor = normalColor;
+    }
+  }, [isZenMode, isDeepZenMode]);
+
   const [activeCategory, setActiveCategory] = useState(() => {
     // Use admin-configured default category, falling back to 'popular'
     const saved = localStorage.getItem('aura_default_category');
@@ -5256,7 +5271,7 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[9999] bg-[#050508]/98 backdrop-blur-md flex flex-col items-center justify-between p-8 md:p-12 select-none overflow-hidden"
+            className="fixed inset-0 z-[9999] bg-black flex flex-col items-center justify-between p-6 md:p-12 pt-[max(2rem,env(safe-area-inset-top))] pb-[max(2rem,env(safe-area-inset-bottom))] select-none overflow-hidden"
           >
             {/* Ambient Background Aura Glow */}
             <div className="absolute inset-0 overflow-hidden pointer-events-none opacity-40">

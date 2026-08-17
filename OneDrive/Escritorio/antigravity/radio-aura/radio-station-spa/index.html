@@ -3,9 +3,9 @@
   <head>
     <script>
       window.addEventListener('error', function(e) {
-        var isScriptError = (e && e.target && e.target.tagName === 'SCRIPT') || 
-                            (e && e.message && (e.message.indexOf('module script') !== -1 || e.message.indexOf('MIME type') !== -1 || e.message.indexOf('Loading chunk') !== -1));
-        if (isScriptError) {
+        var isAssetError = (e && e.target && (e.target.tagName === 'SCRIPT' || e.target.tagName === 'LINK')) || 
+                           (e && e.message && (e.message.indexOf('module script') !== -1 || e.message.indexOf('MIME type') !== -1 || e.message.indexOf('Loading chunk') !== -1));
+        if (isAssetError) {
           if (!sessionStorage.getItem('aura_stale_reloaded')) {
             sessionStorage.setItem('aura_stale_reloaded', '1');
             if ('serviceWorker' in navigator) {
@@ -15,12 +15,12 @@
             }
             if ('caches' in window) {
               caches.keys().then(function(names) {
-                for (var i = 0; i < names.length; i++) caches.delete(name);
+                for (var i = 0; i < names.length; i++) caches.delete(names[i]);
               });
             }
             setTimeout(function() {
               window.location.reload(true);
-            }, 300);
+            }, 200);
           }
         }
       }, true);
@@ -29,7 +29,7 @@
     <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests" />
     <meta name="google" content="notranslate" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <meta name="theme-color" content="#8A2BE2" />
+    <meta name="theme-color" content="#0B0C14" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
