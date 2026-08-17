@@ -770,6 +770,27 @@ export default function App() {
     return () => window.removeEventListener('trigger-pwa-zen-incentive', handleZenIncentive);
   }, []);
 
+  // Handle PWA App Shortcuts (?action=live, ?action=zen) when opened from home screen icon
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const action = params.get('action');
+    if (action === 'live') {
+      const timer = setTimeout(() => {
+        if (handlePlayLiveRef.current) handlePlayLiveRef.current();
+      }, 600);
+      return () => clearTimeout(timer);
+    } else if (action === 'zen') {
+      const timer = setTimeout(() => {
+        if (!isPWAInstalled()) {
+          triggerZenInstallModal();
+        } else {
+          setIsZenMode(true);
+        }
+      }, 600);
+      return () => clearTimeout(timer);
+    }
+  }, []);
+
   const [activeCategory, setActiveCategory] = useState(() => {
     // Use admin-configured default category, falling back to 'popular'
     const saved = localStorage.getItem('aura_default_category');

@@ -1,0 +1,77 @@
+{
+  "name": "Aura Radio - Emisora de Música Premium",
+  "short_name": "Aura Radio",
+  "description": "Tu emisora de música premium sin cortes ni publicidad invasiva. Escucha en segundo plano y con la pantalla bloqueada.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0B0C14",
+  "theme_color": "#8A2BE2",
+  "categories": ["music", "entertainment", "lifestyle"],
+  "lang": "es-ES",
+  "icons": [
+    {
+      "src": "https://cdn.aurabusiness.es/logo-aura.webp",
+      "sizes": "192x192",
+      "type": "image/webp",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://cdn.aurabusiness.es/logo-aura.webp",
+      "sizes": "512x512",
+      "type": "image/webp",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Radio en Directo",
+      "short_name": "En Directo",
+      "description": "Sintoniza la señal de radio en directo",
+      "url": "/?action=live",
+      "icons": [
+        {
+          "src": "https://cdn.aurabusiness.es/logo-aura.webp",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Modo Zen & Dormir",
+      "short_name": "Modo Zen",
+      "description": "Relájate con el Modo Zen y temporizador de sueño",
+      "url": "/?action=zen",
+      "icons": [
+        {
+          "src": "https://cdn.aurabusiness.es/logo-aura.webp",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Mis Favoritos",
+      "short_name": "Favoritos",
+      "description": "Tus canciones favoritas guardadas",
+      "url": "/categoria/favorites",
+      "icons": [
+        {
+          "src": "https://cdn.aurabusiness.es/logo-aura.webp",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Top 20 Canciones",
+      "short_name": "Top 20",
+      "description": "Las canciones más escuchadas y votadas",
+      "url": "/categoria/popular",
+      "icons": [
+        {
+          "src": "https://cdn.aurabusiness.es/logo-aura.webp",
+          "sizes": "192x192"
+        }
+      ]
+    }
+  ]
+}
