@@ -3280,6 +3280,7 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
   const [autoGenerateUploadAI, setAutoGenerateUploadAI] = useState<boolean>(true);
   const [uploadingNewSong, setUploadingNewSong] = useState(false);
   const [uploadNewSongResult, setUploadNewSongResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [lastUploadedSongId, setLastUploadedSongId] = useState<string | null>(null);
 
   const handleUploadNewSong = async (cat: AdminCategory) => {
     if (!uploadFile) {
@@ -3453,9 +3454,10 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
         ok: true,
         text: `🎉 ¡Subida e IA completadas! Canción asignada con ID ${numericId} — Letra, Descripción poética y Karaoke de Gemini 2.5 Flash listos.`
       });
+      setLastUploadedSongId(songId);
       setUploadFile(null);
       setUploadTitle(''); setUploadArtist(''); setUploadMeaning(''); setUploadLyrics('');
-      fetchSongsForCategory(cat);
+      fetchSongsForCategory(cat, songId);
     } catch (e: any) {
       setUploadNewSongResult({ ok: false, text: e.message || 'Error al subir la canción.' });
     } finally {
@@ -4393,7 +4395,7 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
     }
   };
 
-  const fetchSongsForCategory = async (cat: AdminCategory) => {
+  const fetchSongsForCategory = async (cat: AdminCategory, prioritizeSongId?: string) => {
     if (!cat.r2_folder) return;
     setLoadingSongsCatId(cat.id);
     const folders = cat.r2_folder.split(',').map((f: string) => f.trim()).filter(Boolean);
@@ -4408,6 +4410,19 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
           }
         }
       }
+
+      const prioritizeId = prioritizeSongId || lastUploadedSongId;
+      if (prioritizeId) {
+        const cleanP = (prioritizeId.split('/').pop() || prioritizeId).toLowerCase();
+        allCatSongs.sort((a, b) => {
+          const aMatch = a.id === prioritizeId || a.id.toLowerCase().endsWith(cleanP);
+          const bMatch = b.id === prioritizeId || b.id.toLowerCase().endsWith(cleanP);
+          if (aMatch && !bMatch) return -1;
+          if (!aMatch && bMatch) return 1;
+          return 0;
+        });
+      }
+
       setCategorySongs(prev => ({ ...prev, [cat.id]: allCatSongs }));
     } catch (err) {
       console.error("Error fetching songs for category:", err);
@@ -6075,6 +6090,14 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
                         const origTitle = (song.title || '').toLowerCase();
                         const origArtist = (song.artist || '').toLowerCase();
                         return filename.includes(term) || customTitle.includes(term) || customArtist.includes(term) || origTitle.includes(term) || origArtist.includes(term);
+                      }).sort((a, b) => {
+                        if (!lastUploadedSongId) return 0;
+                        const cleanP = (lastUploadedSongId.split('/').pop() || lastUploadedSongId).toLowerCase();
+                        const aMatch = a.id === lastUploadedSongId || a.id.toLowerCase().endsWith(cleanP);
+                        const bMatch = b.id === lastUploadedSongId || b.id.toLowerCase().endsWith(cleanP);
+                        if (aMatch && !bMatch) return -1;
+                        if (!aMatch && bMatch) return 1;
+                        return 0;
                       }).map((song) => {
                         const cleanFilename = song.id.split('/').pop() || song.id;
                         const noExtFilename = cleanFilename.replace(/\.[^/.]+$/, '');
@@ -6095,13 +6118,29 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
 
                         const sponsor = songSponsors[song.id] || { name: '', link: '', bannerUrl: '' };
                         const hasLyricsInKv = !!((custom as any).lyrics || catalogEntry?.lyrics);
+                        const isNewlyUploaded = !!lastUploadedSongId && (
+                          song.id === lastUploadedSongId || 
+                          song.id.toLowerCase().endsWith((lastUploadedSongId.split('/').pop() || '').toLowerCase())
+                        );
 
                         return (
-                          <div key={song.id} className="p-4 bg-bg-surface border border-border rounded-2xl space-y-4">
+                          <div 
+                            key={song.id} 
+                            className={`p-4 rounded-2xl space-y-4 transition-all ${
+                              isNewlyUploaded
+                                ? 'bg-amber-500/10 border-2 border-amber-400 shadow-xl shadow-amber-500/10 ring-2 ring-amber-400/20'
+                                : 'bg-bg-surface border border-border'
+                            }`}
+                          >
                             <div className="flex items-center justify-between gap-2 text-[10px] text-text-secondary font-mono">
                               <div className="flex items-center gap-2 truncate min-w-0">
-                                <Music className="w-4 h-4 text-accent shrink-0" />
+                                <Music className={`w-4 h-4 shrink-0 ${isNewlyUploaded ? 'text-amber-400' : 'text-accent'}`} />
                                 <span className="truncate font-bold text-white/90" title={song.id}>{cleanFilename}</span>
+                                {isNewlyUploaded && (
+                                  <span className="px-2 py-0.5 rounded bg-amber-400 text-black font-sans text-[8px] font-black uppercase tracking-wider flex items-center gap-1 shrink-0 animate-pulse">
+                                    ✨ Recién Subida
+                                  </span>
+                                )}
                                 {hasLyricsInKv && (
                                   <span className="px-1.5 py-0.5 rounded bg-accent/20 border border-accent/40 text-accent font-sans text-[8px] font-black uppercase tracking-wider flex items-center gap-1 shrink-0">
                                     <FileText className="w-2.5 h-2.5" /> Letra
