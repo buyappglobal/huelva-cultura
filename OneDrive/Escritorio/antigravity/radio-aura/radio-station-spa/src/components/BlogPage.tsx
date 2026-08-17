@@ -179,9 +179,21 @@ function BlogHeader({ stationName, logoUrl }: { stationName: string; logoUrl?: s
         )}
         <span className="text-sm font-black text-white tracking-tight">{stationName} <span className="text-white/40 font-medium">· Blog</span></span>
       </a>
-      <a href="/" className="text-xs font-bold text-white/70 hover:text-white transition-colors flex items-center gap-1.5">
-        Escuchar en directo <span aria-hidden>→</span>
-      </a>
+      <div className="flex items-center gap-3">
+        <button
+          onClick={() => {
+            triggerHaptic(10);
+            window.dispatchEvent(new CustomEvent('trigger-pwa-install'));
+          }}
+          className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-white/10 hover:bg-white/20 text-white border border-white/15 transition-all cursor-pointer shadow-sm hover:scale-105"
+          title="Instalar Aura Radio como App"
+        >
+          <span>📲</span> Instalar App
+        </button>
+        <a href="/" className="text-xs font-bold text-white/70 hover:text-white transition-colors flex items-center gap-1.5">
+          Escuchar en directo <span aria-hidden>→</span>
+        </a>
+      </div>
     </header>
   );
 }
@@ -1171,6 +1183,17 @@ function BlogPostView({ slug, stationName, logoUrl }: { slug: string; stationNam
                   >
                     <span>📻</span> Radio en Directo
                   </a>
+
+                  <button
+                    onClick={() => {
+                      triggerHaptic(12);
+                      window.dispatchEvent(new CustomEvent('trigger-pwa-install'));
+                    }}
+                    className="px-4 py-2.5 rounded-full text-xs font-black bg-gradient-to-r from-accent via-purple-600 to-pink-600 hover:opacity-90 text-white transition-all shadow-lg shadow-purple-500/30 flex items-center gap-1.5 cursor-pointer border border-purple-400/40 hover:scale-105 active:scale-95 animate-pulse hover:animate-none"
+                    title="Instalar Aura Radio en tu dispositivo móvil o PC"
+                  >
+                    <span>📲</span> Instalar Aura Radio
+                  </button>
                 </div>
               </div>
             </div>
