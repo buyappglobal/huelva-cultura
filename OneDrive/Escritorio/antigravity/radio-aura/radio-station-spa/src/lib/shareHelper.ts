@@ -33,7 +33,17 @@ export function getTenantBaseUrl(tenantConfig?: TenantConfig | null): string {
 export function buildShareUrl(songOrId: string | Song, tenantConfig?: TenantConfig | null): string {
   const baseUrl = getTenantBaseUrl(tenantConfig);
   const songId = typeof songOrId === 'string' ? songOrId : songOrId.id;
-  const encodedId = songId.split('/').map(segment => encodeURIComponent(segment)).join('/');
+  const numericId = typeof songOrId === 'string' ? undefined : songOrId.numericId;
+
+  // El ID numérico del catálogo (sin espacios ni tildes) es preferible a la
+  // ruta R2 tal cual: en Windows, el propio share nativo (navigator.share)
+  // decodifica el %20 de la URL a espacio real antes de que WhatsApp la
+  // reciba, cortando el enlace en el primer espacio. Un ID numérico no le
+  // da ningún espacio que decodificar mal. Si la canción aún no tiene ID
+  // numérico asignado, se mantiene el comportamiento de siempre.
+  const encodedId = numericId
+    ? encodeURIComponent(numericId)
+    : songId.split('/').map(segment => encodeURIComponent(segment)).join('/');
   let path = `/cancion/${encodedId}`;
 
   // If using default main origin and running a custom tenant, preserve tenant parameter
@@ -102,8 +112,13 @@ export function buildShareMessage(
     parts.push(hashtags.trim());
   }
 
-  parts.push(shareUrl);
-
+  // La URL NO se mete dentro de "text": va en su propio campo "url", que es
+  // justo para lo que existe en la Web Share API. Antes se incrustaba aquí
+  // porque el enlace se duplicaba en WhatsApp — pero eso pasaba por mandar
+  // la URL EN LOS DOS SITIOS a la vez (aquí dentro y en "url"). Quitando la
+  // duplicación en el origen, WhatsApp añade su única copia igual (la lee de
+  // "url"), y las apps que si necesitan un campo "url" de verdad — el share
+  // sheet de Windows, Outlook, Teams — dejan de quedarse sin enlace.
   return {
     title: isSameArtist ? `${title} - ${effectiveStationName}` : `${title} - ${artist}`,
     text: parts.join('\n'),
@@ -134,12 +149,76 @@ export function buildCategoryShareMessage(
     parts.push(hashtags.trim());
   }
 
-  parts.push(shareUrl);
-
   return {
     title: `${categoryName} - ${effectiveStationName}`,
     text: parts.join('\n'),
     url: shareUrl
   };
+}
+
+export async function executeShareMessage(
+  shareData: { title: string; text: string; url: string },
+  customSuccessToast?: string
+) {
+  const toastMsg = customSuccessToast || '¡Enlace copiado al portapapeles!';
+  let nativeSuccess = false;
+
+  // Se copia el texto descriptivo al portapapeles ANTES de abrir el share
+  // nativo (no después): el share nativo le quita el foco a la página, y
+  // conviene escribir en el portapapeles mientras la página aún lo tiene.
+  // Es justo lo que pediste — Facebook descarta cualquier texto que le
+  // mandemos por el share intent y solo se queda con el enlace, así que si
+  // el portapapeles ya lleva el texto listo, en la publicación solo hay que
+  // pegar. Aquí se copia SOLO el texto (sin URL): el enlace ya lo lleva el
+  // propio share nativo hacia la app elegida, y repetirlo al pegar solo
+  // estorbaría junto a la tarjeta que Facebook monta sola.
+  let textCopiedBeforeShare = false;
+  if (typeof navigator !== 'undefined' && navigator.clipboard && shareData.text) {
+    try {
+      await navigator.clipboard.writeText(shareData.text);
+      textCopiedBeforeShare = true;
+    } catch (err) {
+      console.warn('No se pudo copiar el texto de antemano:', err);
+    }
+  }
+
+  if (typeof navigator !== 'undefined' && navigator.share) {
+    try {
+      await navigator.share({
+        title: shareData.title,
+        text: shareData.text,
+        url: shareData.url
+      });
+      nativeSuccess = true;
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('aura-system-msg', {
+          detail: {
+            text: textCopiedBeforeShare
+              ? '¡Compartido! El texto ya está en tu portapapeles — pégalo en la publicación si la red social no lo trae.'
+              : '¡Compartido con éxito!',
+            user_name: 'AURA SYSTEM'
+          }
+        }));
+      }
+    } catch (err: any) {
+      console.warn('Native share cancelled or failed, falling back to clipboard copy:', err);
+    }
+  }
+
+  if (!nativeSuccess && typeof navigator !== 'undefined' && navigator.clipboard) {
+    try {
+      // Sin share nativo (no disponible, o cancelado) no hay ninguna app que
+      // vaya a llevarse la URL por su cuenta, así que aquí sí hace falta
+      // añadirla — se sobrescribe la copia de solo-texto de más arriba.
+      await navigator.clipboard.writeText(`${shareData.text}\n${shareData.url}`);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('aura-system-msg', {
+          detail: { text: toastMsg, user_name: 'AURA SYSTEM' }
+        }));
+      }
+    } catch (err) {
+      console.error('Clipboard copy failed:', err);
+    }
+  }
 }
 

@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Music, Sparkles, Check, Share2, Play, Pause } from 'lucide-react';
+import { X, Music, Sparkles, Check, Share2, Play, Pause, ExternalLink, BookOpen } from 'lucide-react';
 import { Song, API_CONFIG } from '../types';
 import { triggerHaptic } from '../lib/haptics';
-import { buildShareMessage } from '../lib/shareHelper';
+import { buildShareMessage, executeShareMessage } from '../lib/shareHelper';
 import { audioEngine } from '../lib/AudioEngine';
 import { getFallbackMeaning } from '../lib/fallbackMeanings';
 
@@ -40,7 +40,8 @@ export default function SongDetailModal({
   onAuthRequired,
   sponsor,
   tenantConfig,
-  stationName
+  stationName,
+  globalRank
 }: SongDetailModalProps) {
   const [stats, setStats] = useState<Record<string, number>>({});
   const [userVote, setUserVote] = useState<string | null>(null);
@@ -77,7 +78,7 @@ export default function SongDetailModal({
 
   // Parser de letras con soporte LRC [mm:ss.xx]
   const parsedLines = useMemo(() => {
-    const rawLyrics = customMetadata?.lyrics || '';
+    const rawLyrics = customMetadata?.lyricsSynced || customMetadata?.lyrics || (song as any)?.lyricsSynced || song?.lyrics || '';
     if (!rawLyrics.trim()) return [];
 
     const lines = rawLyrics.split('\n');
@@ -389,23 +390,7 @@ export default function SongDetailModal({
                       triggerHaptic(10);
                       const currentStation = stationName || tenantConfig?.name || 'Aura Radio';
                       const shareData = buildShareMessage(song, customMetadata, currentStation, tenantConfig);
-                      if (navigator.share) {
-                        // No separate `url` — already embedded at the end of shareData.text;
-                        // passing both makes WhatsApp append its own mangled second copy.
-                        navigator.share({
-                          title: shareData.title,
-                          text: shareData.text
-                        }).catch(() => {});
-                      } else {
-                        navigator.clipboard.writeText(shareData.text).then(() => {
-                          window.dispatchEvent(new CustomEvent('aura-system-msg', { 
-                            detail: { 
-                              text: "¡Enlace directo de la canción copiado!", 
-                              user_name: 'AURA SYSTEM' 
-                            } 
-                          }));
-                        });
-                      }
+                      executeShareMessage(shareData, '¡Enlace directo de la canción copiado!');
                     }}
                     className="p-1 text-text-secondary hover:text-white rounded-lg hover:bg-white/5 transition-colors cursor-pointer shrink-0"
                     title="Compartir Canción"
@@ -470,12 +455,23 @@ export default function SongDetailModal({
                       </div>
                     </div>
                   )}
-
-                  {/* Dynamic "Behind the Music" description */}
+                                    {/* Dynamic "Behind the Music" description */}
                   <div className="bg-white/5 border border-white/5 rounded-2xl p-4 space-y-2 relative overflow-hidden">
-                    <div className="flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5" style={{ color: accentColor }} />
-                      <span className="text-[9px] font-black uppercase tracking-wider text-text-secondary">Detrás de la Música</span>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5" style={{ color: accentColor }} />
+                        <span className="text-[9px] font-black uppercase tracking-wider text-text-secondary">Detrás de la Música</span>
+                      </div>
+                      <a
+                        href="/blog"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[10px] font-bold text-accent hover:underline flex items-center gap-1 transition-colors"
+                      >
+                        <BookOpen className="w-3 h-3" />
+                        <span>Ver historias en el Blog</span>
+                        <ExternalLink className="w-2.5 h-2.5" />
+                      </a>
                     </div>
                     <p className="text-xs text-text-secondary leading-relaxed italic">
                       "{dynamicMeaning}"
@@ -581,9 +577,21 @@ export default function SongDetailModal({
                   exit={{ opacity: 0, y: -10 }}
                   className="bg-white/[0.02] border border-white/5 rounded-2xl p-5 space-y-4 max-h-[45vh] overflow-y-auto no-scrollbar shadow-inner"
                 >
-                  <div className="flex items-center gap-1.5 border-b border-white/5 pb-2">
-                    <Music className="w-3.5 h-3.5 text-accent animate-pulse" style={{ color: accentColor }} />
-                    <span className="text-[9px] font-black uppercase tracking-wider text-text-secondary">Letra de la canción</span>
+                  <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                    <div className="flex items-center gap-1.5">
+                      <Music className="w-3.5 h-3.5 text-accent animate-pulse" style={{ color: accentColor }} />
+                      <span className="text-[9px] font-black uppercase tracking-wider text-text-secondary">Letra de la canción</span>
+                    </div>
+                    <a
+                      href="/blog"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[10px] font-bold text-sky-400 hover:underline flex items-center gap-1 transition-colors"
+                    >
+                      <BookOpen className="w-3 h-3" />
+                      <span>Leer en el Blog</span>
+                      <ExternalLink className="w-2.5 h-2.5" />
+                    </a>
                   </div>
                   
                   {hasTimestamps ? (

@@ -12,7 +12,8 @@ const getTenantIdFromUrl = (): string => {
       return host.replace(/\./g, '_');
     }
     
-    if (pathSegments[0] && pathSegments[0] !== 'widget' && pathSegments[0] !== 'admin' && pathSegments[0] !== 'profile' && pathSegments[0] !== 's') {
+    const reservedRoutes = ['widget', 'admin', 'profile', 's', 'blog', 'cancion', 'song'];
+    if (pathSegments[0] && !reservedRoutes.includes(pathSegments[0])) {
       return pathSegments[0];
     }
     
@@ -52,6 +53,12 @@ import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { installGlobalErrorHandlers } from './lib/errorReporter';
+
+// Manejadores globales de errores (no capturados, promesas, fallo de chunk
+// tras un despliegue). Se instala una sola vez, antes de montar React.
+installGlobalErrorHandlers();
 
 // Service Worker Registration
 // Skip SW registration when loaded inside an iframe (widget mode)
@@ -100,8 +107,10 @@ import { AuthProvider } from './contexts/AuthContext';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <AuthProvider>
-      <App />
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <App />
+      </AuthProvider>
+    </ErrorBoundary>
   </StrictMode>,
 );

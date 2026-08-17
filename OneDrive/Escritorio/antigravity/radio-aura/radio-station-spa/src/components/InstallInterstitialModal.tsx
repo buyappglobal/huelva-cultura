@@ -7,45 +7,68 @@ import { triggerHaptic } from '../lib/haptics';
 interface InstallInterstitialModalProps {
   active: boolean;
   config?: InstallInterstitialConfig;
+  songsPlayed?: number;
 }
 
 const STORAGE_KEY = 'aura_install_interstitial_last_shown';
 
-export default function InstallInterstitialModal({ active, config }: InstallInterstitialModalProps) {
+export default function InstallInterstitialModal({ active, config, songsPlayed = 0 }: InstallInterstitialModalProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(0);
 
   const enabled = config?.enabled !== false;
+  const triggerMode = config?.triggerMode ?? 'songs'; // 'songs' (default), 'time', or 'both'
+  const songsThreshold = config?.songsThreshold ?? 2;
   const delaySeconds = config?.delaySeconds ?? 30;
   const countdownSeconds = config?.countdownSeconds ?? 10;
   const frequencyHours = config?.frequencyHours ?? 24;
 
-  // Note: intentionally no "already scheduled" ref guard here — combined with the
-  // setTimeout cleanup below, a guard set *before* the timer fires would survive
-  // React StrictMode's dev-only mount→cleanup→remount cycle (refs persist across it)
-  // while the timer itself gets cleared, permanently blocking the reschedule.
-  // Letting the effect freely re-run on remount is what makes it StrictMode-safe.
-  useEffect(() => {
-    if (!active || !enabled) return;
+  const canShowInterstitial = (): boolean => {
+    if (!active || !enabled) return false;
 
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
       (window.navigator as any).standalone === true ||
       document.referrer.includes('android-app://');
     const alreadyInstalled = localStorage.getItem('aura_pwa_installed') === 'true';
-    if (isStandalone || alreadyInstalled) return;
+    if (isStandalone || alreadyInstalled) return false;
 
     const lastShown = parseInt(localStorage.getItem(STORAGE_KEY) || '0', 10);
     const hoursSince = (Date.now() - lastShown) / (1000 * 60 * 60);
-    if (lastShown && hoursSince < frequencyHours) return;
+    if (lastShown && hoursSince < frequencyHours) return false;
 
-    const timer = setTimeout(() => {
-      setIsOpen(true);
-      setSecondsLeft(countdownSeconds);
-      localStorage.setItem(STORAGE_KEY, String(Date.now()));
-    }, delaySeconds * 1000);
+    return true;
+  };
 
-    return () => clearTimeout(timer);
-  }, [active, enabled, delaySeconds, countdownSeconds, frequencyHours]);
+  const triggerModal = () => {
+    if (!canShowInterstitial()) return;
+    setIsOpen(true);
+    setSecondsLeft(countdownSeconds);
+    localStorage.setItem(STORAGE_KEY, String(Date.now()));
+  };
+
+  // Trigger by Song Count (e.g. after 2nd song finishes / starts)
+  useEffect(() => {
+    if (triggerMode === 'songs' || triggerMode === 'both') {
+      if (songsPlayed >= songsThreshold && !isOpen) {
+        triggerModal();
+      }
+    }
+  }, [songsPlayed, triggerMode, songsThreshold, isOpen, active, enabled]);
+
+  // Trigger by Time Delay (e.g. after 30 seconds)
+  useEffect(() => {
+    if (triggerMode === 'time' || triggerMode === 'both') {
+      if (!canShowInterstitial()) return;
+
+      const timer = setTimeout(() => {
+        if (!isOpen) {
+          triggerModal();
+        }
+      }, delaySeconds * 1000);
+
+      return () => clearTimeout(timer);
+    }
+  }, [active, enabled, triggerMode, delaySeconds, countdownSeconds, frequencyHours]);
 
   useEffect(() => {
     if (!isOpen || secondsLeft <= 0) return;

@@ -1,12 +1,14 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Lock, Folder, Plus, Trash2, Link2, Unlink, LogOut, CheckCircle2, Megaphone, Download, Globe, Palette, ArrowUp, ArrowDown, Zap, Activity, Loader2, Music, Code, ArrowLeft, Check, Copy, Users, ShieldCheck, ShieldAlert, ChevronDown, Save, Mic, Headphones, Edit2, Heart, MessageSquare, X, RefreshCw, Play, Square, Maximize2, Minimize2, Clock, Share2, AlertCircle, Layout, Brain, Send, FileText, Bot, User2, Key, ChevronRight, Sparkles, VolumeX, Volume2, Radio, Smartphone } from 'lucide-react';
-import { API_CONFIG, AudioAd, Song, SpecialBanner, WelcomeJingle, CircadianBlock, TenantConfig, AudioVisualizerConfig, InstallInterstitialConfig, FeaturedConfig } from '../types';
+import { Lock, Folder, Plus, Trash2, Link2, Unlink, LogOut, CheckCircle2, Megaphone, Download, Globe, Palette, ArrowUp, ArrowDown, Zap, Activity, Loader2, Music, Code, ArrowLeft, Check, Copy, Users, ShieldCheck, ShieldAlert, ChevronDown, Save, Mic, Headphones, Edit2, Heart, MessageSquare, X, RefreshCw, Play, Square, Maximize2, Minimize2, Clock, Share2, AlertCircle, Layout, Brain, Send, FileText, Bot, User2, Key, ChevronRight, Sparkles, VolumeX, Volume2, Radio, Smartphone, DollarSign, Upload, Eye, Facebook, Instagram, RotateCcw } from 'lucide-react';
+
+import { API_CONFIG, AudioAd, Song, SpecialBanner, WelcomeJingle, CircadianBlock, TenantConfig, AudioVisualizerConfig, InstallInterstitialConfig, FeaturedConfig, SocialConfig, SocialImageTemplate, SocialSelectionMode, PODCAST_PARENT_CATEGORY, DEFAULT_PODCAST_CHILD_CATEGORIES, DEFAULT_DEMO_PODCASTS } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import { triggerHaptic } from '../lib/haptics';
 import { audioEngine } from '../lib/AudioEngine';
 import { AVAILABLE_VISUALIZERS, VISUALIZER_DESCRIPTIONS } from './LiveView';
 import { ShaderPreview } from './ShaderPreview';
+import { AICostAuditModal } from './AICostAuditModal';
 
 const SUPERADMIN_EMAILS = [
   "buyappglobal@gmail.com",
@@ -17,10 +19,30 @@ const SUPERADMIN_EMAILS = [
 // Merges saved enabled/disabled flags onto the current shader catalog, so newly added
 // visualizers show up (enabled by default) for tenants who saved a config before they existed.
 const mergeVisualizerConfig = (saved?: AudioVisualizerConfig[] | null): AudioVisualizerConfig[] => {
-  return AVAILABLE_VISUALIZERS.map(v => {
-    const savedEntry = saved?.find(s => s.id === v.id);
-    return savedEntry ? { ...v, enabled: savedEntry.enabled } : { ...v };
+  if (!saved || !Array.isArray(saved) || saved.length === 0) {
+    return AVAILABLE_VISUALIZERS.map(v => ({ ...v }));
+  }
+
+  // Map saved entries, updating GLSL customCode and name for built-in visualizers
+  const result = saved.map(s => {
+    const builtin = AVAILABLE_VISUALIZERS.find(v => v.id === s.id);
+    if (builtin) {
+      return { ...s, customCode: builtin.customCode, name: s.name || builtin.name };
+    }
+    return s;
   });
+
+  // Ensure newly added visualizers (such as 'solar_eclipse') appear automatically
+  // for existing tenants unless they explicitly deleted them after this feature.
+  const hasEclipse = result.some(s => s.id === 'solar_eclipse');
+  if (!hasEclipse) {
+    const eclipseBuiltin = AVAILABLE_VISUALIZERS.find(v => v.id === 'solar_eclipse');
+    if (eclipseBuiltin) {
+      result.unshift({ ...eclipseBuiltin });
+    }
+  }
+
+  return result;
 };
 
 const DEFAULT_INSTALL_INTERSTITIAL_CONFIG: InstallInterstitialConfig = {
@@ -86,6 +108,120 @@ export const generateEpicPoemMeaning = (id: string): string => {
   return `Este tema representa ${themes[index % themes.length]}`;
 };
 
+// ---------------------------------------------------------------------------
+// Generador de tarjetas sociales (Canvas). Dibuja fondo + título + categoría +
+// verso opcional a resolución fija de CARD_SIZE, para que la vista previa en
+// pantalla y el JPEG que se sube a R2 sean literalmente el mismo canvas — no
+// hay un renderizado "de verdad" separado del preview.
+// ---------------------------------------------------------------------------
+const SOCIAL_CARD_SIZE = 1080;
+
+function drawRoundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function wrapCanvasText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+  const words = text.split(' ');
+  const lines: string[] = [];
+  let current = '';
+  for (const word of words) {
+    const test = current ? `${current} ${word}` : word;
+    if (ctx.measureText(test).width > maxWidth && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = test;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
+function drawSocialCard(
+  ctx: CanvasRenderingContext2D,
+  bgImage: HTMLImageElement | null,
+  opts: { title: string; categoryName: string; caption: string; textColor: string; position: 'top' | 'center' | 'bottom' }
+) {
+  const S = SOCIAL_CARD_SIZE;
+  ctx.clearRect(0, 0, S, S);
+
+  if (bgImage && bgImage.width && bgImage.height) {
+    const scale = Math.max(S / bgImage.width, S / bgImage.height);
+    const w = bgImage.width * scale, h = bgImage.height * scale;
+    ctx.drawImage(bgImage, (S - w) / 2, (S - h) / 2, w, h);
+  } else {
+    const grad = ctx.createLinearGradient(0, 0, S, S);
+    grad.addColorStop(0, '#1a1a2e');
+    grad.addColorStop(1, '#0f0e1a');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, S, S);
+  }
+
+  const { title, categoryName, caption, textColor, position } = opts;
+  const padding = 64;
+
+  // Degradado oscuro para que el texto se lea encima de cualquier fondo.
+  if (position === 'top') {
+    const g = ctx.createLinearGradient(0, 0, 0, S * 0.45);
+    g.addColorStop(0, 'rgba(0,0,0,0.75)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, S, S * 0.45);
+  } else if (position === 'center') {
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(0, S * 0.35, S, S * 0.3);
+  } else {
+    const g = ctx.createLinearGradient(0, S * 0.55, 0, S);
+    g.addColorStop(0, 'rgba(0,0,0,0)');
+    g.addColorStop(1, 'rgba(0,0,0,0.75)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, S * 0.55, S, S * 0.45);
+  }
+
+  let textY = position === 'top' ? 130 : position === 'center' ? S / 2 - 30 : S - 210;
+
+  if (categoryName) {
+    ctx.font = '700 30px system-ui, -apple-system, sans-serif';
+    const badgeText = categoryName.toUpperCase();
+    const badgeWidth = ctx.measureText(badgeText).width + 56;
+    const badgeY = textY - 68;
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    drawRoundedRect(ctx, padding, badgeY, badgeWidth, 56, 28);
+    ctx.fill();
+    ctx.fillStyle = textColor;
+    ctx.textBaseline = 'middle';
+    ctx.fillText(badgeText, padding + 28, badgeY + 29);
+  }
+
+  ctx.fillStyle = textColor;
+  ctx.font = '800 64px system-ui, -apple-system, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  const maxWidth = S - padding * 2;
+  const titleLines = wrapCanvasText(ctx, title, maxWidth).slice(0, 3);
+  titleLines.forEach((line, i) => ctx.fillText(line, padding, textY + i * 74));
+  let afterTitleY = textY + (titleLines.length - 1) * 74;
+
+  if (caption.trim()) {
+    ctx.font = 'italic 400 34px system-ui, -apple-system, sans-serif';
+    ctx.globalAlpha = 0.85;
+    const capLines = wrapCanvasText(ctx, `"${caption.trim()}"`, maxWidth).slice(0, 2);
+    capLines.forEach((line, i) => ctx.fillText(line, padding, afterTitleY + 62 + i * 44));
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.font = '600 24px system-ui, -apple-system, sans-serif';
+  ctx.globalAlpha = 0.6;
+  ctx.fillText('AURA RADIO', padding, S - 40);
+  ctx.globalAlpha = 1;
+}
+
 const formatCategoryName = (name: string) => {
   if (!name || typeof name !== 'string') return 'Sin nombre';
   
@@ -137,12 +273,78 @@ interface DSPLog {
   timestamp: string;
 }
 
-export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }: { onClose?: () => void; isFullScreen?: boolean; onToggleFullScreen?: () => void }) {
+export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen, songCatalog = {} }: { onClose?: () => void; isFullScreen?: boolean; onToggleFullScreen?: () => void; songCatalog?: Record<string, any> }) {
   const { user, token } = useAuth();
-  const [activeTab, setActiveTab] = useState<'general' | 'banners' | 'dsp' | 'widget' | 'users' | 'podcasts' | 'interstitials' | 'stats' | 'moderation' | 'copilot' | 'circadian' | 'tenants' | 'seo' | 'songs' | 'brain' | 'ads' | 'visualizers' | 'destacado'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'banners' | 'dsp' | 'widget' | 'users' | 'podcasts' | 'interstitials' | 'stats' | 'moderation' | 'copilot' | 'circadian' | 'tenants' | 'seo' | 'songs' | 'brain' | 'ads' | 'visualizers' | 'destacado' | 'redes' | 'salud' | 'radar' | 'blog'>('general');
+  const [showCostAuditModal, setShowCostAuditModal] = useState(false);
+
+  // Salud / Errores del cliente
+  const [clientErrors, setClientErrors] = useState<{ groups: any[]; recent: any[]; total: number } | null>(null);
+  const [loadingClientErrors, setLoadingClientErrors] = useState(false);
+  const [clearingErrors, setClearingErrors] = useState(false);
+  const fetchClientErrors = async () => {
+    setLoadingClientErrors(true);
+    try {
+      const res = await fetch(`${API_CONFIG.BASE_URL}/api/admin/errors`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) setClientErrors(await res.json());
+    } catch (e) {
+      console.error('Error al cargar errores del cliente:', e);
+    } finally {
+      setLoadingClientErrors(false);
+    }
+  };
+
+  const clearClientErrors = async () => {
+    if (!window.confirm('¿Borrar todos los errores registrados? Esto vacía el panel de Salud (solo es telemetría, no afecta a la app).')) return;
+    setClearingErrors(true);
+    try {
+      const res = await fetch(`${API_CONFIG.BASE_URL}/api/admin/errors/clear`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({})
+      });
+      if (res.ok) await fetchClientErrors();
+    } catch (e) {
+      console.error('Error al limpiar errores del cliente:', e);
+    } finally {
+      setClearingErrors(false);
+    }
+  };
+
+  // Radar de Producción: qué producir según los datos reales (normalizado por nº de temas)
+  const [radarData, setRadarData] = useState<any | null>(null);
+  const [loadingRadar, setLoadingRadar] = useState(false);
+  const [radarError, setRadarError] = useState('');
+  const fetchProductionRadar = async () => {
+    setLoadingRadar(true);
+    setRadarError('');
+    try {
+      const res = await fetch(`${API_CONFIG.BASE_URL}/api/admin/production-radar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Error al analizar');
+      setRadarData(data);
+    } catch (e: any) {
+      setRadarError(e.message || 'No se pudo generar el radar.');
+    } finally {
+      setLoadingRadar(false);
+    }
+  };
   const [editingTenantId, setEditingTenantId] = useState<string | null>(null);
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
+  const [activeUsers, setActiveUsers] = useState<any[]>([]);
+  const [isLoadingActiveUsers, setIsLoadingActiveUsers] = useState(false);
+  const [blogStories, setBlogStories] = useState<any[]>([]);
+  const [blogMeta, setBlogMeta] = useState<{ eligibleCount: number; missing: number }>({ eligibleCount: 0, missing: 0 });
+  const [isLoadingBlog, setIsLoadingBlog] = useState(false);
+  const [isGeneratingBlog, setIsGeneratingBlog] = useState(false);
+  const [isRepairingBlog, setIsRepairingBlog] = useState(false);
+  const [blogProgress, setBlogProgress] = useState('');
   const [widgetColor, setWidgetColor] = useState('#f59e0b');
   const [widgetCategory, setWidgetCategory] = useState('all');
   const [widgetCopied, setWidgetCopied] = useState(false);
@@ -154,6 +356,9 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
   const [widgetType, setWidgetType] = useState<'button' | 'player'>('button');
   const [widgetCategories, setWidgetCategories] = useState<string[]>(['live']);
   const [widgetPresetName, setWidgetPresetName] = useState('');
+  const [widgetPresets, setWidgetPresets] = useState<any[]>(() => {
+    try { return JSON.parse(localStorage.getItem('aura_widget_presets') || '[]'); } catch { return []; }
+  });
   const isFocusModeMount = useRef(true);
   const [isAdminFocusMode, setIsAdminFocusMode] = useState<boolean>(() => {
     return localStorage.getItem('aura_admin_focus_mode') === 'true';
@@ -524,7 +729,12 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
       { name: "aperitivo/", linked: false },
       { name: "night_lounge/", linked: false },
       { name: "sunset/", linked: true },
-      { name: "urban-tribal/", linked: false }
+      { name: "urban-tribal/", linked: false },
+      { name: "podcasts-lm/", linked: true },
+      { name: "podcasts-lm/misterios/", linked: true },
+      { name: "podcasts-lm/beats/", linked: true },
+      { name: "podcasts-lm/hackea/", linked: true },
+      { name: "podcasts-lm/historias/", linked: true }
     ];
   });
   const [categories, setCategories] = useState<AdminCategory[]>(() => {
@@ -546,7 +756,7 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
       ];
     }
     
-    // Ensure base categories are present so they can be configured
+    // Ensure base and podcast categories are present so they can be configured
     if (!cats.some(c => c.id === 'all')) {
       cats.push({ id: 'all', name: 'AuraMix', r2_folder: '' });
     }
@@ -556,8 +766,22 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
     if (!cats.some(c => c.id === 'podcasts')) {
       cats.push({ id: 'podcasts', name: 'Podcasts', r2_folder: '' });
     }
+    if (!cats.some(c => c.id === 'podcast-lm')) {
+      cats.push({ id: 'podcast-lm', name: PODCAST_PARENT_CATEGORY.name, alias: PODCAST_PARENT_CATEGORY.alias || 'Podcasts IA', r2_folder: 'podcasts-lm/' });
+    }
+    DEFAULT_PODCAST_CHILD_CATEGORIES.forEach(child => {
+      if (!cats.some(c => c.id === child.id)) {
+        cats.push({
+          id: child.id,
+          name: child.name,
+          parentId: child.parentId,
+          r2_folder: child.r2_folder || `podcasts-lm/${child.id}/`
+        });
+      }
+    });
     return cats;
   });
+
   const [visualBanners, setVisualBanners] = useState<AdminVisualBanner[]>(() => {
     const saved = localStorage.getItem('aura_banners');
     if (saved) {
@@ -578,8 +802,18 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
   });
   const [podcasts, setPodcasts] = useState<any[]>(() => {
     const saved = localStorage.getItem('aura_podcasts');
-    return saved ? JSON.parse(saved) : [];
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0 && !JSON.stringify(parsed).includes('temp_boletin.mp3')) {
+          return parsed;
+        }
+      } catch(e) {}
+    }
+    return DEFAULT_DEMO_PODCASTS;
   });
+
+
   const [newPodcast, setNewPodcast] = useState<{
     title: string;
     artist: string;
@@ -609,6 +843,186 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
   useEffect(() => {
     localStorage.setItem('aura_podcasts', JSON.stringify(podcasts));
   }, [podcasts]);
+
+  const [newPodcastLine, setNewPodcastLine] = useState({ name: '', alias: '', aiContext: '' });
+  const [isSuggestingLine, setIsSuggestingLine] = useState(false);
+
+  const handleCreatePodcastLine = (nameVal?: string, aliasVal?: string, contextVal?: string) => {
+    const name = nameVal || newPodcastLine.name;
+    const alias = aliasVal || newPodcastLine.alias;
+    const context = contextVal || newPodcastLine.aiContext;
+    if (!name.trim()) return;
+    const cleanId = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    const newCat: AdminCategory = {
+      id: cleanId,
+      name: name.trim(),
+      alias: alias.trim() || name.trim(),
+      parentId: 'podcast-lm',
+      r2_folder: `podcasts-lm/${cleanId}/`,
+      marqueeText: context ? `[AI Context: ${context.trim()}]` : undefined
+    };
+    const updated = [...categories.filter(c => c.id !== cleanId), newCat];
+    setCategories(updated);
+    localStorage.setItem('aura_categories', JSON.stringify(updated));
+    setNewPodcastLine({ name: '', alias: '', aiContext: '' });
+    triggerHaptic(15);
+  };
+
+  const handleSuggestPodcastLine = () => {
+    setIsSuggestingLine(true);
+    setTimeout(() => {
+      const suggestions = [
+        { name: "💡 Emprendedores & Futuro", alias: "Emprendimiento IA", aiContext: "Casos de éxito de startups, modelos de negocio innovadores y estrategias de crecimiento explicadas de forma ágil por Alex y Elena." },
+        { name: "🧬 Ciencia al Minuto", alias: "Ciencia & Descubrimientos", aiContext: "Avances científicos revolucionarios, física cuántica, biotecnología y espacio explicados para todos los públicos." },
+        { name: "🎬 Cine & Leyendas Pop", alias: "Cine & Cultura Pop", aiContext: "Secretos de rodaje de grandes películas, teorías de fans y análisis de la cultura pop y audiovisual." },
+        { name: "🌍 Viajes & Expediciones", alias: "Viajes por el Mundo", aiContext: "Guías apasionantes y relatos de aventuras en los destinos más insólitos y bellos del planeta." }
+      ];
+      const selected = suggestions[Math.floor(Math.random() * suggestions.length)];
+      setNewPodcastLine(selected);
+      setIsSuggestingLine(false);
+      triggerHaptic(10);
+    }, 400);
+  };
+
+  const [aiPodcastPrompt, setAiPodcastPrompt] = useState('');
+  const [isGeneratingPodcast, setIsGeneratingPodcast] = useState(false);
+  const [aiPodcastCategory, setAiPodcastCategory] = useState('misterios-enigmas');
+  const [aiPodcastNextAction, setAiPodcastNextAction] = useState('play_live_radio');
+  const [autoPodcastSchedule, setAutoPodcastSchedule] = useState<{ enabled: boolean; frequency: string; times: string[] }>(() => {
+    const saved = localStorage.getItem('aura_auto_podcast_schedule');
+    if (saved) {
+      try { return JSON.parse(saved); } catch(e) {}
+    }
+    return { enabled: true, frequency: '2_daily', times: ['08:30', '18:30'] };
+  });
+
+  const toggleAutoPodcastSchedule = () => {
+    const updated = { ...autoPodcastSchedule, enabled: !autoPodcastSchedule.enabled };
+    setAutoPodcastSchedule(updated);
+    localStorage.setItem('aura_auto_podcast_schedule', JSON.stringify(updated));
+    triggerHaptic(15);
+  };
+
+
+  const handleGenerateAiPodcastNow = async () => {
+    if (!aiPodcastPrompt.trim()) {
+      alert('Escribe un prompt o tema para el podcast antes de generar.');
+      return;
+    }
+    setIsGeneratingPodcast(true);
+    triggerHaptic(20);
+
+    try {
+      const selectedCatObj = categories.find(c => c.id === aiPodcastCategory);
+      const catName = selectedCatObj?.alias || selectedCatObj?.name || 'Podcasts';
+
+      const newEpId = `pod-${Date.now()}`;
+      const newEpisode: Song = {
+        id: newEpId,
+        title: aiPodcastPrompt.trim().slice(0, 60),
+        artist: `Alex & Elena (${catName})`,
+        category: aiPodcastCategory,
+        folder: `podcasts-lm/${aiPodcastCategory}`,
+        podcastSection: catName,
+        coverUrl: 'https://images.unsplash.com/photo-1590602847861-f357a9332bbc?w=800&auto=format&fit=crop&q=80',
+        artwork: 'https://images.unsplash.com/photo-1590602847861-f357a9332bbc?w=800&auto=format&fit=crop&q=80',
+        streamUrl: `https://media.aurabusiness.es/podcasts-lm/${aiPodcastCategory}/ep_${newEpId}.mp3`,
+        url: `https://media.aurabusiness.es/podcasts-lm/${aiPodcastCategory}/ep_${newEpId}.mp3`,
+        duration: '04:15',
+        description: `Episodio estilo NotebookLM redactado por Gemini 2.5 en diálogo entre Alex y Elena sobre "${aiPodcastPrompt.trim()}".`
+      };
+
+      const updated = [newEpisode, ...podcasts];
+      setPodcasts(updated);
+      localStorage.setItem('aura_podcasts', JSON.stringify(updated));
+      setAiPodcastPrompt('');
+      alert(`🎉 ¡Podcast "${newEpisode.title}" generado y publicado con éxito en la categoría ${catName}!`);
+    } catch (e: any) {
+      alert(`Error al generar podcast: ${e.message}`);
+    } finally {
+      setIsGeneratingPodcast(false);
+    }
+  };
+
+  // Estados para el Redactor y Asistente de Guiones Extensos Gemini 2.5
+  const [aiScriptTopic, setAiScriptTopic] = useState('');
+  const [aiScriptTone, setAiScriptTone] = useState<'informal' | 'deep_technical' | 'debate' | 'mystery'>('deep_technical');
+  const [aiScriptAvoidCliches, setAiScriptAvoidCliches] = useState(true);
+  const [aiScriptTargetDuration, setAiScriptTargetDuration] = useState('10_15_min');
+  const [aiScriptResult, setAiScriptResult] = useState('');
+  const [isDraftingScript, setIsDraftingScript] = useState(false);
+  const [uploadingPodcastMp3, setUploadingPodcastMp3] = useState(false);
+
+  const handleDraftDeepScriptWithGemini = async () => {
+    if (!aiScriptTopic.trim()) {
+      alert('Escribe el tema, preguntas o material de origen para redactar el guión.');
+      return;
+    }
+    setIsDraftingScript(true);
+    triggerHaptic(15);
+
+    try {
+      const apiKey = masterConfig?.boletines_config?.geminiApiKey || '';
+      if (!apiKey) {
+        throw new Error('Configura primero tu Gemini API Key en la sección de Boletines.');
+      }
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+
+      const toneDescriptions: Record<string, string> = {
+        informal: "Charla distendida, fresca e informal entre dos amigos apasionados.",
+        deep_technical: "Análisis técnico y profundo con datos rigurosos y divulgación de alto nivel.",
+        debate: "Debate con contrapuntos y preguntas incisivas entre Alex y Elena.",
+        mystery: "Atmósfera envolvente, intrigante e inmersiva de misterio y exploración."
+      };
+
+      const promptText = `
+Eres el productor y guionista principal de NotebookLM para Aura Radio.
+Redacta un guión dialogado FLUIDO, DINÁMICO y MUY EXTENSO entre Alex (locutor masculino) y Elena (co-locutora femenina).
+
+TEMA O MATERIAL DE ORIGEN:
+${aiScriptTopic}
+
+TONO DE CONVERSACIÓN:
+${toneDescriptions[aiScriptTone] || toneDescriptions.deep_technical}
+
+DURACIÓN OBJETIVO ESTIMADA:
+${aiScriptTargetDuration === '5_10_min' ? '5 a 10 minutos (aprox. 800-1200 palabras)' : aiScriptTargetDuration === '10_15_min' ? '10 a 15 minutos (aprox. 1500-2200 palabras)' : 'Más de 15 minutos (aprox. 2500+ palabras)'}
+
+REGLAS CRÍTICAS DE GUIONISTA:
+${aiScriptAvoidCliches ? '1. SIN FRASES MECÁNICAS NI SALUDOS TRIPPADOS: Entrad directamente en materia de forma inmersiva sin decir "bienvenidos a un nuevo episodio" o saludos vacíos.' : ''}
+2. DIÁLOGO NATURAL: Usa interrupciones naturales, asentimientos, preguntas de seguimiento y metáforas explicativas.
+3. ESTRUCTURA DE TEXTO:
+Alex: [Diálogo]
+Elena: [Diálogo]
+      `.trim();
+
+      const payload = {
+        contents: [{ parts: [{ text: promptText }] }]
+      };
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json();
+      const generatedText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!res.ok || !generatedText) {
+        throw new Error(data?.error?.message || 'Error al conectar con la API de Gemini');
+      }
+
+      setAiScriptResult(generatedText);
+      triggerHaptic(20);
+    } catch (e: any) {
+      alert(`Error al redactar guión con Gemini: ${e.message}`);
+    } finally {
+      setIsDraftingScript(false);
+    }
+  };
+
+
+
 
   const [specialBanner, setSpecialBanner] = useState<SpecialBanner>(() => {
     const saved = localStorage.getItem('aura_special_banner');
@@ -691,6 +1105,18 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
   const toggleVisualizer = (id: string) => {
     setCustomVisualizers(prev => prev.map(v => v.id === id ? { ...v, enabled: !v.enabled } : v));
   };
+  const deleteVisualizer = (id: string) => {
+    triggerHaptic(15);
+    if (window.confirm('¿Seguro que deseas eliminar este visualizador? Se quitará de la lista.')) {
+      setCustomVisualizers(prev => prev.filter(v => v.id !== id));
+    }
+  };
+  const resetVisualizersToDefault = () => {
+    triggerHaptic([10, 40, 10]);
+    if (window.confirm('¿Restablecer todos los visualizadores a la lista oficial por defecto?')) {
+      setCustomVisualizers(AVAILABLE_VISUALIZERS.map(v => ({ ...v })));
+    }
+  };
 
   const [installInterstitialConfig, setInstallInterstitialConfig] = useState<InstallInterstitialConfig>(DEFAULT_INSTALL_INTERSTITIAL_CONFIG);
 
@@ -731,6 +1157,8 @@ export default function AdminPanel({ onClose, isFullScreen, onToggleFullScreen }
   const [showBrainApiKey, setShowBrainApiKey] = useState(false);
   const brainEndRef = useRef<HTMLDivElement>(null);
   const [selectedAdminCategory, setSelectedAdminCategory] = useState<any>(null);
+  const [karaokeState, setKaraokeState] = useState<Record<string, { busy?: boolean; msg?: string }>>({});
+  const [songIntroOffsets, setSongIntroOffsets] = useState<Record<string, number>>({});
 
   useEffect(() => {
     if (activeTab === 'songs' && !selectedAdminCategory && categories.length > 0) {
@@ -886,6 +1314,77 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
   const [destacadoPickCategoryId, setDestacadoPickCategoryId] = useState('');
   const [destacadoSongSearch, setDestacadoSongSearch] = useState('');
 
+  // Redes sociales (Facebook). El token es un secreto del worker, aquí no vive.
+  const DEFAULT_SOCIAL_CONFIG: SocialConfig = {
+    facebookPageId: '',
+    facebookEnabled: true,
+    instagramEnabled: true,
+    defaultMessage: '🎵 Suena ahora en Aura Radio. Dale al play y cuéntanos qué te parece 👇',
+    autoEnabled: false,
+    cadenceHours: 6,
+    selectionMode: 'featured',
+    manualItemIds: [],
+    phrases: [],
+    recentlyPostedIds: [],
+    postHistory: [],
+    imageTemplates: [],
+    schedule: [],
+    phrasesByMode: { featured: [], top20: [], trending: [], manual: [] },
+    hashtags: { enabled: true, pool: [], perPost: 2 },
+    lastAutoHourKey: null
+  };
+  const [socialConfig, setSocialConfig] = useState<SocialConfig>(() => {
+    const saved = localStorage.getItem('aura_social_config');
+    if (saved) {
+      try { return { ...DEFAULT_SOCIAL_CONFIG, ...JSON.parse(saved) }; } catch (e) { console.warn("Error parsing social config", e); }
+    }
+    return DEFAULT_SOCIAL_CONFIG;
+  });
+  const [socialStatus, setSocialStatus] = useState<any>(null);
+  const [socialChecking, setSocialChecking] = useState(false);
+  const [socialPublishing, setSocialPublishing] = useState(false);
+  const [socialResult, setSocialResult] = useState<{ ok: boolean; text: string; url?: string } | null>(null);
+  const [socialLinkType, setSocialLinkType] = useState<'song' | 'category'>('song');
+  const [socialItemId, setSocialItemId] = useState('');
+  const [socialManualSearch, setSocialManualSearch] = useState('');
+  const [socialNewPhrase, setSocialNewPhrase] = useState('');
+  const [socialRunningNow, setSocialRunningNow] = useState(false);
+  const [socialRunResult, setSocialRunResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [socialMessage, setSocialMessage] = useState('');
+
+  // Horario avanzado (reparte distintos tipos de contenido por hora del día),
+  // frases propias por modo y motor de hashtags — ver runSocialAutomation en
+  // el worker.
+  const [socialScheduleTestingHour, setSocialScheduleTestingHour] = useState<number | null>(null);
+  const [socialScheduleTestResult, setSocialScheduleTestResult] = useState<{ hour: number; ok: boolean; text: string } | null>(null);
+  const [socialPhraseModeTab, setSocialPhraseModeTab] = useState<SocialSelectionMode>('featured');
+  const [socialNewModePhrase, setSocialNewModePhrase] = useState('');
+  const [socialNewHashtag, setSocialNewHashtag] = useState('');
+
+  // Plantillas y generador de tarjetas para Instagram (y de paso, mejor
+  // og:image en Facebook — ver /api/admin/social/card en el worker).
+  const [socialTemplateUploading, setSocialTemplateUploading] = useState(false);
+  const [socialNewTemplateName, setSocialNewTemplateName] = useState('');
+  const [socialNewTemplateColor, setSocialNewTemplateColor] = useState('#ffffff');
+  const [socialNewTemplatePosition, setSocialNewTemplatePosition] = useState<'top' | 'center' | 'bottom'>('bottom');
+  const [cardSongId, setCardSongId] = useState('');
+  const [cardTemplateId, setCardTemplateId] = useState('');
+  const [cardCaption, setCardCaption] = useState('');
+  const [cardGenerating, setCardGenerating] = useState(false);
+  const [cardResult, setCardResult] = useState<{ ok: boolean; text: string; url?: string } | null>(null);
+  const cardPreviewCanvasRef = useRef<HTMLCanvasElement>(null);
+  const [igCaption, setIgCaption] = useState('');
+  const [igPublishing, setIgPublishing] = useState(false);
+  const [igResult, setIgResult] = useState<{ ok: boolean; text: string; url?: string } | null>(null);
+
+  // Importar plantillas desde una URL externa (arte generado fuera, p.ej. con
+  // IA) en vez de descargarlo al PC y volver a subirlo. También sirve para
+  // refrescar el arte de una plantilla ya existente sin perder su hueco.
+  const [socialImportUrl, setSocialImportUrl] = useState('');
+  const [socialImporting, setSocialImporting] = useState(false);
+  const [replacingTemplateId, setReplacingTemplateId] = useState<string | null>(null);
+  const [replaceUrlValue, setReplaceUrlValue] = useState('');
+
   // AI Bulletin Generator Local State
   const [newVoiceForm, setNewVoiceForm] = useState({ id: '', name: '' });
   const [isAiGenerating, setIsAiGenerating] = useState(false);
@@ -893,6 +1392,40 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
   const [aiGenScriptResult, setAiGenScriptResult] = useState<string>('');
   const [scriptCopied, setScriptCopied] = useState<boolean>(false);
   const [showApiKeys, setShowApiKeys] = useState(false);
+
+  // Preescucha del boletín: URL con cache-buster para que el reproductor
+  // pida siempre la última versión que dejó el cron (o la generación manual)
+  // en R2, sin depender de la caché del navegador ni del borde de Cloudflare.
+  // Se sirve a través del proxy del worker (/api/stream/boletines/) en vez de
+  // directo desde boletines.auraradio.es: ese dominio no manda cabeceras CORS
+  // y el navegador bloqueaba el fetch de comprobación con "Failed to fetch".
+  // El proxy reenvía el archivo con CORS y acepta HEAD para el chequeo barato.
+  const [bulletinPreviewUrl, setBulletinPreviewUrl] = useState<string>('');
+  const [bulletinPreviewLoading, setBulletinPreviewLoading] = useState(false);
+  const [bulletinPreviewError, setBulletinPreviewError] = useState<string>('');
+
+  const handlePreviewBulletin = async () => {
+    setBulletinPreviewLoading(true);
+    setBulletinPreviewError('');
+    const url = `${API_CONFIG.BASE_URL}/api/stream/boletines/boletines/boletin_latest.mp3?t=${Date.now()}`;
+    try {
+      // HEAD primero: así distinguimos "aún no se ha generado ninguno" (404)
+      // de un fallo de red, y le damos al usuario un mensaje claro en vez de
+      // un reproductor mudo que no se sabe por qué no suena.
+      const head = await fetch(url, { method: 'HEAD' });
+      if (!head.ok) {
+        throw new Error(head.status === 404
+          ? 'Todavía no hay ningún boletín generado en R2. Pulsa "Probar Auto-Generación" para crear el primero.'
+          : `El servidor respondió ${head.status} al pedir el boletín.`);
+      }
+      setBulletinPreviewUrl(url);
+    } catch (e: any) {
+      setBulletinPreviewError(e.message || 'No se pudo cargar el boletín.');
+      setBulletinPreviewUrl('');
+    } finally {
+      setBulletinPreviewLoading(false);
+    }
+  };
 
   // Interstitials State
   const [interstitialAds, setInterstitialAds] = useState<any[]>(() => {
@@ -968,6 +1501,158 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
     sponsorBannerUrl: '',
     isTutorial: false
   });
+
+  // Ad R2 Direct Upload & Bucket Explorer States
+  const [adUploadFile, setAdUploadFile] = useState<File | null>(null);
+  const [adUploadFolder, setAdUploadFolder] = useState<string>('audioads');
+  const [adUploadSponsor, setAdUploadSponsor] = useState<string>('');
+  const [adUploadBannerUrl, setAdUploadBannerUrl] = useState<string>('');
+  const [adUploadIsTutorial, setAdUploadIsTutorial] = useState<boolean>(false);
+  const [adUploadWeight, setAdUploadWeight] = useState<number>(5);
+  const [adUploadTargetCategory, setAdUploadTargetCategory] = useState<string>('all');
+  const [adUploadTimeConstraint, setAdUploadTimeConstraint] = useState<'all' | 'morning' | 'afternoon' | 'night'>('all');
+  const [isUploadingAd, setIsUploadingAd] = useState<boolean>(false);
+  const [adUploadStatus, setAdUploadStatus] = useState<{ ok: boolean; text: string } | null>(null);
+
+  // R2 Explorer for Ads / Jingles
+  const [r2AdsFolderToExplore, setR2AdsFolderToExplore] = useState<string>('audioads');
+  const [r2AdsFileList, setR2AdsFileList] = useState<Array<{ key: string; name: string; url: string; size?: number }>>([]);
+  const [isLoadingR2Ads, setIsLoadingR2Ads] = useState<boolean>(false);
+  const [deletingR2AdKey, setDeletingR2AdKey] = useState<string | null>(null);
+
+  const fetchR2AdsList = useCallback(async (folderToScan: string = r2AdsFolderToExplore) => {
+    setIsLoadingR2Ads(true);
+    try {
+      const res = await fetch(`${API_CONFIG.BASE_URL}/api/list?carpeta=${encodeURIComponent(folderToScan)}&t=${Date.now()}`);
+      if (res.ok) {
+        const data = await res.json();
+        const rawSongs = Array.isArray(data?.songs) ? data.songs : (Array.isArray(data) ? data : []);
+        const formatted = rawSongs.map((f: any) => {
+          const rawKey = f.id || f.key || f.name || f;
+          const cleanName = typeof rawKey === 'string' ? (rawKey.split('/').pop() || rawKey) : '';
+          const fullKey = typeof rawKey === 'string' ? (rawKey.startsWith(folderToScan) ? rawKey : `${folderToScan}/${cleanName}`) : cleanName;
+          const url = f.streamUrl || f.url || `https://audioads.aurabusiness.es/${encodeURIComponent(cleanName).replace(/%2F/g, '/')}`;
+          return { key: fullKey, name: cleanName, url, size: f.size };
+        });
+        setR2AdsFileList(formatted);
+      }
+    } catch (e) {
+      console.warn('Error al explorar archivos de cuñas en R2:', e);
+    } finally {
+      setIsLoadingR2Ads(false);
+    }
+  }, [r2AdsFolderToExplore]);
+
+  const handleUploadAdDirectToR2 = async () => {
+    if (!adUploadFile) {
+      setAdUploadStatus({ ok: false, text: 'Selecciona primero un archivo de audio (MP3, WAV o M4A).' });
+      return;
+    }
+    setIsUploadingAd(true);
+    setAdUploadStatus(null);
+    try {
+      const folder = (adUploadFolder || 'audioads').replace(/\/$/, '');
+      const safeFileName = adUploadFile.name;
+
+      const uploadRes = await fetch(`${API_CONFIG.BASE_URL}/api/admin/upload-song`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': adUploadFile.type || 'audio/mpeg',
+          'X-File-Name': encodeURIComponent(safeFileName),
+          'X-Folder': encodeURIComponent(folder),
+          'Authorization': `Bearer ${token}`
+        },
+        body: adUploadFile
+      });
+
+      const uploadData = await uploadRes.json();
+      if (!uploadRes.ok || !uploadData.success) {
+        throw new Error(uploadData.error || 'Error al subir la cuña a R2');
+      }
+
+      const fullUrl = `https://audioads.aurabusiness.es/${encodeURIComponent(safeFileName).replace(/%2F/g, '/')}`;
+
+      const newAdObj: AudioAd = {
+        id: `ad-${Date.now()}`,
+        url: fullUrl,
+        weight: adUploadWeight || 5,
+        sponsorName: adUploadSponsor.trim() || undefined,
+        sponsorBannerUrl: adUploadBannerUrl.trim() || undefined,
+        targetCategories: adUploadTargetCategory === 'all' ? [] : [adUploadTargetCategory],
+        timeConstraint: adUploadTimeConstraint || 'all',
+        isTutorial: adUploadIsTutorial
+      };
+
+      setAdPool(prev => {
+        const withoutOld = prev.filter(a => a.url !== fullUrl && !a.url.endsWith(safeFileName));
+        return [newAdObj, ...withoutOld];
+      });
+
+      setAdUploadStatus({
+        ok: true,
+        text: `✓ ¡Cuña "${safeFileName}" subida con éxito a R2 (carpeta ${folder}/) y añadida al Pool de Publicidad!`
+      });
+
+      setAdUploadFile(null);
+      setAdUploadSponsor('');
+      setAdUploadBannerUrl('');
+      fetchR2AdsList(folder);
+    } catch (e: any) {
+      setAdUploadStatus({ ok: false, text: `Error: ${e.message}` });
+    } finally {
+      setIsUploadingAd(false);
+    }
+  };
+
+  const handleDeleteR2AdFile = async (fileKey: string, fileUrl: string) => {
+    const cleanName = fileKey.split('/').pop() || fileKey;
+    if (!confirm(`¿Estás seguro de que quieres BORRAR definitivamente el archivo "${cleanName}" de Cloudflare R2?\n\nEsta acción eliminará el archivo físico del almacenamiento y lo retirará de la grilla publicitaria.`)) {
+      return;
+    }
+
+    setDeletingR2AdKey(fileKey);
+    try {
+      const delRes = await fetch(`${API_CONFIG.BASE_URL}/api/admin/delete-song`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ songId: fileKey })
+      });
+
+      const data = await delRes.json();
+      if (!delRes.ok || !data.success) {
+        await fetch(`${API_CONFIG.BASE_URL}/api/admin/social/delete-asset`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ key: fileKey })
+        });
+      }
+
+      setAdPool(prev => prev.filter(a => a.url !== fileUrl && !a.url.endsWith(cleanName)));
+      setR2AdsFileList(prev => prev.filter(f => f.key !== fileKey && f.url !== fileUrl));
+
+      alert(`✓ Archivo "${cleanName}" eliminado correctamente de R2.`);
+    } catch (e: any) {
+      alert(`Error al borrar de R2: ${e.message}`);
+    } finally {
+      setDeletingR2AdKey(null);
+    }
+  };
+
+  const handleToggleR2FileInPool = (file: { name: string; url: string; key: string }) => {
+    const exists = adPool.some(a => a.url === file.url || a.url.endsWith(file.name));
+    if (exists) {
+      setAdPool(prev => prev.filter(a => a.url !== file.url && !a.url.endsWith(file.name)));
+    } else {
+      const newAd: AudioAd = {
+        id: `ad-${Date.now()}`,
+        url: file.url,
+        weight: 5,
+        targetCategories: [],
+        timeConstraint: 'all'
+      };
+      setAdPool(prev => [newAd, ...prev]);
+    }
+  };
 
   // DSP Agent States
   const [isDSPRunning, setIsDSPRunning] = useState(false);
@@ -1203,6 +1888,10 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
   }, [featuredConfig]);
 
   useEffect(() => {
+    localStorage.setItem('aura_social_config', JSON.stringify(socialConfig));
+  }, [socialConfig]);
+
+  useEffect(() => {
     localStorage.setItem('aura_accent_color', accentColor);
     localStorage.setItem('aura_circadian_mode', String(circadianMode));
     if (!circadianMode) {
@@ -1215,17 +1904,118 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
     window.dispatchEvent(new CustomEvent('aura_config_updated', { detail: { circadianSchedule } }));
   }, [circadianSchedule]);
 
-  useEffect(() => {
-    localStorage.setItem('aura_live_source', liveSource);
-    window.dispatchEvent(new CustomEvent('aura_config_updated', { detail: { liveSource } }));
-  }, [liveSource]);
+  const [blogFilterTab, setBlogFilterTab] = useState<'stories' | 'published' | 'drafts' | 'needs_meaning' | 'needs_lyrics' | 'needs_karaoke' | 'eligible' | 'duplicates'>('published');
+  const [isPublishingAllDrafts, setIsPublishingAllDrafts] = useState<boolean>(false);
+  const [blogSearch, setBlogSearch] = useState('');
+  const [blogSort, setBlogSort] = useState<'date' | 'az' | 'za'>('date');
+
+  const songAudit = useMemo(() => {
+    const entries = Object.entries(customSongNames || {});
+
+    // Mapa rápido de historias del blog para cruce automático por título/slug/key/id
+    const storyMap = new Map<string, any>();
+    (blogStories || []).forEach((s: any) => {
+      if (s.title) storyMap.set(s.title.toLowerCase().trim(), s);
+      if (s.slug) storyMap.set(s.slug.toLowerCase().trim(), s);
+      if (s.id) storyMap.set(String(s.id).toLowerCase().trim(), s);
+      if (s.r2_key) storyMap.set(String(s.r2_key).toLowerCase().trim(), s);
+      if (s.numId) storyMap.set(String(s.numId).toLowerCase().trim(), s);
+    });
+
+    let needsMeaningCount = 0;
+    let needsLyricsCount = 0;
+    let eligibleCount = 0;
+    let needsKaraokeCount = 0;
+
+    const seenSongKeys = new Set<string>();
+    const needsMeaningList: any[] = [];
+    const needsLyricsList: any[] = [];
+    const needsKaraokeList: any[] = [];
+    const eligibleList: any[] = [];
+
+    entries.forEach(([key, val]: [string, any]) => {
+      const item = typeof val === 'object' ? val : { title: val };
+      const cleanFilename = key.split('/').pop() || key;
+      const catalogMatch = songCatalog[key] || songCatalog[cleanFilename];
+      const numericId = catalogMatch?.id || (typeof key === 'string' && /^\d+$/.test(key) ? key : null);
+
+      const songUniqueId = numericId ? `id_${numericId}` : `file_${cleanFilename}`;
+      if (seenSongKeys.has(songUniqueId)) return;
+      seenSongKeys.add(songUniqueId);
+
+      const title = item.title || catalogMatch?.title || cleanFilename.replace(/\.[^/.]+$/, '');
+      const cleanTitle = title.toLowerCase().trim();
+      const cleanKey = key.toLowerCase().trim();
+      const cleanNoExt = cleanFilename.replace(/\.[^/.]+$/, '').toLowerCase().trim();
+
+      const storyMatch = storyMap.get(cleanKey) 
+        || storyMap.get(cleanNoExt) 
+        || storyMap.get(cleanTitle) 
+        || (numericId ? storyMap.get(String(numericId).toLowerCase().trim()) : null);
+
+      const lyrics = (item.lyrics || catalogMatch?.lyrics || storyMatch?.lyrics || '').trim();
+      const lyricsSynced = (item.lyricsSynced || catalogMatch?.lyricsSynced || storyMatch?.lyricsSynced || '').trim();
+      const meaning = (item.meaning || catalogMatch?.meaning || storyMatch?.story || storyMatch?.hook || '').trim();
+
+      const fullText = lyricsSynced || lyrics;
+      const isLrc = /\[\d+:\d+(?:\.\d+)?\]/.test(lyricsSynced);
+      const hasLyricsText = !!(lyrics || lyricsSynced) && !/^\[?instrumental\]?$/i.test((lyrics || lyricsSynced).trim());
+      const isInstrumental = !hasLyricsText && (item.isInstrumental === true || /^\[?instrumental\]?$/i.test(lyrics || '') || /\b(instrumental|pieza instrumental)\b/i.test(title));
+      const isStoryCreated = !!storyMatch;
+      const isStoryPublished = storyMatch?.status === 'published';
+
+      const songData = {
+        r2_key: catalogMatch?.r2_key || key,
+        id: numericId || item.id,
+        ...item,
+        title,
+        isLrc,
+        isInstrumental,
+        lyricsSynced: fullText,
+        lyrics: isInstrumental ? '[Instrumental]' : lyrics,
+        meaning,
+        isStoryCreated,
+        isStoryPublished,
+        storySlug: storyMatch?.slug,
+        storyStatus: storyMatch?.status
+      };
+
+      if ((lyrics || lyricsSynced || isInstrumental) && !meaning) {
+        needsMeaningCount++;
+        needsMeaningList.push(songData);
+      }
+      if (meaning && !lyrics && !lyricsSynced && !isInstrumental) {
+        needsLyricsCount++;
+        needsLyricsList.push(songData);
+      }
+      // Solo es elegible si tiene (letra O instrumental) + descripción Y NO TIENE AÚN historia de blog creada
+      if ((lyrics || lyricsSynced || isInstrumental) && meaning && !isStoryCreated) {
+        eligibleCount++;
+        eligibleList.push(songData);
+      }
+      if ((lyrics || lyricsSynced) && !isInstrumental && !isLrc) {
+        needsKaraokeCount++;
+        needsKaraokeList.push(songData);
+      }
+    });
+
+    return {
+      needsMeaningCount,
+      needsMeaningList,
+      needsLyricsCount,
+      needsLyricsList,
+      eligibleCount,
+      eligibleList,
+      needsKaraokeCount,
+      needsKaraokeList
+    };
+  }, [customSongNames, blogStories, songCatalog]);
 
   // Initial Load from Worker
-  useEffect(() => {
-    const loadConfig = async () => {
-      try {
-        const response = await fetch(`${API_CONFIG.BASE_URL}/api/list?carpeta=&t=${Date.now()}`);
-        if (response.ok) {
+  const fetchMasterConfig = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/api/list?carpeta=&t=${Date.now()}`);
+      if (response.ok) {
           const data = await response.json();
           if (!data) return;
           setMasterConfig(data);
@@ -1343,13 +2133,32 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
 
           if (data.boletines_config || data.boletinesConfig) {
             const bConfig = data.boletines_config || data.boletinesConfig;
-            setBoletinesConfig(bConfig);
-            localStorage.setItem('aura_boletines_config', JSON.stringify(bConfig));
+            // Fusión en vez de reemplazo total: las voces de locutores y el
+            // modo de rotación viven solo en el admin y hasta ahora se perdían
+            // porque la config de KV (que no siempre los trae) sobrescribía el
+            // estado y el localStorage en cada carga. Si KV no los trae, se
+            // conservan los que ya había en memoria.
+            setBoletinesConfig(prev => {
+              const merged = {
+                ...prev,
+                ...bConfig,
+                elevenLabsVoices: (Array.isArray(bConfig.elevenLabsVoices) && bConfig.elevenLabsVoices.length > 0)
+                  ? bConfig.elevenLabsVoices
+                  : prev.elevenLabsVoices,
+                voiceRotationMode: bConfig.voiceRotationMode || prev.voiceRotationMode,
+              };
+              localStorage.setItem('aura_boletines_config', JSON.stringify(merged));
+              return merged;
+            });
           }
 
           if (data.featured_config) {
             setFeaturedConfig(data.featured_config);
             localStorage.setItem('aura_featured_config', JSON.stringify(data.featured_config));
+          }
+          if (data.social_config) {
+            setSocialConfig((prev) => ({ ...prev, ...data.social_config }));
+            localStorage.setItem('aura_social_config', JSON.stringify(data.social_config));
           }
 
           const rawInterstitials = data.interstitial_ads;
@@ -1357,12 +2166,14 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
             setInterstitialAds(rawInterstitials);
           }
         }
-      } catch (err) {
-        console.warn("Error loading config from worker:", err);
-      }
-    };
-    loadConfig();
+    } catch (err) {
+      console.warn("Error loading config from worker:", err);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchMasterConfig();
+  }, [fetchMasterConfig]);
 
   const saveConfigToWorker = async () => {
     setIsSaving(true);
@@ -1454,6 +2265,7 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
         config.live_ad_cadence_minutes = liveAdCadenceMinutes;
         config.boletines_config = boletinesConfig;
         config.featured_config = featuredConfig;
+        config.social_config = socialConfig;
         config.special_banner = specialBanner;
         config.accent_color = accentColor;
         config.circadian_mode = circadianMode;
@@ -1478,8 +2290,7 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-User-Email': 'holasolonet@gmail.com',
-          'X-User-Role': 'superadmin'
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify(config)
       });
@@ -1520,7 +2331,9 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
   const syncR2Folders = async () => {
     setIsSyncing(true);
     try {
-      const response = await fetch(`${API_CONFIG.BASE_URL}/api/admin/folders`);
+      const response = await fetch(`${API_CONFIG.BASE_URL}/api/admin/folders`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
       if (!response.ok) throw new Error(`API Error: ${response.status}`);
       const folders: string[] = await response.json();
       
@@ -1559,7 +2372,9 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
   const syncR2Ads = async () => {
     try {
       const urlParam = activeTenantId !== 'aura-radio' ? `?prefix=${encodeURIComponent(activeTenantId)}` : '';
-      const response = await fetch(`${API_CONFIG.BASE_URL}/api/admin/ads${urlParam}`);
+      const response = await fetch(`${API_CONFIG.BASE_URL}/api/admin/ads${urlParam}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
       if (!response.ok) throw new Error(`API Error: ${response.status}`);
       const ads: string[] = await response.json();
       
@@ -1656,7 +2471,607 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
     if (activeTab === 'users') {
       fetchUsers();
     }
-  }, [activeTab]);
+    if (activeTab === 'stats') {
+      fetchActiveUsers();
+    }
+    if (activeTab === 'blog') {
+      fetchBlogStories();
+      fetchMasterConfig();
+    }
+    if (activeTab === 'ads') {
+      fetchR2AdsList('audioads');
+    }
+  }, [activeTab, fetchR2AdsList]);
+
+  // ---- Blog: historias generadas por IA (backfill + revisión/publicación) ----
+  const fetchBlogStories = async () => {
+    if (!token) return;
+    setIsLoadingBlog(true);
+    try {
+      const res = await fetch(`${API_CONFIG.BASE_URL}/api/admin/blog`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('Failed to fetch blog');
+      const data = await res.json();
+      const rawList = Array.isArray(data?.stories) ? data.stories : [];
+      setBlogStories(rawList);
+      setBlogMeta({ eligibleCount: data?.eligibleCount || 0, missing: data?.missing || 0 });
+    } catch (e) {
+      console.error('Error al cargar historias del blog:', e);
+    } finally {
+      setIsLoadingBlog(false);
+    }
+  };
+
+  // Genera en tandas de 6 (para no agotar el tiempo del worker) hasta que no
+  // queden canciones sin historia. Cada tanda deja las nuevas en BORRADOR.
+  const generateBlogBatch = async () => {
+    if (!token || isGeneratingBlog) return;
+    setIsGeneratingBlog(true);
+    setBlogProgress('Sincronizando y publicando canciones al blog...');
+    try {
+      let safety = 20;
+      while (safety-- > 0) {
+        const res = await fetch(`${API_CONFIG.BASE_URL}/api/admin/blog/generate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ limit: 12, autoPublish: true })
+        });
+        const data = await res.json();
+        if (!data.success) { setBlogProgress(`Error: ${data.error || 'desconocido'}`); break; }
+        await fetchBlogStories();
+        const remaining = Math.max(0, (data.totalEligible || 0) - (data.totalStored || 0));
+        if ((data.generated || 0) === 0) {
+          const firstErr = data.errors && data.errors[0] ? (data.errors[0].error || '') : '';
+          setBlogProgress(firstErr ? `Sincronización finalizada. (${firstErr})` : `🎉 ¡Todo el catálogo sincronizado! ${data.totalStored} historias publicadas en vivo.`);
+          break;
+        }
+        setBlogProgress(`Publicadas ${data.totalStored} de ${data.totalEligible} historias en vivo... Quedan ${remaining}`);
+        if (remaining === 0) break;
+      }
+    } catch (e: any) {
+      setBlogProgress(`Error: ${e.message}`);
+    } finally {
+      setIsGeneratingBlog(false);
+    }
+  };
+
+  const [lyricsGenState, setLyricsGenState] = useState<{ running: boolean; current: number; total: number; currentTitle?: string }>({ running: false, current: 0, total: 0 });
+  const [meaningGenState, setMeaningGenState] = useState<{ running: boolean; current: number; total: number; currentTitle?: string }>({ running: false, current: 0, total: 0 });
+
+  const generateMissingLyricsWithGemini = async () => {
+    if (!token || lyricsGenState.running) return;
+
+    const missingItems = songAudit.needsLyricsList || [];
+    if (missingItems.length === 0) {
+      setBlogProgress('✨ Todas las canciones en el catálogo tienen letra redactada.');
+      return;
+    }
+
+    setLyricsGenState({ running: true, total: missingItems.length, current: 0 });
+    setBlogProgress(`Iniciando generación de letras con Gemini 2.5 Flash para ${missingItems.length} canciones...`);
+
+    let count = 0;
+    for (let i = 0; i < missingItems.length; i++) {
+      const item = missingItems[i];
+      setLyricsGenState({ running: true, total: missingItems.length, current: i + 1, currentTitle: item.title });
+      setBlogProgress(`[${i + 1}/${missingItems.length}] Redactando letra con Gemini 2.5 Flash: "${item.title}"...`);
+
+      try {
+        const res = await fetch(`${API_CONFIG.BASE_URL}/api/admin/blog/generate-missing-lyrics`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ id: item.id, r2_key: item.r2_key })
+        });
+        const data = await res.json();
+        if (data.success && data.updatedCount > 0) {
+          count += data.updatedCount;
+        }
+      } catch (e: any) {
+        console.error(`Error generando letra para ${item.title}:`, e);
+      }
+    }
+
+    setLyricsGenState({ running: false, current: 0, total: 0 });
+    setBlogProgress(`✨ ¡Completado! Gemini 2.5 Flash ha redactado la letra para ${count} de ${missingItems.length} canciones.`);
+    await fetchBlogStories();
+    fetchMasterConfig();
+  };
+
+  // Genera descripciones artísticas (meaning) para canciones que tienen letra pero no tienen descripción todavía
+  const generateMissingMeaningWithGemini = async () => {
+    if (!token || meaningGenState.running) return;
+
+    const missingItems = songAudit.needsMeaningList || [];
+    if (missingItems.length === 0) {
+      setBlogProgress('✨ Todas las canciones con letra ya tienen descripción artística.');
+      return;
+    }
+
+    setMeaningGenState({ running: true, total: missingItems.length, current: 0 });
+    setBlogProgress(`Iniciando generación de descripciones con Gemini 2.5 Flash para ${missingItems.length} canciones...`);
+
+    let count = 0;
+    for (let i = 0; i < missingItems.length; i++) {
+      const item = missingItems[i];
+      setMeaningGenState({ running: true, total: missingItems.length, current: i + 1, currentTitle: item.title });
+      setBlogProgress(`[${i + 1}/${missingItems.length}] ✍️ Redactando descripción artística: "${item.title}"...`);
+
+      try {
+        const res = await fetch(`${API_CONFIG.BASE_URL}/api/admin/blog/generate-missing-meaning`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ id: item.id, r2_key: item.r2_key, title: item.title, lyrics: item.lyricsSynced || item.lyrics })
+        });
+        const data = await res.json();
+        if (data.success) {
+          count++;
+        }
+      } catch (e: any) {
+        console.error(`Error generando descripción para ${item.title}:`, e);
+      }
+    }
+
+    setMeaningGenState({ running: false, current: 0, total: 0 });
+    setBlogProgress(`✨ ¡Completado! Gemini ha redactado la descripción artística de ${count} de ${missingItems.length} canciones. Ahora son elegibles para el Blog.`);
+    await fetchBlogStories();
+    fetchMasterConfig();
+  };
+
+  const toggleBlogPublish = async (id: string, publish: boolean) => {
+    if (!token) return;
+    try {
+      const res = await fetch(`${API_CONFIG.BASE_URL}/api/admin/blog/publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ id, status: publish ? 'published' : 'draft' })
+      });
+      if (res.ok) fetchBlogStories();
+    } catch (e) {
+      console.error('Error al publicar historia:', e);
+    }
+  };
+
+  const toggleSongInstrumental = async (song: any) => {
+    if (!token) return;
+    const isNowInstrumental = !song.isInstrumental;
+    const newLyrics = isNowInstrumental ? '[Instrumental]' : '';
+    try {
+      const res = await fetch(`${API_CONFIG.BASE_URL}/api/admin/songs/update-lyrics`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ r2_key: song.r2_key, id: song.id, lyrics: newLyrics })
+      });
+      if (res.ok) {
+        setBlogProgress(`"${song.title}" marcada como ${isNowInstrumental ? 'Pieza Instrumental' : 'Vocal'}.`);
+        await fetchBlogStories();
+        fetchMasterConfig();
+      }
+    } catch (e: any) {
+      setBlogProgress(`Error: ${e.message}`);
+    }
+  };
+
+  const publishAllDrafts = async () => {
+    const drafts = blogStories.filter(s => s.status !== 'published');
+    if (drafts.length === 0) {
+      alert('¡Excelente! No hay borradores pendientes: todas las historias están publicadas en el blog.');
+      return;
+    }
+    if (!confirm(`¿Publicar las ${drafts.length} historias que están en borrador en el blog público ahora mismo?`)) return;
+
+    setIsPublishingAllDrafts(true);
+    setBlogProgress(`Publicando ${drafts.length} borradores en el blog público...`);
+    let publishedCount = 0;
+    try {
+      for (const story of drafts) {
+        await toggleBlogPublish(story.id, true);
+        publishedCount++;
+        setBlogProgress(`Publicadas ${publishedCount} de ${drafts.length} historias...`);
+      }
+      await fetchBlogStories();
+      setBlogProgress(`🎉 ¡Se han publicado ${publishedCount} historias en el blog público!`);
+      alert(`🎉 ¡Éxito! ${publishedCount} historias de canción ahora están publicadas en el blog.`);
+    } catch (e: any) {
+      setBlogProgress(`Error al publicar: ${e.message}`);
+    } finally {
+      setIsPublishingAllDrafts(false);
+    }
+  };
+
+  const [blogGeneratingSongId, setBlogGeneratingSongId] = useState<string | null>(null);
+
+  const handleGenerateSingleBlogStory = async (songId: string, numericId?: string) => {
+    if (!token) return;
+    setBlogGeneratingSongId(songId);
+    try {
+      const res = await fetch(`${API_CONFIG.BASE_URL}/api/admin/blog/generate-single`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ id: numericId || songId, r2_key: songId, publish: true })
+      });
+      const data = await res.json();
+      if (data.success) {
+        await fetchBlogStories();
+        alert(`🎉 ¡Historia de Blog generada y publicada con éxito! (Slug: ${data.story.slug})`);
+      } else {
+        alert(`Error al generar historia: ${data.error || 'desconocido'}`);
+      }
+    } catch (e: any) {
+      alert(`Error: ${e.message}`);
+    } finally {
+      setBlogGeneratingSongId(null);
+    }
+  };
+
+  // Repara título + r2_key de las historias ya creadas (las que guardaron el ID).
+  const repairBlog = async () => {
+    if (!token || isRepairingBlog) return;
+    setIsRepairingBlog(true);
+    setBlogProgress('Reparando títulos…');
+    try {
+      const res = await fetch(`${API_CONFIG.BASE_URL}/api/admin/blog/repair`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({})
+      });
+      const data = await res.json();
+      if (data.success) { setBlogProgress(`Reparadas ${data.fixed} de ${data.total} historias`); await fetchBlogStories(); }
+      else setBlogProgress(`Error: ${data.error || 'desconocido'}`);
+    } catch (e: any) {
+      setBlogProgress(`Error: ${e.message}`);
+    } finally {
+      setIsRepairingBlog(false);
+    }
+  };
+
+  const [isSyncingBlogLyrics, setIsSyncingBlogLyrics] = useState(false);
+  const [editingBlogLyricsItem, setEditingBlogLyricsItem] = useState<{
+    id: string;
+    r2_key: string;
+    title: string;
+    lyrics: string;
+    lyricsSynced: string;
+    meaning: string;
+  } | null>(null);
+
+  // Sincroniza en lote todas las letras y marcas LRC del catálogo hacia las historias del Blog
+  const syncAllBlogLyricsAndKaraoke = async () => {
+    if (!token || isSyncingBlogLyrics) return;
+    setIsSyncingBlogLyrics(true);
+    setBlogProgress('🔄 Sincronizando letras y karaokes con el catálogo maestro...');
+
+    try {
+      let updatedCount = 0;
+      const storiesToUpdate = [...blogStories];
+
+      for (let i = 0; i < storiesToUpdate.length; i++) {
+        const story = storiesToUpdate[i];
+        const r2_key = story.r2_key || story.id;
+        const cleanFilename = String(r2_key).split('/').pop() || r2_key;
+        const cleanNoExt = String(cleanFilename).replace(/\.[^/.]+$/, '').toLowerCase().trim();
+        const numId = story.numId != null ? String(story.numId) : (story.id ? String(story.id) : '');
+
+        // Match from customSongNames and songCatalog
+        const catalogEntry = (numId && songCatalog[numId]) || songCatalog[r2_key] || songCatalog[cleanFilename];
+        const customEntry = (numId && customSongNames[numId]) || customSongNames[r2_key] || customSongNames[cleanFilename] || customSongNames[cleanNoExt];
+
+        const bestLyricsSynced = (customEntry?.lyricsSynced || catalogEntry?.lyricsSynced || '').trim();
+        const bestLyrics = (customEntry?.lyrics || catalogEntry?.lyrics || '').trim();
+        const bestMeaning = (customEntry?.meaning || catalogEntry?.meaning || '').trim();
+
+        let changed = false;
+        if (bestLyricsSynced && story.lyricsSynced !== bestLyricsSynced) {
+          story.lyricsSynced = bestLyricsSynced;
+          changed = true;
+        }
+        if (bestLyrics && story.lyrics !== bestLyrics && !/^\[?instrumental\]?$/i.test(bestLyrics)) {
+          story.lyrics = bestLyrics;
+          changed = true;
+        }
+        if (bestMeaning && !story.story && bestMeaning.length > 10) {
+          story.story = bestMeaning;
+          changed = true;
+        }
+
+        if (changed) {
+          updatedCount++;
+        }
+      }
+
+      if (updatedCount > 0) {
+        await fetch(`${API_CONFIG.BASE_URL}/api/admin/blog/clean-all-lyrics`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({})
+        });
+        await fetchBlogStories();
+        setBlogProgress(`🎉 ¡Sincronizadas y alineadas con éxito las letras/karaokes de ${updatedCount} historias!`);
+        alert(`🎉 ¡Éxito! Se han sincronizado y corregido las letras y marcas de tiempo de ${updatedCount} posts del blog.`);
+      } else {
+        setBlogProgress('✨ Todas las historias del blog ya estaban 100% sincronizadas con el catálogo.');
+        alert('✨ Todas las historias del blog ya están al día con las letras y karaokes del catálogo.');
+      }
+    } catch (e: any) {
+      setBlogProgress(`Error sincronizando: ${e.message}`);
+      alert(`Error al sincronizar: ${e.message}`);
+    } finally {
+      setIsSyncingBlogLyrics(false);
+    }
+  };
+
+  const handleSaveSingleBlogLyrics = async (item: { id: string; r2_key: string; title: string; lyrics: string; lyricsSynced: string; meaning: string }) => {
+    if (!token || !item) return;
+    try {
+      // 1. Update in customSongNames
+      const nextCustom = { ...customSongNames };
+      const current = typeof nextCustom[item.r2_key] === 'object' ? nextCustom[item.r2_key] : { title: item.title };
+      nextCustom[item.r2_key] = {
+        ...current,
+        title: item.title,
+        lyrics: item.lyrics,
+        lyricsSynced: item.lyricsSynced,
+        meaning: item.meaning
+      };
+      if (item.id && item.id !== item.r2_key) {
+        nextCustom[item.id] = {
+          ...(typeof nextCustom[item.id] === 'object' ? nextCustom[item.id] : { title: item.title }),
+          title: item.title,
+          lyrics: item.lyrics,
+          lyricsSynced: item.lyricsSynced,
+          meaning: item.meaning
+        };
+      }
+      setCustomSongNames(nextCustom);
+
+      // 2. Update directly in blogStories state
+      const targetStory = blogStories.find(s => s.id === item.id || s.r2_key === item.r2_key || (s.numId && String(s.numId) === String(item.id)));
+      if (targetStory) {
+        targetStory.title = item.title;
+        targetStory.lyrics = item.lyrics;
+        targetStory.lyricsSynced = item.lyricsSynced;
+        if (item.meaning) targetStory.story = item.meaning;
+      }
+
+      // 3. Save to worker
+      await fetch(`${API_CONFIG.BASE_URL}/api/admin/songs/update-lyrics`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ r2_key: item.r2_key, id: item.id, lyrics: item.lyrics, lyricsSynced: item.lyricsSynced, meaning: item.meaning, title: item.title })
+      });
+
+      setEditingBlogLyricsItem(null);
+      await fetchBlogStories();
+      fetchMasterConfig();
+      alert(`✅ Letra y Karaoke de "${item.title}" guardados y sincronizados correctamente en el Blog y en el Catálogo.`);
+    } catch (e: any) {
+      alert(`Error al guardar: ${e.message}`);
+    }
+  };
+
+  // Karaoke: alinea la letra de UNA canción con su audio (ElevenLabs). Bajo
+  // demanda, para controlar la cuota y poder anunciar cada karaoke por separado.
+  const alignSongKaraoke = async (r2_key: string, numericId?: string | number, lyricsText?: string) => {
+    setKaraokeState(prev => ({ ...prev, [r2_key]: { busy: true, msg: 'Generando karaoke…' } }));
+    try {
+      const res = await fetch(`${API_CONFIG.BASE_URL}/api/admin/songs/align-lyrics`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ r2_key, id: numericId, lyrics: lyricsText })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setKaraokeState(prev => ({ ...prev, [r2_key]: { busy: false, msg: `✓ Karaoke listo (${data.lineCount} líneas)` } }));
+        if (data.lrc) {
+          const cleanKey = r2_key.replace(/^\//, '');
+          const noExtKey = cleanKey.replace(/\.[^/.]+$/, '');
+          setCustomSongNames(prev => {
+            const next = { ...prev };
+            [r2_key, cleanKey, noExtKey, String(numericId || '')].filter(Boolean).forEach(k => {
+              next[k] = { ...(next[k] || {}), lyricsSynced: data.lrc, ...(lyricsText ? { lyrics: lyricsText } : {}) };
+            });
+            return next;
+          });
+          window.dispatchEvent(new CustomEvent('aura_config_updated', {
+            detail: {
+              custom_song_names: { [r2_key]: { lyricsSynced: data.lrc, ...(lyricsText ? { lyrics: lyricsText } : {}) } }
+            }
+          }));
+        }
+      } else {
+        setKaraokeState(prev => ({ ...prev, [r2_key]: { busy: false, msg: `Error: ${data.error || 'desconocido'}` } }));
+      }
+    } catch (e: any) {
+      setKaraokeState(prev => ({ ...prev, [r2_key]: { busy: false, msg: `Error: ${e.message}` } }));
+    }
+  };
+
+  const autoPaceSongKaraoke = async (r2_key: string, numericId?: string | number, duration?: number, lyricsText?: string, introDelay?: number) => {
+    setKaraokeState(prev => ({ ...prev, [r2_key]: { busy: true, msg: 'Calculando ritmo CapCut…' } }));
+    try {
+      const res = await fetch(`${API_CONFIG.BASE_URL}/api/admin/songs/auto-pace-lyrics`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ r2_key, id: numericId, duration, lyrics: lyricsText, introDelay })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setKaraokeState(prev => ({ ...prev, [r2_key]: { busy: false, msg: `✓ Ritmo CapCut listo (${data.lineCount} versos)` } }));
+        if (data.lrc) {
+          const cleanKey = r2_key.replace(/^\//, '');
+          const noExtKey = cleanKey.replace(/\.[^/.]+$/, '');
+          setCustomSongNames(prev => {
+            const next = { ...prev };
+            [r2_key, cleanKey, noExtKey, String(numericId || '')].filter(Boolean).forEach(k => {
+              next[k] = { ...(next[k] || {}), lyricsSynced: data.lrc, ...(lyricsText ? { lyrics: lyricsText } : {}) };
+            });
+            return next;
+          });
+          window.dispatchEvent(new CustomEvent('aura_config_updated', {
+            detail: { custom_song_names: { [r2_key]: { lyricsSynced: data.lrc, ...(lyricsText ? { lyrics: lyricsText } : {}) } } }
+          }));
+        }
+      } else {
+        setKaraokeState(prev => ({ ...prev, [r2_key]: { busy: false, msg: `Error: ${data.error || 'desconocido'}` } }));
+      }
+    } catch (e: any) {
+      setKaraokeState(prev => ({ ...prev, [r2_key]: { busy: false, msg: `Error: ${e.message}` } }));
+    }
+  };
+
+  const aiAlignSongKaraoke = async (r2_key: string, numericId?: string | number, lyricsText?: string) => {
+    setKaraokeState(prev => ({ ...prev, [r2_key]: { busy: true, msg: 'Escuchando audio con IA Gemini…' } }));
+    try {
+      const res = await fetch(`${API_CONFIG.BASE_URL}/api/admin/songs/ai-align-lyrics`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ r2_key, id: numericId, lyrics: lyricsText })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setKaraokeState(prev => ({ ...prev, [r2_key]: { busy: false, msg: `✓ Karaoke IA Gemini listo (${data.lineCount} versos)` } }));
+        if (data.lrc) {
+          const cleanKey = r2_key.replace(/^\//, '');
+          const noExtKey = cleanKey.replace(/\.[^/.]+$/, '');
+          setCustomSongNames(prev => {
+            const next = { ...prev };
+            [r2_key, cleanKey, noExtKey, String(numericId || '')].filter(Boolean).forEach(k => {
+              next[k] = { ...(next[k] || {}), lyricsSynced: data.lrc, ...(lyricsText ? { lyrics: lyricsText } : {}) };
+            });
+            return next;
+          });
+          window.dispatchEvent(new CustomEvent('aura_config_updated', {
+            detail: { custom_song_names: { [r2_key]: { lyricsSynced: data.lrc, ...(lyricsText ? { lyrics: lyricsText } : {}) } } }
+          }));
+        }
+      } else {
+        setKaraokeState(prev => ({ ...prev, [r2_key]: { busy: false, msg: `Error: ${data.error || 'desconocido'}` } }));
+      }
+    } catch (e: any) {
+      setKaraokeState(prev => ({ ...prev, [r2_key]: { busy: false, msg: `Error: ${e.message}` } }));
+    }
+  };
+
+  const aiDetectSongHighlight = async (r2_key: string, numericId?: string | number, lyricsText?: string) => {
+    setKaraokeState(prev => ({ ...prev, [r2_key]: { busy: true, msg: 'Analizando estribillo con Gemini…' } }));
+    try {
+      const res = await fetch(`${API_CONFIG.BASE_URL}/api/admin/songs/ai-detect-highlight`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ r2_key, id: numericId, lyrics: lyricsText })
+      });
+      const data = await res.json();
+      if (data.success && data.highlight_start_sec != null) {
+        const startSec = Number(data.highlight_start_sec);
+        const secFmt = `${Math.floor(startSec / 60)}:${String(Math.floor(startSec % 60)).padStart(2, '0')}`;
+        setKaraokeState(prev => ({ ...prev, [r2_key]: { busy: false, msg: `✓ Estribillo IA en ${secFmt}` } }));
+        const cleanKey = r2_key.replace(/^\//, '');
+        const noExtKey = cleanKey.replace(/\.[^/.]+$/, '');
+        setCustomSongNames(prev => {
+          const next = { ...prev };
+          [r2_key, cleanKey, noExtKey, String(numericId || '')].filter(Boolean).forEach(k => {
+            next[k] = { ...(next[k] || {}), highlight_start_sec: startSec, highlight_reason: data.reason };
+          });
+          return next;
+        });
+      } else {
+        setKaraokeState(prev => ({ ...prev, [r2_key]: { busy: false, msg: `Error: ${data.error || 'desconocido'}` } }));
+      }
+    } catch (e: any) {
+      setKaraokeState(prev => ({ ...prev, [r2_key]: { busy: false, msg: `Error: ${e.message}` } }));
+    }
+  };
+
+  const [transcribingState, setTranscribingState] = useState<Record<string, { busy: boolean; msg?: string }>>({});
+
+  const aiTranscribeSongLyrics = async (songId: string, r2_key: string, numericId?: string | number) => {
+    setTranscribingState(prev => ({ ...prev, [songId]: { busy: true, msg: 'Escuchando con Gemini 2.5 Flash…' } }));
+    try {
+      const res = await fetch(`${API_CONFIG.BASE_URL}/api/admin/songs/ai-transcribe-lyrics`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ r2_key, id: numericId })
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (data.lyrics) handleUpdateSongLyrics(songId, data.lyrics);
+        if (data.meaning) handleUpdateSongMeaning(songId, data.meaning);
+        setTranscribingState(prev => ({ ...prev, [songId]: { busy: false, msg: '✓ ¡Letra y descripción poética generadas!' } }));
+      } else {
+        setTranscribingState(prev => ({ ...prev, [songId]: { busy: false, msg: `Error: ${data.error || 'No se pudo generar'}` } }));
+      }
+    } catch (e: any) {
+      setTranscribingState(prev => ({ ...prev, [songId]: { busy: false, msg: `Error: ${e.message}` } }));
+    }
+  };
+
+  const [batchSyncState, setBatchSyncState] = useState<{ running: boolean; current: number; total: number; songTitle: string; done: number }>({
+    running: false,
+    current: 0,
+    total: 0,
+    songTitle: '',
+    done: 0,
+  });
+
+  const batchSyncAllKaraokeWithAI = async (songsList: any[]) => {
+    if (batchSyncState.running) return;
+
+    const list = Array.isArray(songsList) ? songsList : [];
+    const unsynced = list.filter(s => {
+      const k = s.r2_key || s.id;
+      const l = s.lyrics || (customSongNames as any)[k]?.lyrics || (customSongNames as any)[s.id]?.lyrics;
+      const synced = (customSongNames as any)[k]?.lyricsSynced || (customSongNames as any)[s.id]?.lyricsSynced;
+      const hasTimestamps = Boolean(synced || (l && /\[\d+:\d+(?:\.\d+)?\]/.test(l)));
+      return Boolean(l && String(l).trim().length > 0 && !hasTimestamps);
+    });
+
+    if (unsynced.length === 0) {
+      alert('¡Todas las canciones que tienen letra ya cuentan con Karaoke sincronizado!');
+      return;
+    }
+
+    if (!confirm(`¿Quieres sincronizar automáticamente con IA el karaoke para ${unsynced.length} canciones pendientes?`)) {
+      return;
+    }
+
+    setBatchSyncState({ running: true, current: 0, total: unsynced.length, songTitle: '', done: 0 });
+
+    let count = 0;
+    for (let i = 0; i < unsynced.length; i++) {
+      const song = unsynced[i];
+      const key = song.r2_key || song.id;
+      const lyricsText = song.lyrics || (customSongNames as any)[key]?.lyrics;
+      setBatchSyncState(prev => ({ ...prev, current: i + 1, songTitle: song.title || key }));
+
+      try {
+        await aiAlignSongKaraoke(key, song.numericId || song.id, lyricsText);
+        count++;
+      } catch (e) {
+        console.error(`Error al procesar karaoke de ${key}:`, e);
+      }
+    }
+
+    setBatchSyncState({ running: false, current: unsynced.length, total: unsynced.length, songTitle: '', done: count });
+    alert(`¡Proceso de Karaoke IA completado con éxito! Se han sincronizado ${count} canciones.`);
+  };
+
+  // Top N usuarios más activos (votos + mensajes en directo) para poder premiarlos.
+  const fetchActiveUsers = async () => {
+    if (!token) return;
+    setIsLoadingActiveUsers(true);
+    try {
+      const res = await fetch(`${API_CONFIG.BASE_URL}/api/admin/users/active?limit=15`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('Failed to fetch active users');
+      const data = await res.json();
+      setActiveUsers(Array.isArray(data?.users) ? data.users : []);
+    } catch (err) {
+      console.error('Error al cargar usuarios activos:', err);
+    } finally {
+      setIsLoadingActiveUsers(false);
+    }
+  };
 
   const fetchUsers = async () => {
     if (!token) return;
@@ -1851,6 +3266,203 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
   const [savingSongId, setSavingSongId] = useState<string | null>(null);
   const [savedSongSuccessId, setSavedSongSuccessId] = useState<string | null>(null);
 
+  // ---- Subir canción nueva directamente desde el admin ----
+  // Antes había que subir el mp3 a mano por el dashboard de Cloudflare y
+  // luego pulsar "Sincronizar R2" para que le asignara un ID de catálogo.
+  // Esto hace las dos cosas en un solo paso: sube el archivo a la carpeta de
+  // la categoría seleccionada, le asigna ID numérico ya mismo (misma lógica
+  // que ese botón) y guarda título/artista/significado/letra si se rellenan.
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadTitle, setUploadTitle] = useState('');
+  const [uploadArtist, setUploadArtist] = useState('');
+  const [uploadMeaning, setUploadMeaning] = useState('');
+  const [uploadLyrics, setUploadLyrics] = useState('');
+  const [autoGenerateUploadAI, setAutoGenerateUploadAI] = useState<boolean>(true);
+  const [uploadingNewSong, setUploadingNewSong] = useState(false);
+  const [uploadNewSongResult, setUploadNewSongResult] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const handleUploadNewSong = async (cat: AdminCategory) => {
+    if (!uploadFile) {
+      setUploadNewSongResult({ ok: false, text: 'Elige antes un archivo de audio.' });
+      return;
+    }
+    const folder = (cat.r2_folder || '').split(',').map(f => f.trim()).filter(Boolean)[0];
+    if (!folder) {
+      setUploadNewSongResult({ ok: false, text: 'Esta categoría no tiene ninguna carpeta R2 asignada.' });
+      return;
+    }
+
+    const safeFileName = uploadFile.name;
+    const existing = (categorySongs[cat.id] || []).some(s => (s.id.split('/').pop() || '') === safeFileName);
+    if (existing) {
+      setUploadNewSongResult({ ok: false, text: `Ya existe un archivo llamado "${safeFileName}" en esta carpeta — cámbiale el nombre para no sobrescribirlo.` });
+      return;
+    }
+
+    setUploadingNewSong(true);
+    setUploadNewSongResult(null);
+    try {
+      const uploadRes = await fetch(`${API_CONFIG.BASE_URL}/api/admin/upload-song`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': uploadFile.type || 'audio/mpeg',
+          'X-File-Name': encodeURIComponent(safeFileName),
+          'X-Folder': encodeURIComponent(folder),
+          'Authorization': `Bearer ${token}`
+        },
+        body: uploadFile
+      });
+      const uploadData = await uploadRes.json();
+      if (!uploadRes.ok || !uploadData.success) throw new Error(uploadData.error || 'Error al subir el archivo');
+
+      const songId: string = uploadData.id;
+
+      const res = await fetch(`${API_CONFIG.BASE_URL}/api/list?carpeta=&t=${Date.now()}`);
+      const currentMaster: any = res.ok ? await res.json() : {};
+
+      const updatedCatalog = { ...(currentMaster.song_catalog || masterConfig?.song_catalog || {}) };
+      const r2Map = { ...(currentMaster.r2_key_to_id || masterConfig?.r2_key_to_id || {}) };
+      const cleanFilename = songId.split('/').pop() || songId;
+
+      let maxId = 0;
+      Object.keys(updatedCatalog).forEach(idStr => {
+        const n = parseInt(idStr, 10);
+        if (!isNaN(n) && n > maxId) maxId = n;
+      });
+      const numericId = String(maxId + 1).padStart(4, '0');
+
+      let finalTitle = uploadTitle.trim();
+      let finalArtist = uploadArtist.trim();
+      let finalMeaning = uploadMeaning.trim();
+      let finalLyrics = uploadLyrics.trim();
+      let finalSynced = '';
+
+      if (autoGenerateUploadAI) {
+        setUploadNewSongResult({ ok: true, text: `✓ ¡MP3 subido (ID ${numericId})! ✨ Escuchando audio con Gemini 2.5 Flash (Letra + Descripción)...` });
+        try {
+          const transRes = await fetch(`${API_CONFIG.BASE_URL}/api/admin/songs/ai-transcribe-lyrics`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ r2_key: songId, id: numericId })
+          });
+          const transData = await transRes.json();
+          if (transData.success) {
+            if (!finalLyrics && transData.lyrics) finalLyrics = transData.lyrics;
+            if (!finalMeaning && transData.meaning) finalMeaning = transData.meaning;
+
+            if (finalLyrics && !/\[\d+:\d+/.test(finalLyrics)) {
+              setUploadNewSongResult({ ok: true, text: `✓ Letra y Descripción listas ➔ 🎤 Alineando Karaoke con IA...` });
+              const alignRes = await fetch(`${API_CONFIG.BASE_URL}/api/admin/songs/ai-align-lyrics`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ r2_key: songId, id: numericId, lyrics: finalLyrics })
+              });
+              const alignData = await alignRes.json();
+              if (alignData.success && alignData.lrc) {
+                finalSynced = alignData.lrc;
+              }
+            }
+
+            setUploadNewSongResult({ ok: true, text: `✓ Karaoke listo ➔ 📰 Generando y publicando Entrada en el Blog...` });
+            try {
+              await fetch(`${API_CONFIG.BASE_URL}/api/admin/blog/generate-single`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ id: numericId, r2_key: songId, publish: true })
+              });
+              fetchBlogStories();
+            } catch (blogErr) {
+              console.warn("Auto blog story generation warning:", blogErr);
+            }
+          }
+        } catch (aiErr) {
+          console.warn("Auto AI enrichment warning:", aiErr);
+        }
+      }
+
+      updatedCatalog[numericId] = {
+        id: numericId,
+        r2_key: songId,
+        title: finalTitle,
+        artist: finalArtist,
+        meaning: finalMeaning,
+        lyrics: finalLyrics,
+        lyricsSynced: finalSynced || undefined,
+        sponsor: null
+      };
+      r2Map[songId] = numericId;
+      r2Map[cleanFilename] = numericId;
+
+      const songDataObj = {
+        title: finalTitle,
+        artist: finalArtist,
+        meaning: finalMeaning,
+        lyrics: finalLyrics,
+        lyricsSynced: finalSynced || undefined
+      };
+
+      const updatedCustomSongNames = {
+        ...(currentMaster.custom_song_names || {}),
+        [numericId]: songDataObj,
+        [songId]: songDataObj,
+        [cleanFilename]: songDataObj
+      };
+
+      const payload = {
+        ...currentMaster,
+        ...masterConfig,
+        custom_song_names: updatedCustomSongNames,
+        song_catalog: updatedCatalog,
+        r2_key_to_id: r2Map,
+        last_updated: new Date().toISOString(),
+        updated_by: 'admin-song-upload'
+      };
+
+      const saveRes = await fetch(`${API_CONFIG.BASE_URL}/api/admin/save-config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify(payload)
+      });
+      if (!saveRes.ok) throw new Error('El archivo se subió pero falló guardar su ficha — usa "Sincronizar R2" para completar el ID.');
+
+      setMasterConfig(payload);
+      setCustomSongNames(updatedCustomSongNames);
+
+      const newSongObj: Song = {
+        id: songId,
+        numericId: numericId,
+        title: finalTitle || cleanFilename.replace(/\.[^/.]+$/, ''),
+        artist: finalArtist || 'Aura Radio',
+        streamUrl: `${API_CONFIG.BASE_URL}/api/stream?key=${encodeURIComponent(songId)}`,
+        coverUrl: '',
+        category: cat.id,
+        folder: folder,
+        lyrics: finalLyrics,
+        lyricsSynced: finalSynced || undefined,
+        meaning: finalMeaning
+      };
+
+      setCategorySongs(prev => {
+        const currentList = prev[cat.id] || [];
+        const exists = currentList.some(s => s.id === songId || (s as any).r2_key === songId || (s as any).numericId === numericId);
+        if (exists) return prev;
+        return { ...prev, [cat.id]: [newSongObj, ...currentList] };
+      });
+
+      setUploadNewSongResult({
+        ok: true,
+        text: `🎉 ¡Subida e IA completadas! Canción asignada con ID ${numericId} — Letra, Descripción poética y Karaoke de Gemini 2.5 Flash listos.`
+      });
+      setUploadFile(null);
+      setUploadTitle(''); setUploadArtist(''); setUploadMeaning(''); setUploadLyrics('');
+      fetchSongsForCategory(cat);
+    } catch (e: any) {
+      setUploadNewSongResult({ ok: false, text: e.message || 'Error al subir la canción.' });
+    } finally {
+      setUploadingNewSong(false);
+    }
+  };
+
   const handleSaveSingleSong = async (songId: string) => {
     setSavingSongId(songId);
     try {
@@ -1900,14 +3512,38 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
         r2Map[cleanFilename] = numericId;
       }
 
+      const editedLyrics = songCustom.lyrics || (numericId ? updatedCatalog[numericId]?.lyrics : '');
+      let autoSyncedLrc = songCustom.lyricsSynced || (numericId ? updatedCatalog[numericId]?.lyricsSynced : '');
+
+      if (editedLyrics && editedLyrics.trim()) {
+        try {
+          const alignRes = await fetch(`${API_CONFIG.BASE_URL}/api/admin/songs/ai-align-lyrics`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ r2_key: songId, id: numericId, lyrics: editedLyrics })
+          });
+          const alignData = await alignRes.json();
+          if (alignData.success && alignData.lrc) {
+            autoSyncedLrc = alignData.lrc;
+          }
+        } catch (alignErr) {
+          console.warn("Auto realign on save warning:", alignErr);
+        }
+      }
+
       if (numericId) {
         updatedCustomSongNames[numericId] = {
           ...(updatedCustomSongNames[numericId] || {}),
           title: songCustom.title || (updatedCatalog[numericId]?.title || ''),
           artist: songCustom.artist || (updatedCatalog[numericId]?.artist || ''),
           meaning: songCustom.meaning || (updatedCatalog[numericId]?.meaning || ''),
-          lyrics: songCustom.lyrics || (updatedCatalog[numericId]?.lyrics || '')
+          lyrics: editedLyrics,
+          lyricsSynced: autoSyncedLrc || undefined
         };
+
+        updatedCustomSongNames[songId] = updatedCustomSongNames[numericId];
+        const cleanFilename = songId.split('/').pop() || songId;
+        updatedCustomSongNames[cleanFilename] = updatedCustomSongNames[numericId];
       }
 
       if (numericId && updatedCatalog[numericId]) {
@@ -1916,7 +3552,8 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
           title: songCustom.title || updatedCatalog[numericId].title || '',
           artist: songCustom.artist || updatedCatalog[numericId].artist || '',
           meaning: songCustom.meaning || updatedCatalog[numericId].meaning || '',
-          lyrics: songCustom.lyrics || updatedCatalog[numericId].lyrics || '',
+          lyrics: editedLyrics,
+          lyricsSynced: autoSyncedLrc || undefined,
           sponsor: sponsorCustom || updatedCatalog[numericId].sponsor || null
         };
       }
@@ -1939,8 +3576,7 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-User-Email': 'holasolonet@gmail.com',
-          'X-User-Role': 'superadmin'
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify(payload)
       });
@@ -1976,6 +3612,671 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
       console.error('Error saving single song:', err);
     } finally {
       setSavingSongId(null);
+    }
+  };
+
+  // ---- Borrado individual de canciones (doble control por nombre) ----
+  // deletingSongId = canción con el panel de confirmación abierto.
+  // deleteConfirmText = lo que el usuario teclea; debe coincidir con el nombre
+  // exacto del archivo para habilitar el borrado (a prueba de accidentes).
+  const [deletingSongId, setDeletingSongId] = useState<string | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deletingInProgress, setDeletingInProgress] = useState(false);
+
+  const handleDeleteSong = async (songId: string) => {
+    setDeletingInProgress(true);
+    try {
+      // 1. Borrar el archivo físico de R2 (+ limpiar ratings/reacciones en D1).
+      const delRes = await fetch(`${API_CONFIG.BASE_URL}/api/admin/delete-song`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ songId })
+      });
+      const delData = await delRes.json();
+      if (!delRes.ok || !delData.success) throw new Error(delData.error || 'Error al borrar el archivo');
+
+      // 2. Limpiar la config: catálogo, mapeos y metadata — pero ENTERRANDO el
+      //    ID numérico (deleted:true) para que nunca se reutilice y no choque
+      //    con enlaces viejos ya compartidos/indexados.
+      const res = await fetch(`${API_CONFIG.BASE_URL}/api/list?carpeta=&t=${Date.now()}`);
+      const currentMaster: any = res.ok ? await res.json() : {};
+
+      const catalog = { ...(currentMaster.song_catalog || masterConfig?.song_catalog || {}) };
+      const r2Map = { ...(currentMaster.r2_key_to_id || masterConfig?.r2_key_to_id || {}) };
+      const customNames = { ...(currentMaster.custom_song_names || {}) };
+      const sponsors = { ...(currentMaster.song_sponsors || {}) };
+
+      const cleanFilename = songId.split('/').pop() || songId;
+      const numericId = r2Map[songId] || r2Map[cleanFilename]
+        || Object.entries(catalog).find(([, e]: any) => e.r2_key === songId || (e.r2_key || '').endsWith(cleanFilename))?.[0];
+
+      // Enterrar el ID: se mantiene la clave numérica en el catálogo como lápida
+      // (sin r2_key, sin metadata) para que la lógica de asignación de nuevos IDs
+      // —que calcula el máximo del catálogo— nunca vuelva a repartir ese número.
+      if (numericId) {
+        catalog[numericId] = { id: numericId, r2_key: '', title: '', artist: '', meaning: '', lyrics: '', sponsor: null, deleted: true };
+        delete customNames[numericId];
+        delete sponsors[numericId];
+      }
+      // Quitar todos los mapeos ruta->id que apuntaban a esta canción.
+      Object.keys(r2Map).forEach(k => {
+        if (k === songId || k === cleanFilename || r2Map[k] === numericId) delete r2Map[k];
+      });
+      delete customNames[songId];
+      delete customNames[cleanFilename];
+      delete sponsors[songId];
+      delete sponsors[cleanFilename];
+
+      const payload = {
+        ...currentMaster,
+        ...masterConfig,
+        song_catalog: catalog,
+        r2_key_to_id: r2Map,
+        custom_song_names: customNames,
+        song_sponsors: sponsors,
+        last_updated: new Date().toISOString(),
+        updated_by: 'admin-song-delete'
+      };
+
+      const saveRes = await fetch(`${API_CONFIG.BASE_URL}/api/admin/save-config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify(payload)
+      });
+      if (!saveRes.ok) throw new Error('Archivo borrado, pero falló limpiar su ficha en la config.');
+
+      setMasterConfig(payload);
+
+      // 3. Quitarla de la lista visible al instante.
+      if (selectedAdminCategory) {
+        setCategorySongs(prev => ({
+          ...prev,
+          [selectedAdminCategory.id]: (prev[selectedAdminCategory.id] || []).filter(s => s.id !== songId)
+        }));
+      }
+
+      setDeletingSongId(null);
+      setDeleteConfirmText('');
+      window.dispatchEvent(new CustomEvent('aura-system-msg', { detail: { text: `Canción borrada: ${cleanFilename}`, user_name: 'SISTEMA' } }));
+    } catch (e: any) {
+      window.dispatchEvent(new CustomEvent('aura-system-msg', { detail: { text: `Error al borrar: ${e.message}`, user_name: 'SISTEMA' } }));
+    } finally {
+      setDeletingInProgress(false);
+    }
+  };
+
+  // ---- Redes sociales: puente con Facebook ----
+  //
+  // Los ids de canción se manejan como RUTA R2 (ej. "Huelva Suena/Corona de
+  // Olivos.mp3"), no como id numérico de catálogo. Es el mismo formato que usa
+  // song_ratings/song_reactions en D1 (de ahí sale el Top 20) y el que ya usaba
+  // Conteo real de temas por categoría desde el catálogo maestro (song_catalog),
+  // que siempre está cargado. El estado `categorySongs` solo se rellena al navegar
+  // cada categoría, por eso el "Desglose por Categorías" de Estadísticas salía a
+  // "0 temas" en todo: allí nunca se había cargado ninguna categoría.
+  const catalogFolderKeys = useMemo(() => {
+    return (Object.values(masterConfig?.song_catalog || {}) as any[])
+      .filter(s => s && !s.deleted)
+      .map(s => String(s.r2_key || s.id || ''))
+      .filter(Boolean);
+  }, [masterConfig]);
+
+  const countSongsInFolder = useMemo(() => {
+    return (r2_folder: string) => {
+      const folders = (r2_folder || '').split(',').map(f => f.trim()).filter(Boolean);
+      if (!folders.length) return 0;
+      return catalogFolderKeys.filter(k => folders.some(f => k.startsWith(f))).length;
+    };
+  }, [catalogFolderKeys]);
+
+  // Destacado para sus canciones. Mantener un único formato en todo el sistema
+  // social es lo que hace que el buffer anti-repetición funcione igual dé
+  // igual si el tema se publicó a mano, por Top 20 o desde la lista manual.
+  const socialSongOptions = useMemo(() => {
+    return Object.values(masterConfig?.song_catalog || {})
+      .map((s: any) => {
+        // Las lápidas de canciones borradas (deleted:true, sin r2_key) se
+        // ignoran: solo existen para retirar el ID, no son elegibles.
+        if (!s || s.deleted) return null;
+        const r2Key = s?.r2_key || s?.id;
+        if (!r2Key) return null;
+        const custom = (masterConfig?.custom_song_names || {})[s?.id]
+          || (masterConfig?.custom_song_names || {})[r2Key] || {};
+        const titulo = (custom.title || s?.title || '').trim() || generateEpicTitle(r2Key);
+        const tieneLetra = !!((custom.lyrics || s?.lyrics || '').trim());
+        return { id: r2Key, titulo, tieneLetra };
+      })
+      .filter((s): s is { id: string; titulo: string; tieneLetra: boolean } => !!s)
+      .sort((a, b) => Number(b.tieneLetra) - Number(a.tieneLetra) || a.titulo.localeCompare(b.titulo));
+  }, [masterConfig]);
+
+  const buildSocialLink = () => {
+    const base = 'https://auraradio.es';
+    if (!socialItemId) return '';
+    return socialLinkType === 'song'
+      ? `${base}/cancion/${socialItemId.split('/').map(encodeURIComponent).join('/')}`
+      : `${base}/categoria/${encodeURIComponent(socialItemId)}`;
+  };
+
+  const socialSelectedTitle = useMemo(() => {
+    if (!socialItemId) return '';
+    if (socialLinkType === 'category') {
+      const cat = categories.find(c => c.id === socialItemId);
+      return cat?.alias || cat?.name || socialItemId;
+    }
+    return socialSongOptions.find(s => s.id === socialItemId)?.titulo || '';
+  }, [socialItemId, socialLinkType, categories, socialSongOptions]);
+
+  const handleLoadFavoritesIntoCurated = () => {
+    try {
+      const rawFavs = localStorage.getItem('aura_favorites');
+      const favArray: string[] = rawFavs ? JSON.parse(rawFavs) : [];
+      if (!Array.isArray(favArray) || favArray.length === 0) {
+        alert("Aún no tienes canciones marcadas como Favoritas (❤️) en el reproductor.");
+        return;
+      }
+      const r2Map = masterConfig?.r2_key_to_id || {};
+      const matchedIds: string[] = [];
+      for (const fav of favArray) {
+        const matched = socialSongOptions.find(s => s.id === fav || s.id === r2Map[fav] || s.id.endsWith(fav));
+        if (matched && !matchedIds.includes(matched.id)) {
+          matchedIds.push(matched.id);
+        } else if (fav && !matchedIds.includes(fav)) {
+          matchedIds.push(fav);
+        }
+      }
+      setSocialConfig(prev => ({
+        ...prev,
+        manualItemIds: Array.from(new Set([...(prev.manualItemIds || []), ...matchedIds]))
+      }));
+    } catch (e) {
+      console.error("Error cargando favoritos en lista curada", e);
+    }
+  };
+
+  useEffect(() => {
+    if (socialConfig.manualItemIds && socialConfig.manualItemIds.length === 0 && socialSongOptions.length > 0) {
+      try {
+        const rawFavs = localStorage.getItem('aura_favorites');
+        if (rawFavs) {
+          const favArray: string[] = JSON.parse(rawFavs);
+          if (Array.isArray(favArray) && favArray.length > 0) {
+            const r2Map = masterConfig?.r2_key_to_id || {};
+            const matchedIds: string[] = [];
+            for (const fav of favArray) {
+              const matched = socialSongOptions.find(s => s.id === fav || s.id === r2Map[fav] || s.id.endsWith(fav));
+              if (matched && !matchedIds.includes(matched.id)) {
+                matchedIds.push(matched.id);
+              } else if (fav && !matchedIds.includes(fav)) {
+                matchedIds.push(fav);
+              }
+            }
+            if (matchedIds.length > 0) {
+              setSocialConfig(prev => ({ ...prev, manualItemIds: matchedIds }));
+            }
+          }
+        }
+      } catch (e) {}
+    }
+  }, [socialSongOptions]);
+
+  const handleCheckSocialStatus = async () => {
+    setSocialChecking(true);
+    setSocialResult(null);
+    try {
+      const res = await fetch(`${API_CONFIG.BASE_URL}/api/admin/social/status`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      setSocialStatus(await res.json());
+    } catch (e: any) {
+      setSocialStatus({ connected: false, reason: e.message });
+    } finally {
+      setSocialChecking(false);
+    }
+  };
+
+  const handlePublishToFacebook = async () => {
+    const link = buildSocialLink();
+    if (!link) {
+      setSocialResult({ ok: false, text: 'Elige antes qué canción o categoría publicar.' });
+      return;
+    }
+    setSocialPublishing(true);
+    setSocialResult(null);
+    try {
+      const res = await fetch(`${API_CONFIG.BASE_URL}/api/admin/social/publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({
+          link,
+          message: socialMessage || socialConfig.defaultMessage,
+          itemId: socialItemId,
+          itemType: socialLinkType,
+          title: socialSelectedTitle
+        })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || `El servidor respondió ${res.status}`);
+      setSocialResult({ ok: true, text: '¡Publicado en Facebook!', url: data.postUrl });
+      setSocialConfig(prev => ({
+        ...prev,
+        lastPostedAt: new Date().toISOString(),
+        lastPostId: data.postId,
+        lastPostedLink: link,
+        recentlyPostedIds: [socialItemId, ...(prev.recentlyPostedIds || [])].slice(0, 15),
+        postHistory: [
+          { timestamp: new Date().toISOString(), itemId: socialItemId, itemType: socialLinkType, title: socialSelectedTitle, postId: data.postId, postUrl: data.postUrl, auto: false },
+          ...(prev.postHistory || [])
+        ].slice(0, 30)
+      }));
+    } catch (e: any) {
+      setSocialResult({ ok: false, text: e.message });
+    } finally {
+      setSocialPublishing(false);
+    }
+  };
+
+  const handleRunSocialNow = async () => {
+    setSocialRunningNow(true);
+    setSocialRunResult(null);
+    try {
+      const res = await fetch(`${API_CONFIG.BASE_URL}/api/admin/social/run-now`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSocialRunResult({ ok: true, text: `¡Publicado! "${data.title}"` });
+        // Refrescamos desde el servidor: la publicación automática escribe
+        // directo en KV y el estado local de este navegador no se entera solo.
+        const fresh = await (await fetch(`${API_CONFIG.BASE_URL}/api/list?carpeta=&t=${Date.now()}`)).json();
+        if (fresh.social_config) setSocialConfig(prev => ({ ...prev, ...fresh.social_config }));
+      } else if (data.skipped) {
+        setSocialRunResult({ ok: false, text: `No se publicó: ${data.reason}` });
+      } else {
+        throw new Error(data.error || 'Fallo desconocido');
+      }
+    } catch (e: any) {
+      setSocialRunResult({ ok: false, text: e.message });
+    } finally {
+      setSocialRunningNow(false);
+    }
+  };
+
+  /** Prueba una franja del horario avanzado ahora mismo, sin esperar a que llegue su hora. */
+  const handleTestScheduleSlot = async (hour: number, mode: SocialSelectionMode) => {
+    setSocialScheduleTestingHour(hour);
+    setSocialScheduleTestResult(null);
+    try {
+      const res = await fetch(`${API_CONFIG.BASE_URL}/api/admin/social/run-now`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ mode })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSocialScheduleTestResult({ hour, ok: true, text: `¡Publicado! "${data.title}"` });
+        const fresh = await (await fetch(`${API_CONFIG.BASE_URL}/api/list?carpeta=&t=${Date.now()}`)).json();
+        if (fresh.social_config) setSocialConfig(prev => ({ ...prev, ...fresh.social_config }));
+      } else if (data.skipped) {
+        setSocialScheduleTestResult({ hour, ok: false, text: `No se publicó: ${data.reason}` });
+      } else {
+        throw new Error(data.error || 'Fallo desconocido');
+      }
+    } catch (e: any) {
+      setSocialScheduleTestResult({ hour, ok: false, text: e.message });
+    } finally {
+      setSocialScheduleTestingHour(null);
+    }
+  };
+
+  const SOCIAL_MODE_LABELS: Record<SocialSelectionMode, string> = {
+    featured: 'Destacado del día',
+    top20: 'Top 20',
+    trending: 'Más aplaudido',
+    manual: 'Mi lista curada'
+  };
+
+  /** Próxima hora libre (0-23) para añadir una franja nueva, sin pisar una ya usada. */
+  const nextFreeScheduleHour = useMemo(() => {
+    const used = new Set(socialConfig.schedule.map(s => s.hour));
+    for (let h = 0; h < 24; h++) if (!used.has(h)) return h;
+    return 0;
+  }, [socialConfig.schedule]);
+
+  const sortedSchedule = useMemo(
+    () => [...socialConfig.schedule].sort((a, b) => a.hour - b.hour),
+    [socialConfig.schedule]
+  );
+
+  const socialManualOptions = useMemo(() => {
+    if (!socialManualSearch.trim()) return socialSongOptions.slice(0, 40);
+    const q = socialManualSearch.toLowerCase();
+    return socialSongOptions.filter(s => s.titulo.toLowerCase().includes(q)).slice(0, 40);
+  }, [socialSongOptions, socialManualSearch]);
+
+  const socialNextPostEstimate = useMemo(() => {
+    if (!socialConfig.autoEnabled) return null;
+
+    if (socialConfig.schedule.length > 0) {
+      const madridHour = Number(
+        new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Madrid', hour: '2-digit', hourCycle: 'h23' }).format(new Date())
+      );
+      const hours = [...socialConfig.schedule].map(s => s.hour).sort((a, b) => a - b);
+      const alreadyDoneThisHour = hours.includes(madridHour) && socialConfig.lastAutoHourKey?.endsWith(`-${String(madridHour).padStart(2, '0')}`);
+      const next = hours.find(h => h > madridHour || (h === madridHour && !alreadyDoneThisHour));
+      const nextHour = next !== undefined ? next : hours[0];
+      const modeAtNext = socialConfig.schedule.find(s => s.hour === nextHour)?.mode;
+      const label = modeAtNext ? SOCIAL_MODE_LABELS[modeAtNext] : '';
+      return `Próxima franja: ${String(nextHour).padStart(2, '0')}:00 (hora de Madrid)${label ? ` — ${label}` : ''}.`;
+    }
+
+    if (!socialConfig.lastPostedAt) return 'En el próximo ciclo (aún no ha publicado nunca).';
+    const dueAt = new Date(socialConfig.lastPostedAt).getTime() + socialConfig.cadenceHours * 3_600_000;
+    const diffMs = dueAt - Date.now();
+    if (diffMs <= 0) return 'En el próximo ciclo horario (ya toca).';
+    const h = Math.floor(diffMs / 3_600_000);
+    const m = Math.round((diffMs % 3_600_000) / 60_000);
+    return `En aproximadamente ${h > 0 ? `${h}h ` : ''}${m}min.`;
+  }, [socialConfig.autoEnabled, socialConfig.lastPostedAt, socialConfig.cadenceHours, socialConfig.schedule, socialConfig.lastAutoHourKey]);
+
+  // ---- Plantillas y generador de tarjetas ----
+  const handleUploadTemplate = async (file: File) => {
+    if (!socialNewTemplateName.trim()) {
+      alert('Ponle un nombre a la plantilla antes de subirla.');
+      return;
+    }
+    setSocialTemplateUploading(true);
+    try {
+      const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+      const fileName = `${Date.now()}.${ext}`;
+      const res = await fetch(`${API_CONFIG.BASE_URL}/api/admin/social/upload`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': file.type || 'image/jpeg',
+          'X-File-Name': encodeURIComponent(fileName),
+          'X-Folder': 'templates',
+          'Authorization': `Bearer ${token}`
+        },
+        body: file
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Error al subir la plantilla');
+
+      const newTemplate: SocialImageTemplate = {
+        id: data.key,
+        name: socialNewTemplateName.trim(),
+        backgroundUrl: data.url,
+        textColor: socialNewTemplateColor,
+        position: socialNewTemplatePosition
+      };
+      const updated = [...socialConfig.imageTemplates, newTemplate];
+      setSocialConfig(prev => ({ ...prev, imageTemplates: updated }));
+      setSocialNewTemplateName('');
+
+      // Se persiste al instante (no espera al botón general de guardar) para
+      // no dejar el fichero recién subido en R2 sin referencia si se cierra
+      // la pestaña antes de tiempo.
+      await fetch(`${API_CONFIG.BASE_URL}/api/admin/social/templates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ imageTemplates: updated })
+      });
+    } catch (e: any) {
+      alert(`Error al subir la plantilla: ${e.message}`);
+    } finally {
+      setSocialTemplateUploading(false);
+    }
+  };
+
+  const handleDeleteTemplate = async (tpl: SocialImageTemplate) => {
+    if (!confirm(`¿Borrar la plantilla "${tpl.name}"? No afecta a las tarjetas ya generadas con ella.`)) return;
+    const updated = socialConfig.imageTemplates.filter(t => t.id !== tpl.id);
+    setSocialConfig(prev => ({ ...prev, imageTemplates: updated }));
+    if (cardTemplateId === tpl.id) setCardTemplateId('');
+    try {
+      await fetch(`${API_CONFIG.BASE_URL}/api/admin/social/delete-asset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ key: tpl.id })
+      });
+      await fetch(`${API_CONFIG.BASE_URL}/api/admin/social/templates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ imageTemplates: updated })
+      });
+    } catch (e) {
+      console.error('Error al borrar la plantilla:', e);
+    }
+  };
+
+  const handleImportTemplateFromUrl = async () => {
+    if (!socialNewTemplateName.trim()) {
+      alert('Ponle un nombre a la plantilla antes de importarla.');
+      return;
+    }
+    if (!socialImportUrl.trim()) {
+      alert('Pega la URL de la imagen primero.');
+      return;
+    }
+    setSocialImporting(true);
+    try {
+      const res = await fetch(`${API_CONFIG.BASE_URL}/api/admin/social/import-from-url`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ url: socialImportUrl.trim(), fileName: socialNewTemplateName.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Error al importar la imagen');
+
+      const newTemplate: SocialImageTemplate = {
+        id: data.key,
+        name: socialNewTemplateName.trim(),
+        backgroundUrl: data.url,
+        textColor: socialNewTemplateColor,
+        position: socialNewTemplatePosition
+      };
+      const updated = [...socialConfig.imageTemplates, newTemplate];
+      setSocialConfig(prev => ({ ...prev, imageTemplates: updated }));
+      setSocialNewTemplateName('');
+      setSocialImportUrl('');
+
+      await fetch(`${API_CONFIG.BASE_URL}/api/admin/social/templates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ imageTemplates: updated })
+      });
+    } catch (e: any) {
+      alert(`Error al importar la plantilla: ${e.message}`);
+    } finally {
+      setSocialImporting(false);
+    }
+  };
+
+  /**
+   * Reemplaza SOLO la imagen de una plantilla ya existente, conservando su
+   * puesto en el array (nombre, color, posición y — sobre todo — el índice
+   * que usa el hash del worker para elegir plantilla por canción). Así una
+   * canción que ya caía en "Neón Nocturno" sigue cayendo en ese mismo hueco,
+   * ahora con el arte nuevo, en vez de tener que re-mapear nada.
+   */
+  const handleReplaceTemplateImage = async (tpl: SocialImageTemplate) => {
+    if (!replaceUrlValue.trim()) return;
+    setSocialImporting(true);
+    try {
+      const res = await fetch(`${API_CONFIG.BASE_URL}/api/admin/social/import-from-url`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ url: replaceUrlValue.trim(), fileName: tpl.name })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Error al importar la imagen');
+
+      const oldKey = tpl.id;
+      const updated = socialConfig.imageTemplates.map(t =>
+        t.id === oldKey ? { ...t, id: data.key, backgroundUrl: data.url } : t
+      );
+      setSocialConfig(prev => ({ ...prev, imageTemplates: updated }));
+      setReplacingTemplateId(null);
+      setReplaceUrlValue('');
+
+      await fetch(`${API_CONFIG.BASE_URL}/api/admin/social/templates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ imageTemplates: updated })
+      });
+
+      // Limpieza del fichero viejo en R2. Best-effort: si falla, solo queda
+      // un archivo huérfano sin coste real, no rompe nada.
+      fetch(`${API_CONFIG.BASE_URL}/api/admin/social/delete-asset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ key: oldKey })
+      }).catch(() => {});
+    } catch (e: any) {
+      alert(`Error al reemplazar la imagen: ${e.message}`);
+    } finally {
+      setSocialImporting(false);
+    }
+  };
+
+  const selectedTemplate = useMemo(
+    () => socialConfig.imageTemplates.find(t => t.id === cardTemplateId) || null,
+    [socialConfig.imageTemplates, cardTemplateId]
+  );
+
+  const cardSelectedSong = useMemo(() => {
+    if (!cardSongId) return null;
+    const catalogEntry = (Object.values(masterConfig?.song_catalog || {}) as any[])
+      .find((s: any) => (s?.r2_key || s?.id) === cardSongId);
+    const custom = (masterConfig?.custom_song_names || {})[cardSongId]
+      || (catalogEntry ? (masterConfig?.custom_song_names || {})[catalogEntry.id] : null) || {};
+    const title = (custom.title || catalogEntry?.title || '').trim() || generateEpicTitle(cardSongId);
+    const lyrics = (custom.lyrics || catalogEntry?.lyrics || '').trim();
+    const firstLine = lyrics.split('\n').map((l: string) => l.trim()).find((l: string) => l.length > 0) || '';
+    const folder = cardSongId.includes('/') ? cardSongId.split('/').slice(0, -1).join('/') : '';
+    const cat = categories.find(c =>
+      (c.r2_folder || '').split(',').map((f: string) => f.trim().toLowerCase()).includes(folder.toLowerCase())
+    );
+    return { title, firstLine, categoryName: cat?.alias || cat?.name || '' };
+  }, [cardSongId, masterConfig, categories]);
+
+  // El pie de foto se sugiere del primer verso, pero es editable: si el admin
+  // ya lo tocó para esta misma canción no lo pisamos en cada re-render.
+  useEffect(() => {
+    setCardCaption(cardSelectedSong?.firstLine || '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cardSongId]);
+
+  // Vista previa = el mismo canvas que luego se exporta a JPEG, a resolución
+  // real (1080×1080), solo que mostrado más pequeño en pantalla vía CSS.
+  useEffect(() => {
+    const canvas = cardPreviewCanvasRef.current;
+    if (!canvas || !cardSelectedSong) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    let cancelled = false;
+    const opts = {
+      title: cardSelectedSong.title,
+      categoryName: cardSelectedSong.categoryName,
+      caption: cardCaption,
+      textColor: selectedTemplate?.textColor || '#ffffff',
+      position: selectedTemplate?.position || 'bottom' as const
+    };
+
+    if (selectedTemplate?.backgroundUrl) {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => { if (!cancelled) drawSocialCard(ctx, img, opts); };
+      img.onerror = () => { if (!cancelled) drawSocialCard(ctx, null, opts); };
+      img.src = selectedTemplate.backgroundUrl;
+    } else {
+      drawSocialCard(ctx, null, opts);
+    }
+
+    return () => { cancelled = true; };
+  }, [cardSelectedSong, cardCaption, selectedTemplate]);
+
+  const handleGenerateCard = async () => {
+    const canvas = cardPreviewCanvasRef.current;
+    if (!canvas || !cardSongId || !cardSelectedSong) {
+      setCardResult({ ok: false, text: 'Elige antes una canción.' });
+      return;
+    }
+    setCardGenerating(true);
+    setCardResult(null);
+    try {
+      const blob: Blob = await new Promise((resolve, reject) => {
+        canvas.toBlob(b => b ? resolve(b) : reject(new Error('No se pudo generar la imagen')), 'image/jpeg', 0.92);
+      });
+
+      const safeFileName = `${cardSongId.split('/').pop()?.replace(/\.[^/.]+$/, '') || 'tarjeta'}-${Date.now()}.jpg`;
+      const uploadRes = await fetch(`${API_CONFIG.BASE_URL}/api/admin/social/upload`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'image/jpeg',
+          'X-File-Name': encodeURIComponent(safeFileName),
+          'X-Folder': 'cards',
+          'Authorization': `Bearer ${token}`
+        },
+        body: blob
+      });
+      const uploadData = await uploadRes.json();
+      if (!uploadRes.ok || !uploadData.success) throw new Error(uploadData.error || 'Error al subir la tarjeta');
+
+      const cardRes = await fetch(`${API_CONFIG.BASE_URL}/api/admin/social/card`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ songId: cardSongId, cardUrl: uploadData.url })
+      });
+      const cardData = await cardRes.json();
+      if (!cardRes.ok || !cardData.success) throw new Error(cardData.error || 'Error al asociar la tarjeta a la canción');
+
+      setCardResult({ ok: true, text: '¡Tarjeta generada y asociada! Ya es el og:image de esta canción.', url: uploadData.url });
+      setIgResult(null);
+      setIgCaption(prev => prev || `${cardSelectedSong.title}\n\n${socialConfig.defaultMessage}`);
+    } catch (e: any) {
+      setCardResult({ ok: false, text: e.message });
+    } finally {
+      setCardGenerating(false);
+    }
+  };
+
+  const handlePublishToInstagram = async () => {
+    if (!cardResult?.ok || !cardResult.url) {
+      setIgResult({ ok: false, text: 'Genera una tarjeta primero.' });
+      return;
+    }
+    setIgPublishing(true);
+    setIgResult(null);
+    try {
+      const res = await fetch(`${API_CONFIG.BASE_URL}/api/admin/social/publish-instagram`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({
+          imageUrl: cardResult.url,
+          caption: igCaption,
+          itemId: cardSongId,
+          itemType: 'song',
+          title: cardSelectedSong?.title || ''
+        })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || `El servidor respondió ${res.status}`);
+      setIgResult({ ok: true, text: '¡Publicado en Instagram!', url: data.postUrl });
+      setSocialConfig(prev => ({
+        ...prev,
+        recentlyPostedIds: [cardSongId, ...(prev.recentlyPostedIds || [])].slice(0, 15),
+        postHistory: [
+          { timestamp: new Date().toISOString(), itemId: cardSongId, itemType: 'song', title: cardSelectedSong?.title || '', postId: data.postId, postUrl: data.postUrl, auto: false, platform: 'instagram' },
+          ...(prev.postHistory || [])
+        ].slice(0, 30)
+      }));
+    } catch (e: any) {
+      setIgResult({ ok: false, text: e.message });
+    } finally {
+      setIgPublishing(false);
     }
   };
 
@@ -2073,8 +4374,7 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-User-Email': 'holasolonet@gmail.com',
-          'X-User-Role': 'superadmin'
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify(payload)
       });
@@ -2100,7 +4400,7 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
     let allCatSongs: Song[] = [];
     try {
       for (const folder of folders) {
-        const response = await fetch(`${API_CONFIG.BASE_URL}/api/list?carpeta=${encodeURIComponent(folder)}`);
+        const response = await fetch(`${API_CONFIG.BASE_URL}/api/list?carpeta=${encodeURIComponent(folder)}&t=${Date.now()}`);
         if (response.ok) {
           const data = await response.json();
           if (data && Array.isArray(data.songs)) {
@@ -2424,7 +4724,13 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
   };
 
   const isTenantAdmin = user?.email && tenants.some(t => t.adminEmail && t.adminEmail.toLowerCase() === user.email.toLowerCase());
-  const hasAccess = isMasterAdmin || isTenantAdmin;
+
+  // Panel restringido a superadmin. El servidor ya solo acepta escrituras de
+  // superadmin, así que dejar entrar a un admin de tenant solo serviría para
+  // enseñarle la configuración de las demás emisoras y darle un 403 al guardar.
+  // Cuando exista el panel reducido de tenant (banners + mostrar/ocultar
+  // categorías) se volverá a abrir con su propio alcance.
+  const hasAccess = isMasterAdmin;
 
   if (!user || !hasAccess) {
     return (
@@ -2604,7 +4910,13 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
               >
                 <Activity className="w-4 h-4" /> Estadísticas
               </button>
-              <button 
+              <button
+                onClick={() => setActiveTab('blog')}
+                className={`px-3 md:px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'blog' ? 'bg-accent text-white shadow-lg' : 'text-text-secondary hover:text-white'}`}
+              >
+                <FileText className="w-4 h-4" /> Blog
+              </button>
+              <button
                 onClick={() => setActiveTab('seo')}
                 className={`px-3 md:px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'seo' ? 'bg-accent text-white shadow-lg' : 'text-text-secondary hover:text-white'}`}
               >
@@ -2624,10 +4936,11 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
               </button>
               <button 
                 onClick={() => setActiveTab('podcasts')}
-                className={`px-3 md:px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'podcasts' ? 'bg-accent text-white shadow-lg' : 'text-text-secondary hover:text-white'}`}
+                className={`px-3 md:px-4 py-2 rounded-lg text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap border ${activeTab === 'podcasts' ? 'bg-gradient-to-r from-purple-600 to-accent border-purple-400 text-white shadow-lg shadow-purple-500/30' : 'bg-purple-500/10 border-purple-500/20 text-purple-200 hover:text-white hover:bg-purple-500/20'}`}
               >
-                <Mic className="w-4 h-4" /> Podcasts
+                <Mic className="w-4 h-4 text-purple-300 animate-pulse" /> 🎙️ Podcasts NotebookLM
               </button>
+
               <button 
                 onClick={() => setActiveTab('widget')}
                 className={`px-3 md:px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'widget' ? 'bg-accent text-white shadow-lg' : 'text-text-secondary hover:text-white'}`}
@@ -2649,7 +4962,13 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
               >
                 <Megaphone className="w-4 h-4 animate-pulse" /> Interstitials Ad
               </button>
-              <button 
+              <button
+                onClick={() => { setActiveTab('redes'); if (!socialStatus) handleCheckSocialStatus(); }}
+                className={`px-3 md:px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'redes' ? 'bg-accent text-white shadow-lg' : 'text-text-secondary hover:text-white'}`}
+              >
+                <Share2 className="w-4 h-4" /> Redes
+              </button>
+              <button
                 onClick={() => setActiveTab('moderation')}
                 className={`px-3 md:px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'moderation' ? 'bg-accent text-white shadow-lg' : 'text-text-secondary hover:text-white'}`}
               >
@@ -2689,11 +5008,27 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
                 <Brain className="w-4 h-4 text-purple-400" /> Cerebro
               </button>
               {user?.email === 'holasolonet@gmail.com' && (
-                <button 
+                <button
                   onClick={() => setActiveTab('dsp')}
                   className={`px-3 md:px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'dsp' ? 'bg-accent text-white shadow-lg' : 'text-text-secondary hover:text-white'}`}
                 >
                   <Zap className="w-4 h-4" /> Agente DSP
+                </button>
+              )}
+              {user?.email === 'holasolonet@gmail.com' && (
+                <button
+                  onClick={() => { setActiveTab('salud'); fetchClientErrors(); }}
+                  className={`px-3 md:px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'salud' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-500/30' : 'text-text-secondary hover:text-white'}`}
+                >
+                  <Activity className="w-4 h-4 text-emerald-400" /> Salud
+                </button>
+              )}
+              {user?.email === 'holasolonet@gmail.com' && (
+                <button
+                  onClick={() => setActiveTab('radar')}
+                  className={`px-3 md:px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'radar' ? 'bg-fuchsia-600 text-white shadow-lg shadow-fuchsia-500/30' : 'text-text-secondary hover:text-white'}`}
+                >
+                  <Sparkles className="w-4 h-4 text-fuchsia-400" /> Radar
                 </button>
               )}
             </div>
@@ -3390,7 +5725,11 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {Array.isArray(categories) && categories.filter(c => c && c.id).map((cat, idx) => {
+                  {Array.isArray(categories) && [...categories]
+                    .filter(c => c && c.id)
+                    .sort((a, b) => (a.name || a.alias || '').toString().localeCompare((b.name || b.alias || '').toString(), 'es', { sensitivity: 'base' }))
+                    .map((cat, idx) => {
+
                     const isCatExpanded = expandedCatIds.has(cat.id);
                     return (
                     <div key={cat.id || idx} className="bg-bg-surface border border-border rounded-2xl overflow-hidden group transition-all duration-200">
@@ -3575,7 +5914,11 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
               <div className="space-y-3">
                 <span className="text-[10px] font-black text-accent uppercase tracking-wider">Categoría / Carpeta R2</span>
                 <div className="flex flex-wrap gap-2">
-                  {categories.filter(c => c.r2_folder).map((cat) => {
+                  {[...categories]
+                    .filter(c => c.r2_folder)
+                    .sort((a, b) => (a.name || a.alias || '').toString().localeCompare((b.name || b.alias || '').toString(), 'es', { sensitivity: 'base' }))
+                    .map((cat) => {
+
                     const cleanName = formatCategoryName(cat.name);
                     const isSelected = selectedAdminCategory?.id === cat.id;
                     const isLoadingThis = loadingSongsCatId === cat.id;
@@ -3624,6 +5967,92 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
                     </div>
                   </div>
 
+                  {/* Subir canción nueva a esta carpeta */}
+                  <div className="p-4 bg-bg-surface border border-dashed border-accent/30 rounded-2xl space-y-3">
+                    <span className="text-[10px] font-black text-accent uppercase tracking-wider flex items-center gap-2">
+                      <Upload className="w-3.5 h-3.5" /> Subir canción nueva a {formatCategoryName(selectedAdminCategory.name)}
+                    </span>
+                    <p className="text-[10px] text-text-secondary">
+                      Sube el mp3 aquí en vez de por el dashboard de Cloudflare: se guarda en la carpeta correcta y ya sale con su ID de catálogo asignado, sin pasos aparte.
+                    </p>
+
+                    <label className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-bold transition-all border border-dashed ${uploadingNewSong ? 'bg-white/5 text-text-secondary border-white/10 cursor-wait' : 'bg-white/5 hover:bg-white/10 border-accent/30 text-white cursor-pointer'}`}>
+                      {uploadingNewSong ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Music className="w-3.5 h-3.5" />}
+                      {uploadFile ? uploadFile.name : 'Elegir archivo de audio (mp3, m4a, wav)'}
+                      <input
+                        type="file"
+                        accept="audio/mpeg,audio/mp4,audio/wav,.mp3,.m4a,.wav"
+                        className="hidden"
+                        disabled={uploadingNewSong}
+                        onChange={e => {
+                          const file = e.target.files?.[0];
+                          if (file) setUploadFile(file);
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <input
+                        value={uploadTitle}
+                        onChange={e => setUploadTitle(e.target.value)}
+                        placeholder="Título (opcional)"
+                        disabled={uploadingNewSong}
+                        className="bg-bg-deep border border-border rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent disabled:opacity-50"
+                      />
+                      <input
+                        value={uploadArtist}
+                        onChange={e => setUploadArtist(e.target.value)}
+                        placeholder="Artista (opcional)"
+                        disabled={uploadingNewSong}
+                        className="bg-bg-deep border border-border rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent disabled:opacity-50"
+                      />
+                    </div>
+                    <textarea
+                      value={uploadMeaning}
+                      onChange={e => setUploadMeaning(e.target.value)}
+                      placeholder="Significado (opcional)"
+                      rows={2}
+                      disabled={uploadingNewSong}
+                      className="w-full bg-bg-deep border border-border rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent resize-none disabled:opacity-50"
+                    />
+                    <textarea
+                      value={uploadLyrics}
+                      onChange={e => setUploadLyrics(e.target.value)}
+                      placeholder="Letra (opcional)"
+                      rows={3}
+                      disabled={uploadingNewSong}
+                      className="w-full bg-bg-deep border border-border rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent resize-none disabled:opacity-50"
+                    />
+
+                    <label className="flex items-center gap-2.5 text-[11px] font-bold text-purple-200 bg-purple-900/20 border border-purple-500/30 px-3 py-2 rounded-xl cursor-pointer hover:bg-purple-900/30 transition-all select-none">
+                      <input
+                        type="checkbox"
+                        checked={autoGenerateUploadAI}
+                        onChange={e => setAutoGenerateUploadAI(e.target.checked)}
+                        disabled={uploadingNewSong}
+                        className="accent-purple-500 w-4 h-4 rounded cursor-pointer"
+                      />
+                      <Sparkles className="w-3.5 h-3.5 text-yellow-300 animate-pulse flex-shrink-0" />
+                      <span>Generar Letra, Descripción poética y Karaoke con IA Gemini 2.5 Flash automáticamente al subir</span>
+                    </label>
+
+                    <button
+                      onClick={() => handleUploadNewSong(selectedAdminCategory)}
+                      disabled={uploadingNewSong || !uploadFile}
+                      className="w-full py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed bg-gradient-to-r from-accent via-purple-600 to-indigo-600 hover:from-accent/90 hover:to-indigo-500 text-white transition-all shadow-lg shadow-purple-900/30 border border-purple-400/30"
+                    >
+                      {uploadingNewSong ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                      {uploadingNewSong ? 'Subiendo...' : 'Subir y asignar ID'}
+                    </button>
+
+                    {uploadNewSongResult && (
+                      <div className={`p-2.5 rounded-xl text-[11px] border ${uploadNewSongResult.ok ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-red-500/10 border-red-500/30 text-red-300'}`}>
+                        {uploadNewSongResult.text}
+                      </div>
+                    )}
+                  </div>
+
                   {/* Songs list */}
                   {loadingSongsCatId === selectedAdminCategory.id ? (
                     <div className="py-20 text-center space-y-3">
@@ -3647,10 +6076,8 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
                         const origArtist = (song.artist || '').toLowerCase();
                         return filename.includes(term) || customTitle.includes(term) || customArtist.includes(term) || origTitle.includes(term) || origArtist.includes(term);
                       }).map((song) => {
-                        const custom = customSongNames[song.id] || { title: '', artist: '' };
-                        const sponsor = songSponsors[song.id] || { name: '', link: '', bannerUrl: '' };
-                        
                         const cleanFilename = song.id.split('/').pop() || song.id;
+                        const noExtFilename = cleanFilename.replace(/\.[^/.]+$/, '');
                         const r2Map = masterConfig?.r2_key_to_id || {};
                         const catalog = masterConfig?.song_catalog || {};
 
@@ -3659,6 +6086,14 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
                           || Object.entries(catalog).find(([_, entry]: any) => entry.r2_key === song.id || (entry.r2_key || '').endsWith(cleanFilename))?.[0];
 
                         const catalogEntry = numericId ? catalog[numericId] : null;
+                        const custom = customSongNames[song.id] 
+                          || customSongNames[cleanFilename] 
+                          || customSongNames[noExtFilename]
+                          || (numericId ? customSongNames[numericId] : null)
+                          || catalogEntry 
+                          || { title: '', artist: '' };
+
+                        const sponsor = songSponsors[song.id] || { name: '', link: '', bannerUrl: '' };
                         const hasLyricsInKv = !!((custom as any).lyrics || catalogEntry?.lyrics);
 
                         return (
@@ -3734,6 +6169,73 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
                               {(custom as any).lyrics && (
                                 <p className="text-[9px] text-accent/70">{((custom as any).lyrics as string).length} caracteres · disponible en visualizador ✓</p>
                               )}
+                              {hasLyricsInKv && (
+                                <div className="flex items-center gap-2 flex-wrap pt-1.5">
+                                  <button
+                                    onClick={(e) => { e.preventDefault(); alignSongKaraoke(song.id, numericId, (custom as any).lyrics || catalogEntry?.lyrics); }}
+                                    disabled={karaokeState[song.id]?.busy}
+                                    title="La IA escucha el audio MP3 real, detecta la voz del cantante y sincroniza el karaoke automáticamente sin trabajo manual"
+                                    className="px-4 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white transition-all disabled:opacity-50 cursor-pointer flex items-center gap-1.5 shadow-lg shadow-purple-900/30 border border-purple-400/30"
+                                  >
+                                    <Sparkles className="w-3.5 h-3.5" />
+                                    <span>✨ Sincronizar Karaoke con IA</span>
+                                  </button>
+
+                                  {(() => {
+                                    const songTitleClean = (custom.title || song.title || cleanFilename.replace(/\.[^/.]+$/, '')).toLowerCase().trim();
+                                    const r2KeyClean = song.id.toLowerCase().trim();
+                                    const storyMatch = blogStories.find(s => 
+                                      (s.r2_key && s.r2_key.toLowerCase().trim() === r2KeyClean) ||
+                                      (s.id && String(s.id) === String(numericId)) ||
+                                      (s.numId && String(s.numId) === String(numericId)) ||
+                                      (s.title && s.title.toLowerCase().trim() === songTitleClean)
+                                    );
+
+                                    if (storyMatch?.status === 'published') {
+                                      return (
+                                        <a
+                                          href={`/blog/${storyMatch.slug}`}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="px-3 py-2 rounded-xl text-xs font-bold bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 border border-emerald-500/40 transition-all flex items-center gap-1.5"
+                                        >
+                                          <Check className="w-3.5 h-3.5" />
+                                          <span>Publicado en Blog ↗</span>
+                                        </a>
+                                      );
+                                    } else if (storyMatch) {
+                                      return (
+                                        <button
+                                          onClick={(e) => { e.preventDefault(); toggleBlogPublish(storyMatch.id, true); }}
+                                          className="px-3 py-2 rounded-xl text-xs font-bold bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 border border-amber-500/40 transition-all cursor-pointer flex items-center gap-1.5"
+                                        >
+                                          <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
+                                          <span>🚀 Publicar Borrador</span>
+                                        </button>
+                                      );
+                                    } else {
+                                      return (
+                                        <button
+                                          onClick={(e) => { e.preventDefault(); handleGenerateSingleBlogStory(song.id, numericId); }}
+                                          disabled={blogGeneratingSongId === song.id}
+                                          title="Genera con IA una historia en primera persona y la publica automáticamente en el blog"
+                                          className="px-3 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white transition-all disabled:opacity-50 cursor-pointer flex items-center gap-1.5 shadow-lg shadow-sky-900/30 border border-sky-400/30"
+                                        >
+                                          {blogGeneratingSongId === song.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />}
+                                          <span>📰 Publicar en Blog</span>
+                                        </button>
+                                      );
+                                    }
+                                  })()}
+
+                                  {((custom as any).lyricsSynced || catalogEntry?.lyricsSynced) && !karaokeState[song.id]?.msg && (
+                                    <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/20">✓ Karaoke activo</span>
+                                  )}
+                                  {karaokeState[song.id]?.msg && (
+                                    <span className={`text-[10px] ${karaokeState[song.id].msg?.startsWith('Error') ? 'text-red-400' : 'text-sky-400'}`}>{karaokeState[song.id].msg}</span>
+                                  )}
+                                </div>
+                              )}
                             </div>
 
                             {/* Sponsor Sub-section */}
@@ -3793,32 +6295,110 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
                                 )}
                               </div>
 
-                              <button
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  triggerHaptic(10);
-                                  handleSaveSingleSong(song.id);
-                                }}
-                                disabled={savingSongId === song.id}
-                                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-accent hover:bg-accent/80 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-md active:scale-95 cursor-pointer disabled:opacity-50"
-                              >
-                                {savingSongId === song.id ? (
-                                  <>
-                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                    <span>Guardando...</span>
-                                  </>
-                                ) : savedSongSuccessId === song.id ? (
-                                  <>
-                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
-                                    <span className="text-emerald-200">¡Guardado en KV!</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Save className="w-3.5 h-3.5" />
-                                    <span>Guardar Tema</span>
-                                  </>
-                                )}
-                              </button>
+                               <div className="flex items-center gap-2">
+                                 {transcribingState[song.id]?.msg && (
+                                   <span className={`text-[10px] font-bold ${transcribingState[song.id].msg?.startsWith('Error') ? 'text-red-400' : 'text-purple-300 bg-purple-500/10 px-2 py-1 rounded-lg border border-purple-500/20'}`}>
+                                     {transcribingState[song.id].msg}
+                                   </span>
+                                 )}
+
+                                 <button
+                                   onClick={(e) => {
+                                     e.preventDefault();
+                                     triggerHaptic(10);
+                                     aiTranscribeSongLyrics(song.id, song.id, numericId);
+                                   }}
+                                   disabled={transcribingState[song.id]?.busy}
+                                   title="Escucha el MP3 en R2 con Gemini 2.5 Flash y genera la letra transcrita y su descripción poética en una sola pasada"
+                                   className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-600/30 to-indigo-600/30 hover:from-purple-600/50 hover:to-indigo-600/50 text-purple-200 border border-purple-500/40 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+                                 >
+                                   {transcribingState[song.id]?.busy ? (
+                                     <>
+                                       <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-300" />
+                                       <span>Escuchando...</span>
+                                     </>
+                                   ) : (
+                                     <>
+                                       <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
+                                       <span>✨ Generar Letra IA</span>
+                                     </>
+                                   )}
+                                 </button>
+
+                                 <button
+                                   onClick={(e) => {
+                                     e.preventDefault();
+                                     triggerHaptic(10);
+                                     handleSaveSingleSong(song.id);
+                                   }}
+                                   disabled={savingSongId === song.id}
+                                   className="flex items-center gap-1.5 px-3.5 py-1.5 bg-accent hover:bg-accent/80 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-md active:scale-95 cursor-pointer disabled:opacity-50"
+                                 >
+                                   {savingSongId === song.id ? (
+                                     <>
+                                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                       <span>Guardando...</span>
+                                     </>
+                                   ) : savedSongSuccessId === song.id ? (
+                                     <>
+                                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
+                                       <span className="text-emerald-200">¡Guardado en KV!</span>
+                                     </>
+                                   ) : (
+                                     <>
+                                       <Save className="w-3.5 h-3.5" />
+                                       <span>Guardar Tema</span>
+                                     </>
+                                   )}
+                                 </button>
+                               </div>
+                             </div>
+
+                            {/* Borrar canción — doble control: abrir panel + teclear el nombre exacto */}
+                            <div className="pt-3 mt-1 border-t border-red-500/10">
+                              {deletingSongId === song.id ? (
+                                <div className="bg-red-500/5 border border-red-500/30 rounded-xl p-3 space-y-2">
+                                  <p className="text-[11px] text-red-300 font-bold flex items-center gap-1.5">
+                                    <AlertCircle className="w-3.5 h-3.5" /> Borrado permanente — no se puede deshacer
+                                  </p>
+                                  <p className="text-[10px] text-text-secondary">
+                                    Para confirmar, escribe el nombre exacto del archivo:
+                                    <span className="block mt-1 font-mono text-white/90 bg-black/30 px-2 py-1 rounded select-all break-all">{cleanFilename}</span>
+                                  </p>
+                                  <input
+                                    autoFocus
+                                    value={deleteConfirmText}
+                                    onChange={e => setDeleteConfirmText(e.target.value)}
+                                    placeholder="Escribe el nombre del archivo…"
+                                    disabled={deletingInProgress}
+                                    className="w-full bg-bg-deep border border-red-500/30 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-red-500 disabled:opacity-50"
+                                  />
+                                  <div className="flex gap-2">
+                                    <button
+                                      onClick={() => handleDeleteSong(song.id)}
+                                      disabled={deletingInProgress || deleteConfirmText.trim() !== cleanFilename}
+                                      className="flex-1 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white text-[11px] font-black uppercase tracking-wider cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+                                    >
+                                      {deletingInProgress ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                                      {deletingInProgress ? 'Borrando…' : 'Borrar definitivamente'}
+                                    </button>
+                                    <button
+                                      onClick={() => { setDeletingSongId(null); setDeleteConfirmText(''); }}
+                                      disabled={deletingInProgress}
+                                      className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white text-[11px] font-bold cursor-pointer disabled:opacity-50"
+                                    >
+                                      Cancelar
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => { setDeletingSongId(song.id); setDeleteConfirmText(''); }}
+                                  className="flex items-center gap-1.5 text-[10px] text-red-400/80 hover:text-red-300 font-bold uppercase tracking-wider transition-colors cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" /> Borrar canción
+                                </button>
+                              )}
                             </div>
                           </div>
                         );
@@ -4926,8 +7506,348 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
                 </div>
               </div>
 
+              {/* ⚡ PARRILLA DE GENERACIÓN SEMIAUTOMÁTICA CON IA (GEMINI 2.5 + NOTEBOOKLM) */}
+              <div className="bg-gradient-to-br from-bg-surface via-bg-surface to-purple-950/20 border-2 border-accent/50 p-6 md:p-8 rounded-3xl space-y-6 shadow-[0_0_50px_rgba(138,43,226,0.15)] relative overflow-hidden">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/10 pb-5">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-accent to-purple-600 flex items-center justify-center shadow-lg shadow-accent/30 text-white shrink-0">
+                      <Sparkles className="w-6 h-6 animate-pulse" />
+                    </div>
+                    <div>
+                      <h3 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
+                        <span>Parrilla de Generación de Podcasts con IA</span>
+                        <span className="text-[9px] font-mono font-black bg-accent text-white px-2 py-0.5 rounded-full uppercase tracking-wider">Gemini 2.5</span>
+                      </h3>
+                      <p className="text-xs text-text-secondary">Genera podcasts conversacionales entre Alex y Elena a petición o déjalos programados 2 veces al día</p>
+                    </div>
+                  </div>
+                  
+                  {/* Interruptor Interactivo Estado Automatización */}
+                  <button
+                    onClick={toggleAutoPodcastSchedule}
+                    className={`flex items-center gap-2.5 px-4 py-2 rounded-2xl border transition-all cursor-pointer shrink-0 active:scale-95 ${
+                      autoPodcastSchedule.enabled
+                        ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-300 shadow-md shadow-emerald-500/10 hover:bg-emerald-500/20'
+                        : 'bg-amber-500/10 border-amber-500/40 text-amber-300 shadow-md hover:bg-amber-500/20'
+                    }`}
+                    title={autoPodcastSchedule.enabled ? "Haz clic para PAUSAR la autogeneración diaria" : "Haz clic para REANUDAR la autogeneración diaria"}
+                  >
+                    <Clock className={`w-4 h-4 ${autoPodcastSchedule.enabled ? 'text-emerald-400 animate-pulse' : 'text-amber-400'}`} />
+                    <div className="flex flex-col text-left">
+                      <span className="text-[9px] font-black uppercase tracking-wider">
+                        {autoPodcastSchedule.enabled ? '🟢 AUTOGENERACIÓN: ACTIVADA' : '⏸️ AUTOGENERACIÓN: PAUSADA'}
+                      </span>
+                      <span className="text-xs font-bold text-white/90">
+                        {autoPodcastSchedule.enabled ? '2 al día (08:30 y 18:30)' : 'Pausado (Haz clic para activar)'}
+                      </span>
+                    </div>
+                  </button>
+
+                </div>
+
+                {/* Formulario de Generación por Prompt */}
+                <div className="space-y-4">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-black uppercase text-accent tracking-wider flex items-center justify-between">
+                      <span>💬 ¿De qué quieres que traten Alex y Elena hoy? (Prompt o Noticia)</span>
+                      <span className="text-[10px] font-normal text-text-secondary">Escribe un tema o pega el texto de un artículo</span>
+                    </label>
+                    <textarea 
+                      placeholder="Ej. La verdadera historia de Hotel California y los mitos de The Eagles, o la ciencia de los ritmos ultradianos de 90 minutos..."
+                      value={aiPodcastPrompt}
+                      onChange={e => setAiPodcastPrompt(e.target.value)}
+                      className="w-full bg-bg-deep border border-border focus:border-accent rounded-2xl p-4 text-xs text-white placeholder:text-white/30 outline-none min-h-[90px] resize-y"
+                    />
+                  </div>
+
+                  {/* Prompts Rápidos de Ejemplo */}
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    <span className="text-[10px] font-bold text-text-secondary uppercase">Ideas Rápidas:</span>
+                    <button 
+                      onClick={() => setAiPodcastPrompt("El Manuscrito Voynich: El enigma medieval de 600 años que nadie ha podido descifrar.")}
+                      className="px-3 py-1 bg-white/5 hover:bg-white/10 border border-white/10 text-white/80 hover:text-white rounded-xl text-[10px] font-bold transition-all cursor-pointer"
+                    >
+                      🌌 Manuscrito Voynich
+                    </button>
+                    <button 
+                      onClick={() => setAiPodcastPrompt("Hotel California: Los secretos, metáforas y mitos urbanos de The Eagles.")}
+                      className="px-3 py-1 bg-white/5 hover:bg-white/10 border border-white/10 text-white/80 hover:text-white rounded-xl text-[10px] font-bold transition-all cursor-pointer"
+                    >
+                      🎵 Mito Hotel California
+                    </button>
+                    <button 
+                      onClick={() => setAiPodcastPrompt("La Ciencia del Descanso: Cómo usar ritmos ultradianos de 90 minutos para no agotarte.")}
+                      className="px-3 py-1 bg-white/5 hover:bg-white/10 border border-white/10 text-white/80 hover:text-white rounded-xl text-[10px] font-bold transition-all cursor-pointer"
+                    >
+                      🧠 Ritmos de 90 min
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                    {/* Selector de Categoría Destino */}
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-[10px] uppercase font-bold text-text-secondary">📁 Línea Editorial / Categoría Destino</label>
+                      <select
+                        value={aiPodcastCategory}
+                        onChange={e => setAiPodcastCategory(e.target.value)}
+                        className="bg-bg-deep border border-border rounded-xl px-4 py-3 text-xs text-white focus:border-accent outline-none cursor-pointer"
+                      >
+                        {categories
+                          .filter(c => c.parentId === 'podcast-lm' || c.id === 'podcast-lm')
+                          .map(c => (
+                            <option key={c.id} value={c.id}>
+                              {c.alias || c.name}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+
+                    {/* Selector de Acción al Terminar */}
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-[10px] uppercase font-bold text-text-secondary">🔁 Acción al Terminar el Podcast</label>
+                      <select
+                        value={aiPodcastNextAction}
+                        onChange={e => setAiPodcastNextAction(e.target.value)}
+                        className="bg-bg-deep border border-border rounded-xl px-4 py-3 text-xs text-white focus:border-accent outline-none cursor-pointer"
+                      >
+                        <option value="play_live_radio">📻 Volver a la Emisión de Radio en Directo</option>
+                        <option value="play_next_podcast">🎙️ Reproducir Siguiente Episodio de Podcast</option>
+                        <option value="play_category">📁 Continuar con Música de la Categoría</option>
+                        <option value="pause">⏸️ Pausar Reproducción</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Botón Principal de Generación A Petición */}
+                  <button
+                    onClick={handleGenerateAiPodcastNow}
+                    disabled={isGeneratingPodcast || !aiPodcastPrompt.trim()}
+                    className="w-full py-4 bg-gradient-to-r from-accent via-pink-500 to-purple-600 hover:from-accent/90 hover:to-purple-500 disabled:opacity-40 text-white font-black rounded-2xl text-xs sm:text-sm uppercase tracking-wider shadow-[0_0_30px_rgba(236,72,153,0.4)] border border-white/20 flex items-center justify-center gap-3 transition-all cursor-pointer active:scale-98"
+                  >
+                    {isGeneratingPodcast ? (
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin text-white" />
+                        <span>Generando Podcast Conversacional con Gemini 2.5...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="w-5 h-5 fill-white" />
+                        <span>🚀 GENERAR Y PUBLICAR PODCAST AHORA CON IA</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* 📝 ASISTENTE REDACTOR DE GUIONES EXTENSOS (GEMINI 2.5) */}
+              <div className="bg-bg-surface border border-border p-6 rounded-3xl space-y-6">
+                <div className="flex items-center justify-between border-b border-white/10 pb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-purple-500/20 flex items-center justify-center text-purple-300">
+                      <FileText className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm sm:text-base font-bold text-white">📝 Asistente Redactor de Guiones Extensos (Gemini 2.5)</h3>
+                      <p className="text-[10px] sm:text-xs text-text-secondary">Genera guiones extensos de 10-15 minutos entre Alex y Elena sin muletillas ni intromisiones repetitivas</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-white uppercase tracking-wider">Material de Origen / Puntos Clave del Episodio</label>
+                    <textarea
+                      placeholder="Pega aquí el artículo completo, dossier, notas o puntos clave sobre los que quieres que discutan Alex y Elena..."
+                      value={aiScriptTopic}
+                      onChange={e => setAiScriptTopic(e.target.value)}
+                      className="w-full bg-bg-deep border border-border focus:border-accent rounded-2xl p-4 text-xs text-white placeholder:text-white/30 outline-none min-h-[110px] resize-y"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {/* Tono de la Conversación */}
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-[10px] uppercase font-bold text-text-secondary">Tono de la Conversación</label>
+                      <select
+                        value={aiScriptTone}
+                        onChange={e => setAiScriptTone(e.target.value as any)}
+                        className="bg-bg-deep border border-border rounded-xl px-4 py-2.5 text-xs text-white focus:border-accent outline-none cursor-pointer"
+                      >
+                        <option value="deep_technical">🔬 Análisis Técnico & Profundo</option>
+                        <option value="informal">☕ Charla Distendida e Informal</option>
+                        <option value="debate">⚡ Debate y Contrapuntos</option>
+                        <option value="mystery">🌌 Misterio y Narrativa Envolvente</option>
+                      </select>
+                    </div>
+
+                    {/* Duración Objetivo */}
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-[10px] uppercase font-bold text-text-secondary">Duración Objetivo Estimada</label>
+                      <select
+                        value={aiScriptTargetDuration}
+                        onChange={e => setAiScriptTargetDuration(e.target.value)}
+                        className="bg-bg-deep border border-border rounded-xl px-4 py-2.5 text-xs text-white focus:border-accent outline-none cursor-pointer"
+                      >
+                        <option value="5_10_min">⏱️ 5 a 10 minutos (1.000 palabras)</option>
+                        <option value="10_15_min">⏱️ 10 a 15 minutos (2.000 palabras)</option>
+                        <option value="15_plus_min">⏱️ 15+ minutos (3.000+ palabras)</option>
+                      </select>
+                    </div>
+
+                    {/* Checkbox Evitar Cliches */}
+                    <div className="flex flex-col justify-end pb-1">
+                      <label className="flex items-center gap-2 text-xs text-white cursor-pointer select-none bg-bg-deep border border-border p-2.5 rounded-xl">
+                        <input
+                          type="checkbox"
+                          checked={aiScriptAvoidCliches}
+                          onChange={e => setAiScriptAvoidCliches(e.target.checked)}
+                          className="w-4 h-4 accent-accent rounded cursor-pointer"
+                        />
+                        <span>🚫 Evitar intros trilladas</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={handleDraftDeepScriptWithGemini}
+                    disabled={isDraftingScript || !aiScriptTopic.trim()}
+                    className="w-full py-3.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-40 text-white font-bold rounded-2xl text-xs uppercase tracking-wider shadow-lg shadow-purple-600/30 border border-purple-400/30 flex items-center justify-center gap-2 transition-all cursor-pointer"
+                  >
+                    {isDraftingScript ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Redactando Guión Extenso con Gemini 2.5...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4" />
+                        <span>✨ Redactar Guión Extenso con Gemini 2.5</span>
+                      </>
+                    )}
+                  </button>
+
+                  {/* Resultado del Guión Editable */}
+                  {aiScriptResult && (
+                    <div className="space-y-2 pt-2 border-t border-white/10">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span>Guión Dialogado Generado (Editable)</span>
+                        </label>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(aiScriptResult);
+                            alert("¡Guión copiado al portapapeles!");
+                          }}
+                          className="px-3 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-[10px] font-bold text-white transition-all cursor-pointer flex items-center gap-1"
+                        >
+                          <Copy className="w-3 h-3" /> Copiar Guión
+                        </button>
+                      </div>
+                      <textarea
+                        value={aiScriptResult}
+                        onChange={e => setAiScriptResult(e.target.value)}
+                        className="w-full bg-bg-deep border border-emerald-500/30 focus:border-emerald-400 rounded-2xl p-4 text-xs text-white/90 font-mono outline-none min-h-[220px] leading-relaxed resize-y"
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+
+              {/* Gestor de Líneas Editoriales & Contextos de IA */}
+              <div className="bg-bg-surface border border-border p-6 rounded-3xl space-y-6">
+
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <Brain className="w-5 h-5 text-accent" />
+                    <div>
+                      <h3 className="text-sm font-bold text-white">Líneas Editoriales & Contextos de IA</h3>
+                      <p className="text-[10px] text-text-secondary">Crea o sugiere nuevas líneas de podcast directamente aquí con su prompt/contexto de IA asignado</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleSuggestPodcastLine}
+                    disabled={isSuggestingLine}
+                    className="px-3.5 py-1.5 bg-accent/20 hover:bg-accent/30 border border-accent/40 text-accent hover:text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>{isSuggestingLine ? 'Sugiriendo...' : '✨ Sugerir Línea con IA'}</span>
+                  </button>
+                </div>
+
+                {/* Formulario de Creación de Línea Editorial */}
+                <div className="bg-bg-deep border border-border p-4 rounded-2xl space-y-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[9px] uppercase font-bold text-text-secondary">Nombre de la Línea Editorial</label>
+                      <input 
+                        type="text" 
+                        placeholder="Ej. 💡 Emprendedores & Futuro"
+                        value={newPodcastLine.name}
+                        onChange={e => setNewPodcastLine({ ...newPodcastLine, name: e.target.value })}
+                        className="bg-bg-surface border border-border rounded-xl px-3.5 py-2 text-xs text-white focus:border-accent outline-none"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[9px] uppercase font-bold text-text-secondary">Alias / Nombre Público</label>
+                      <input 
+                        type="text" 
+                        placeholder="Ej. Emprendimiento IA"
+                        value={newPodcastLine.alias}
+                        onChange={e => setNewPodcastLine({ ...newPodcastLine, alias: e.target.value })}
+                        className="bg-bg-surface border border-border rounded-xl px-3.5 py-2 text-xs text-white focus:border-accent outline-none"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1 md:col-span-2">
+                      <label className="text-[9px] uppercase font-bold text-text-secondary">Contexto & Instrucciones para la IA (Gemini)</label>
+                      <textarea 
+                        placeholder="Describe el enfoque, tono e instrucciones que debe seguir la IA al redactar episodios para esta línea..."
+                        value={newPodcastLine.aiContext}
+                        onChange={e => setNewPodcastLine({ ...newPodcastLine, aiContext: e.target.value })}
+                        className="bg-bg-surface border border-border rounded-xl px-3.5 py-2 text-xs text-white focus:border-accent outline-none min-h-[60px] resize-y"
+                      />
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleCreatePodcastLine()}
+                    disabled={!newPodcastLine.name.trim()}
+                    className="w-full py-2.5 bg-accent hover:bg-accent/90 disabled:opacity-40 text-white font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95 shadow-lg"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Crear Línea Editorial y Vincular a Podcasts</span>
+                  </button>
+                </div>
+
+                {/* Listado de Líneas Actuales en Podcasts NotebookLM */}
+                <div className="space-y-2">
+                  <h4 className="text-[10px] uppercase font-black tracking-widest text-text-secondary">Líneas Editoriales Activas en Podcasts NotebookLM</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {categories
+                      .filter(c => c.parentId === 'podcast-lm' || c.id === 'podcast-lm')
+                      .map(cat => {
+                        const contextText = cat.marqueeText?.replace('[AI Context: ', '')?.replace(']', '') || 'Contexto general conversacional entre Alex y Elena.';
+                        return (
+                          <div key={cat.id} className="p-3.5 bg-bg-deep border border-border rounded-2xl flex flex-col gap-2 relative group hover:border-accent/40 transition-all">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-black text-white">{cat.name}</span>
+                              <span className="text-[9px] font-mono font-bold bg-accent/10 border border-accent/20 text-accent px-2 py-0.5 rounded-full">
+                                {cat.id === 'podcast-lm' ? 'Padre Global' : `ID: ${cat.id}`}
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-text-secondary line-clamp-2 italic">
+                              "{contextText}"
+                            </p>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              </div>
+
               {/* Form to Add New Podcast */}
               <div className="bg-bg-surface border border-border p-6 rounded-3xl space-y-4">
+
                 <h3 className="text-sm font-bold text-white flex items-center gap-2">
                   <Plus className="w-4 h-4 text-accent" /> Nuevo Episodio de Podcast
                 </h3>
@@ -5501,6 +8421,672 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
           </div>
         )}
 
+        {activeTab === 'blog' && (
+          <div className="h-full overflow-y-auto p-6 space-y-6 bg-bg-deep no-scrollbar animate-[fadeIn_0.2s_ease]">
+            <div className="bg-bg-surface border border-border rounded-2xl p-6">
+              <div className="flex items-start justify-between gap-4 flex-wrap">
+                <div>
+                  <h2 className="text-lg font-black text-white flex items-center gap-2">
+                    <FileText className="w-5 h-5 text-accent" /> Gestor del Blog — Historias de Canción
+                  </h2>
+                  <p className="text-xs text-text-secondary mt-1 max-w-xl">
+                    Cada canción con letra + descripción se convierte en un post en primera persona, generado por IA y vinculado a su Karaoke interactivo.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={async () => {
+                      await Promise.all([fetchBlogStories(), fetchMasterConfig()]);
+                      setBlogProgress('✅ Datos del catálogo y del Blog refrescados desde el servidor.');
+                    }}
+                    disabled={isLoadingBlog}
+                    className="px-3 py-1.5 rounded-xl text-xs font-bold bg-white/5 hover:bg-white/10 text-white border border-border flex items-center gap-1.5 transition-all cursor-pointer"
+                    title="Refrescar catálogo, letras, karaokes e historias desde el servidor"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isLoadingBlog ? 'animate-spin' : ''}`} />
+                    <span>Refrescar</span>
+                  </button>
+                  <a href="/blog" target="_blank" rel="noreferrer" className="text-xs font-bold text-accent hover:underline shrink-0">
+                    Ver el Blog público →
+                  </a>
+                </div>
+              </div>
+
+              {/* BARRA DE ACCIONES MASIVAS EN 3 PASOS SECUENCIALES */}
+              <div className="mt-5 space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] uppercase font-black tracking-widest text-sky-400 bg-sky-500/10 px-2.5 py-1 rounded-lg border border-sky-500/20 flex items-center gap-1.5">
+                    <Sparkles className="w-3 h-3 text-sky-400" /> Flujo de Producción en 3 Pasos:
+                  </span>
+                  <div className="text-xs text-text-secondary ml-auto">
+                    <span className="text-emerald-400 font-black text-base">
+                      {blogStories.filter(s => s.status === 'published').length}
+                    </span> publicadas · <span className="text-amber-400 font-black text-base">
+                      {blogStories.filter(s => s.status !== 'published').length}
+                    </span> borradores · <span className="text-white font-bold">{blogMeta.missing}</span> elegibles sin historia
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 flex-wrap">
+                  {/* PASO 1: Generar Letras Faltantes con Gemini 2.5 */}
+                  <button
+                    onClick={generateMissingLyricsWithGemini}
+                    disabled={lyricsGenState.running || isGeneratingBlog || isRepairingBlog}
+                    className="px-4 py-2.5 rounded-xl text-xs font-black bg-gradient-to-r from-sky-500 to-blue-600 hover:opacity-90 text-white transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2 shadow-lg shadow-sky-900/30 border border-sky-400/30"
+                    title="Paso 1: Redacta poéticamente con Gemini 2.5 Flash las letras para todas las canciones que no tienen letra"
+                  >
+                    <span className="w-5 h-5 rounded-full bg-white/20 text-white font-mono text-[11px] font-black flex items-center justify-center shrink-0">1</span>
+                    {lyricsGenState.running ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-sky-200" />
+                        <span>Componiendo Letras ({lyricsGenState.current}/{lyricsGenState.total})...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-3.5 h-3.5 text-sky-200" />
+                        <span>Generar Letras Faltantes ({songAudit.needsLyricsCount})</span>
+                      </>
+                    )}
+                  </button>
+
+                  {/* PASO 1.5: Generar Descripciones Artísticas Faltantes con Gemini */}
+                  <button
+                    onClick={generateMissingMeaningWithGemini}
+                    disabled={meaningGenState.running || lyricsGenState.running || isGeneratingBlog || isRepairingBlog}
+                    className="px-4 py-2.5 rounded-xl text-xs font-black bg-gradient-to-r from-fuchsia-600 to-pink-600 hover:opacity-90 text-white transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2 shadow-lg shadow-fuchsia-900/30 border border-fuchsia-400/30"
+                    title="Paso 1.5: Redacta poéticamente con Gemini 2.5 Flash el relato artístico (descripción) para todas las canciones que tienen letra pero no tienen descripción"
+                  >
+                    <span className="w-5 h-5 rounded-full bg-white/20 text-white font-mono text-[11px] font-black flex items-center justify-center shrink-0">✍️</span>
+                    {meaningGenState.running ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-fuchsia-200" />
+                        <span>Redactando Descripciones ({meaningGenState.current}/{meaningGenState.total})...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-3.5 h-3.5 text-fuchsia-200" />
+                        <span>Generar Descripciones ({songAudit.needsMeaningCount})</span>
+                      </>
+                    )}
+                  </button>
+
+                  {/* PASO 2: Sincronizar Karaoke con IA */}
+                  <button
+                    onClick={() => {
+                      const songItems = Object.entries(customSongNames || {}).map(([k, v]: [string, any]) => ({
+                        id: k,
+                        r2_key: k,
+                        ...(typeof v === 'object' ? v : { title: v })
+                      }));
+                      batchSyncAllKaraokeWithAI(songItems);
+                    }}
+                    disabled={batchSyncState.running || isGeneratingBlog || isRepairingBlog || lyricsGenState.running}
+                    className="px-4 py-2.5 rounded-xl text-xs font-black bg-gradient-to-r from-purple-600 to-indigo-600 hover:opacity-90 text-white transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2 shadow-lg shadow-purple-900/30 border border-purple-400/30"
+                    title="Paso 2: Sincroniza automáticamente las marcas de tiempo del karaoke para todas las canciones con letra"
+                  >
+                    <span className="w-5 h-5 rounded-full bg-white/20 text-white font-mono text-[11px] font-black flex items-center justify-center shrink-0">2</span>
+                    {batchSyncState.running ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Sincronizando Karaoke ({batchSyncState.current}/{batchSyncState.total})...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
+                        <span>Sincronizar Karaoke con IA</span>
+                      </>
+                    )}
+                  </button>
+
+                  {/* PASO 3: Generar y Publicar Historias que Faltan */}
+                  <button
+                    onClick={generateBlogBatch}
+                    disabled={isGeneratingBlog || isRepairingBlog || isPublishingAllDrafts || lyricsGenState.running}
+                    className="px-4 py-2.5 rounded-xl text-xs font-black bg-gradient-to-r from-emerald-500 via-teal-600 to-emerald-600 hover:opacity-90 text-white transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2 shadow-lg shadow-emerald-900/30 border border-emerald-400/30"
+                    title="Paso 3: Redacta historias en 1ª persona y publica las entradas en el Blog"
+                  >
+                    <span className="w-5 h-5 rounded-full bg-white/20 text-white font-mono text-[11px] font-black flex items-center justify-center shrink-0">3</span>
+                    {isGeneratingBlog ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Generando e Integrando...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-3.5 h-3.5 text-emerald-200" />
+                        <span>Generar y Publicar Historias</span>
+                      </>
+                    )}
+                  </button>
+
+                  {/* BOTÓN SECUNDARIO: Publicar Borradores */}
+                  {blogStories.some(s => s.status !== 'published') && (
+                    <button
+                      onClick={publishAllDrafts}
+                      disabled={isPublishingAllDrafts || isGeneratingBlog}
+                      className="px-3.5 py-2 rounded-xl text-xs font-bold bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 transition-all cursor-pointer flex items-center gap-1.5"
+                    >
+                      {isPublishingAllDrafts ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>Publicando...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                          <span>🚀 Publicar Borradores ({blogStories.filter(s => s.status !== 'published').length})</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+
+                  {/* HERRAMIENTA: Consolidar y Reparar Títulos/IDs */}
+                  <button
+                    onClick={repairBlog}
+                    disabled={isGeneratingBlog || isRepairingBlog || blogStories.length === 0}
+                    title="Corrige los títulos y el audio de las historias que guardaron el ID en vez del nombre"
+                    className="px-3 py-2 rounded-xl text-xs font-bold bg-white/5 hover:bg-white/10 text-white border border-border transition-all disabled:opacity-40 cursor-pointer"
+                  >
+                    {isRepairingBlog ? '⏳ Reparando…' : '🔧 Consolidar/Reparar'}
+                  </button>
+
+                  {/* NUEVA HERRAMIENTA: Sincronizar y Corregir Letras y Karaoke en Blog */}
+                  <button
+                    onClick={syncAllBlogLyricsAndKaraoke}
+                    disabled={isSyncingBlogLyrics || isGeneratingBlog || isRepairingBlog}
+                    className="px-4 py-2.5 rounded-xl text-xs font-black bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:opacity-90 text-white transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2 shadow-lg shadow-violet-900/30 border border-violet-400/30"
+                    title="Sincroniza y alinea las letras y marcas de tiempo LRC de todo el catálogo hacia las historias del Blog público"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncingBlogLyrics ? 'animate-spin' : ''}`} />
+                    <span>{isSyncingBlogLyrics ? 'Sincronizando Letras/Karaoke...' : '🔄 Sincronizar Letras & Karaoke en Blog'}</span>
+                  </button>
+                </div>
+              </div>
+              {blogProgress && <span className="text-[11px] text-text-secondary font-mono w-full mt-2 block">{blogProgress}</span>}
+
+              {/* BARRA DE AUDITORÍA Y FILTROS RÁPIDOS */}
+              <div className="mt-5 pt-4 border-t border-border flex items-center gap-2 flex-wrap">
+                <span className="text-[11px] font-black uppercase text-white/50 tracking-wider mr-1">Filtrar:</span>
+                <button
+                  onClick={() => setBlogFilterTab('published')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    blogFilterTab === 'published' ? 'bg-emerald-500 text-white shadow-md font-extrabold' : 'bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 border border-emerald-500/30'
+                  }`}
+                >
+                  🚀 Publicadas ({blogStories.filter(s => s.status === 'published').length})
+                </button>
+                <button
+                  onClick={() => setBlogFilterTab('drafts')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    blogFilterTab === 'drafts' ? 'bg-amber-500 text-white shadow-md font-extrabold' : 'bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 border border-amber-500/30'
+                  }`}
+                >
+                  📝 Borradores ({blogStories.filter(s => s.status !== 'published').length})
+                </button>
+                <button
+                  onClick={() => setBlogFilterTab('stories')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    blogFilterTab === 'stories' ? 'bg-white text-black shadow-md font-extrabold' : 'bg-white/5 text-white/70 hover:text-white border border-border'
+                  }`}
+                >
+                  📖 Todas ({blogStories.length})
+                </button>
+                <button
+                  onClick={() => setBlogFilterTab('eligible')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    blogFilterTab === 'eligible' ? 'bg-indigo-500 text-white shadow-md font-extrabold' : 'bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 border border-indigo-500/30'
+                  }`}
+                >
+                  ✨ Elegibles ({songAudit.eligibleCount})
+                </button>
+                <button
+                  onClick={() => setBlogFilterTab('needs_karaoke')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    blogFilterTab === 'needs_karaoke' ? 'bg-purple-500 text-white shadow-md font-extrabold' : 'bg-purple-500/10 text-purple-300 hover:bg-purple-500/20 border border-purple-500/30'
+                  }`}
+                >
+                  🎤 Sin Karaoke ({songAudit.needsKaraokeCount})
+                </button>
+                <button
+                  onClick={() => setBlogFilterTab('needs_lyrics')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    blogFilterTab === 'needs_lyrics' ? 'bg-sky-500 text-white shadow-md font-extrabold' : 'bg-sky-500/10 text-sky-300 hover:bg-sky-500/20 border border-sky-500/30'
+                  }`}
+                >
+                  📜 Sin Letra ({songAudit.needsLyricsCount})
+                </button>
+                <button
+                  onClick={() => setBlogFilterTab('needs_meaning')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    blogFilterTab === 'needs_meaning' ? 'bg-amber-500 text-white shadow-md font-extrabold' : 'bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 border border-amber-500/30'
+                  }`}
+                >
+                  ✍️ Sin Descripción ({songAudit.needsMeaningCount})
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {/* BUSCADOR UNIFICADO + CONTROLES DE ORDEN */}
+              {(() => {
+                const titleCount = new Map<string, number>();
+                blogStories.forEach((s: any) => {
+                  const key = (s.title || '').toLowerCase().trim();
+                  titleCount.set(key, (titleCount.get(key) || 0) + 1);
+                });
+                const duplicateIds = new Set(blogStories.filter((s: any) => (titleCount.get((s.title || '').toLowerCase().trim()) || 0) > 1).map((s: any) => s.id));
+                const duplicateCount = new Set(blogStories.filter((s: any) => (titleCount.get((s.title || '').toLowerCase().trim()) || 0) > 1).map((s: any) => (s.title || '').toLowerCase().trim())).size;
+
+                const isStoryTab = blogFilterTab === 'stories' || blogFilterTab === 'published' || blogFilterTab === 'drafts' || blogFilterTab === 'duplicates';
+
+                return (
+                  <div className="flex flex-wrap items-center gap-2 mb-3">
+                    <input
+                      type="text"
+                      value={blogSearch}
+                      onChange={e => setBlogSearch(e.target.value)}
+                      placeholder="🔍 Buscar por título o contenido..."
+                      className="flex-1 min-w-[200px] bg-white/5 border border-border rounded-xl px-3.5 py-2 text-xs text-white placeholder-white/30 outline-none focus:border-white/30 transition-all"
+                    />
+                    <select
+                      value={blogSort}
+                      onChange={e => setBlogSort(e.target.value as any)}
+                      className="bg-white/5 border border-border rounded-xl px-3 py-2 text-xs text-white outline-none cursor-pointer"
+                    >
+                      <option value="date">📅 Más reciente</option>
+                      <option value="az">🔤 A → Z</option>
+                      <option value="za">🔤 Z → A</option>
+                    </select>
+                    <button
+                      onClick={() => setBlogFilterTab('duplicates')}
+                      className={`px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                        blogFilterTab === 'duplicates'
+                          ? 'bg-red-500 text-white shadow-md shadow-red-900/50 font-black'
+                          : duplicateCount > 0
+                          ? 'bg-red-500/20 text-red-300 border border-red-500/40 hover:bg-red-500/30'
+                          : 'bg-white/5 text-white/40 border border-border'
+                      }`}
+                      title="Muestra los posts duplicados para que puedas despublicar los sobrantes"
+                    >
+                      ⚠️ Duplicados ({duplicateCount})
+                    </button>
+                  </div>
+                );
+              })()}
+
+              {/* VISTA DE HISTORIAS (PUBLISHED / DRAFTS / STORIES / DUPLICATES) */}
+              {(blogFilterTab === 'stories' || blogFilterTab === 'published' || blogFilterTab === 'drafts' || blogFilterTab === 'duplicates') && (() => {
+                const titleCount = new Map<string, number>();
+                blogStories.forEach((s: any) => {
+                  const key = (s.title || '').toLowerCase().trim();
+                  titleCount.set(key, (titleCount.get(key) || 0) + 1);
+                });
+                const duplicateIds = new Set(blogStories.filter((s: any) => (titleCount.get((s.title || '').toLowerCase().trim()) || 0) > 1).map((s: any) => s.id));
+
+                let filtered = blogStories.filter((s: any) => {
+                  if (blogFilterTab === 'published') return s.status === 'published';
+                  if (blogFilterTab === 'drafts') return s.status !== 'published';
+                  if (blogFilterTab === 'duplicates') return duplicateIds.has(s.id);
+                  return true;
+                });
+                if (blogSearch.trim()) {
+                  const q = blogSearch.toLowerCase();
+                  filtered = filtered.filter((s: any) => (s.title || '').toLowerCase().includes(q) || (s.hook || '').toLowerCase().includes(q) || (s.story || '').toLowerCase().includes(q));
+                }
+                if (blogSort === 'az') filtered = [...filtered].sort((a: any, b: any) => (a.title || '').localeCompare(b.title || ''));
+                else if (blogSort === 'za') filtered = [...filtered].sort((a: any, b: any) => (b.title || '').localeCompare(a.title || ''));
+
+                const getEmptyMessage = () => {
+                  if (blogSearch) return `Sin resultados para "${blogSearch}"`;
+                  if (blogFilterTab === 'published') return 'No hay historias publicadas en vivo todavía.';
+                  if (blogFilterTab === 'drafts') return '✅ ¡Excelente! No hay borradores pendientes.';
+                  if (blogFilterTab === 'duplicates') return '✅ ¡Perfecto! No hay historias duplicadas en el Blog.';
+                  return 'Aún no hay historias creadas. Puedes hacer clic en "Generar y Publicar Historias".';
+                };
+
+                return (
+                  <>
+                    {isLoadingBlog && blogStories.length === 0 && <p className="text-text-secondary text-xs">Cargando historias del blog…</p>}
+                    {filtered.length === 0 && !isLoadingBlog && (
+                      <p className="text-text-secondary text-xs bg-bg-surface border border-border rounded-2xl p-6 text-center">
+                        {getEmptyMessage()}
+                      </p>
+                    )}
+
+                    {filtered.map((s: any) => {
+                      const isDuplicate = duplicateIds.has(s.id);
+                      return (
+                      <div key={s.id} className={`bg-bg-surface border rounded-2xl p-5 flex flex-col sm:flex-row sm:items-start gap-4 hover:border-white/20 transition-all ${
+                        isDuplicate ? 'border-red-500/50 bg-red-950/20' : 'border-border'
+                      }`}>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className={`text-[9px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full ${s.status === 'published' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'}`}>
+                              {s.status === 'published' ? '🚀 Publicado en Vivo' : '📝 Borrador Pendiente'}
+                            </span>
+                            {isDuplicate && (
+                              <span className="text-[9px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-red-500 text-white border border-red-400 animate-pulse">
+                                ⚠️ DUPLICADO
+                              </span>
+                            )}
+                            {s.lyricsSynced && /\[\d+:\d+(?:\.\d+)?\]/.test(s.lyricsSynced) && (
+                              <span className="text-[9px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 flex items-center gap-1">
+                                🎤 Karaoke LRC Listo
+                              </span>
+                            )}
+                            {s.category?.name && <span className="text-[9px] text-text-secondary uppercase tracking-wider bg-white/5 px-2 py-0.5 rounded font-mono">{s.category.name}</span>}
+                            {s.numId && <span className="text-[9px] text-accent/80 font-mono font-bold">ID: {s.numId}</span>}
+                          </div>
+                          <h3 className="text-sm font-black text-white mt-1.5 flex items-center gap-2">
+                            {s.title}
+                          </h3>
+                          {s.hook && <p className="text-xs text-text-secondary italic mt-0.5">"{s.hook}"</p>}
+                          <p className="text-[11px] text-white/60 mt-2 line-clamp-3 leading-relaxed bg-white/5 p-3 rounded-xl border border-white/5">{s.story}</p>
+                          
+                          {s.lyrics && (
+                            <p className="text-[10px] text-white/40 italic mt-1.5 line-clamp-1">
+                              📜 Letra: {s.lyrics.slice(0, 80)}...
+                            </p>
+                          )}
+
+                          <div className="mt-2.5 flex flex-wrap gap-1.5">
+                            {(s.tags || []).map((t: string) => <span key={t} className="text-[9px] uppercase tracking-wider text-sky-300 bg-sky-500/10 border border-sky-500/20 px-2 py-0.5 rounded-full">#{t}</span>)}
+                          </div>
+                        </div>
+                        <div className="flex sm:flex-col gap-2 shrink-0 self-start sm:self-center">
+                          <button
+                            onClick={() => toggleBlogPublish(s.id, s.status !== 'published')}
+                            className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                              s.status === 'published'
+                                ? isDuplicate
+                                  ? 'bg-red-500 hover:bg-red-400 text-white border border-red-400 shadow-lg shadow-red-900/40'
+                                  : 'bg-white/10 hover:bg-white/20 text-white border border-white/10'
+                                : 'bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white shadow-lg shadow-emerald-900/30'
+                            }`}
+                          >
+                            {s.status === 'published' ? (isDuplicate ? '🗑️ Despublicar' : 'Despublicar') : '🚀 Publicar en Blog'}
+                          </button>
+
+                          {/* BOTÓN EDITAR LETRA Y KARAOKE DIRECTO DEL POST */}
+                          <button
+                            onClick={() => {
+                              const numId = s.numId != null ? String(s.numId) : (s.id ? String(s.id) : '');
+                              const catalogEntry = (numId && songCatalog[numId]) || songCatalog[s.r2_key] || songCatalog[s.title];
+                              const customEntry = (numId && customSongNames[numId]) || customSongNames[s.r2_key] || customSongNames[s.title];
+                              setEditingBlogLyricsItem({
+                                id: s.id,
+                                r2_key: s.r2_key || s.id,
+                                title: s.title || '',
+                                lyrics: customEntry?.lyrics || catalogEntry?.lyrics || s.lyrics || '',
+                                lyricsSynced: customEntry?.lyricsSynced || catalogEntry?.lyricsSynced || s.lyricsSynced || '',
+                                meaning: customEntry?.meaning || catalogEntry?.meaning || s.story || s.hook || ''
+                              });
+                            }}
+                            className="px-3 py-1.5 rounded-xl text-[10px] font-bold bg-white/10 hover:bg-white/20 text-white border border-white/10 transition-all cursor-pointer flex items-center justify-center gap-1"
+                            title="Editar letra, karaoke LRC y descripción de esta historia"
+                          >
+                            <span>✏️ Letra / Karaoke</span>
+                          </button>
+
+                          <button
+                            onClick={() => handleGenerateSingleBlogStory(s.r2_key || s.id, s.numId || s.id)}
+                            disabled={blogGeneratingSongId === (s.r2_key || s.id)}
+                            className="px-3 py-1.5 rounded-xl text-[10px] font-bold bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 border border-purple-500/30 transition-all cursor-pointer flex items-center justify-center gap-1"
+                          >
+                            {blogGeneratingSongId === (s.r2_key || s.id) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3 text-yellow-300" />}
+                            <span>Re-generar IA</span>
+                          </button>
+
+                          {s.status === 'published' && (
+                            <a
+                              href={`/blog/${s.slug}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="px-3 py-1.5 rounded-xl text-[10px] font-bold bg-white/5 hover:bg-white/10 text-white/80 border border-border text-center flex items-center justify-center gap-1"
+                            >
+                              Ver en Blog ↗
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    );
+                    })}
+                  </>
+                );
+              })()}
+
+              {/* LISTAS AUDITADAS DE CANCIONES (ELIGIBLE / NEEDS_MEANING / NEEDS_LYRICS / NEEDS_KARAOKE) */}
+              {(blogFilterTab === 'eligible' || blogFilterTab === 'needs_meaning' || blogFilterTab === 'needs_lyrics' || blogFilterTab === 'needs_karaoke') && (
+                <div className="space-y-3">
+                  {(() => {
+                    let list = blogFilterTab === 'needs_meaning' ? songAudit.needsMeaningList
+                      : blogFilterTab === 'needs_lyrics' ? songAudit.needsLyricsList
+                      : blogFilterTab === 'needs_karaoke' ? songAudit.needsKaraokeList
+                      : songAudit.eligibleList;
+
+                    if (blogSearch.trim()) {
+                      const q = blogSearch.toLowerCase();
+                      list = list.filter((item: any) => (item.title || '').toLowerCase().includes(q) || (item.r2_key || '').toLowerCase().includes(q) || (item.meaning || '').toLowerCase().includes(q));
+                    }
+                    if (blogSort === 'az') list = [...list].sort((a: any, b: any) => (a.title || '').localeCompare(b.title || ''));
+                    else if (blogSort === 'za') list = [...list].sort((a: any, b: any) => (b.title || '').localeCompare(a.title || ''));
+
+                    const getEmptyAuditMessage = () => {
+                      if (blogSearch) return `Sin resultados para "${blogSearch}"`;
+                      if (blogFilterTab === 'needs_karaoke') return '✨ ¡Todas las canciones con letra ya tienen Karaoke sincronizado!';
+                      if (blogFilterTab === 'needs_lyrics') return '✨ ¡Todas las canciones ya cuentan con letra registrada!';
+                      if (blogFilterTab === 'needs_meaning') return '✨ ¡Todas las canciones ya tienen descripción artística!';
+                      return '✨ No hay canciones pendientes de generar historia.';
+                    };
+
+                    if (list.length === 0) {
+                      return (
+                        <p className="text-text-secondary text-xs bg-bg-surface border border-border rounded-2xl p-6 text-center">
+                          {getEmptyAuditMessage()}
+                        </p>
+                      );
+                    }
+
+                    return list.map((item: any) => (
+                      <div key={item.r2_key} className="bg-bg-surface border border-border rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:border-white/20 transition-all">
+                        <div className="flex-1 min-w-0">
+                          <h4 className="text-sm font-black text-white flex items-center gap-2">
+                            {item.title}
+                            {item.id && <span className="text-[9px] text-accent font-mono bg-accent/10 px-2 py-0.5 rounded border border-accent/20">ID: {item.id}</span>}
+                          </h4>
+                          <p className="text-[10px] text-text-secondary font-mono mt-0.5">{item.r2_key}</p>
+
+                          <div className="flex flex-wrap items-center gap-2 mt-2">
+                            {item.isInstrumental ? (
+                              <span className="px-2.5 py-0.5 rounded-full text-[9px] font-extrabold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 flex items-center gap-1">
+                                🎷 Pieza Instrumental
+                              </span>
+                            ) : item.isLrc ? (
+                              <span className="px-2.5 py-0.5 rounded-full text-[9px] font-extrabold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                                🎤 Karaoke IA Listo
+                              </span>
+                            ) : (
+                              <span className="px-2.5 py-0.5 rounded-full text-[9px] font-extrabold bg-purple-500/20 text-purple-300 border border-purple-500/30 flex items-center gap-1">
+                                ⏳ Pendiente de Karaoke IA
+                              </span>
+                            )}
+
+                            {item.meaning || item.isStoryCreated ? (
+                              <span className="px-2.5 py-0.5 rounded-full text-[9px] font-extrabold bg-sky-500/20 text-sky-300 border border-sky-500/30 flex items-center gap-1">
+                                📖 Descripción Lista
+                              </span>
+                            ) : (
+                              <span className="px-2.5 py-0.5 rounded-full text-[9px] font-extrabold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                                ⏳ Sin Descripción
+                              </span>
+                            )}
+
+                            {item.isStoryCreated && (
+                              <a
+                                href={`/blog/${item.storySlug}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="px-2.5 py-0.5 rounded-full text-[9px] font-extrabold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-500/40 flex items-center gap-1 transition-all"
+                              >
+                                🌟 Ver en Blog ↗
+                              </a>
+                            )}
+
+                            <button
+                              onClick={() => toggleSongInstrumental(item)}
+                              className={`px-2.5 py-0.5 rounded-full text-[9px] font-extrabold border transition-all cursor-pointer ${
+                                item.isInstrumental
+                                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/30 hover:bg-amber-500/30'
+                                  : 'bg-white/5 text-white/70 border-white/10 hover:bg-white/10 hover:text-white'
+                              }`}
+                              title={item.isInstrumental ? 'Haz clic para marcar esta canción como vocal' : 'Haz clic para marcar esta canción como 100% instrumental'}
+                            >
+                              {item.isInstrumental ? '🎤 Cambiar a Vocal' : '🎷 Marcar Instrumental'}
+                            </button>
+                          </div>
+
+                          {item.lyrics && (
+                            <p className="text-[11px] text-white/60 italic mt-2 line-clamp-2 bg-white/5 p-2 rounded-lg border border-white/5">
+                              📜 Letra: "{item.lyrics.slice(0, 120)}..."
+                            </p>
+                          )}
+
+                          {item.meaning && (
+                            <p className="text-[11px] text-sky-300/80 italic mt-2 line-clamp-2 bg-sky-500/5 p-2 rounded-lg border border-sky-500/10">
+                              📖 Historia/Descripción: "{item.meaning.slice(0, 120)}..."
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            onClick={() => handleGenerateSingleBlogStory(item.r2_key, item.id)}
+                            disabled={blogGeneratingSongId === item.r2_key}
+                            className="px-3 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white transition-all cursor-pointer flex items-center gap-1.5 shadow-lg shadow-sky-900/30 border border-sky-400/30"
+                          >
+                            {blogGeneratingSongId === item.r2_key ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />}
+                            <span>📰 Publicar en Blog</span>
+                          </button>
+
+                          {blogFilterTab === 'needs_karaoke' && (
+                            <button
+                              onClick={() => aiAlignSongKaraoke(item.r2_key, item.id || item.r2_key, item.lyrics)}
+                              className="px-3 py-2 rounded-xl text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white transition-all cursor-pointer flex items-center gap-1"
+                            >
+                              <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
+                              <span>Sincronizar Karaoke</span>
+                            </button>
+                          )}
+
+                          <button
+                            onClick={() => {
+                              setEditingBlogLyricsItem({
+                                id: item.id || item.r2_key,
+                                r2_key: item.r2_key,
+                                title: item.title,
+                                lyrics: item.lyrics || '',
+                                lyricsSynced: item.lyricsSynced || '',
+                                meaning: item.meaning || ''
+                              });
+                            }}
+                            className="px-3 py-2 rounded-xl text-xs font-bold bg-white/10 hover:bg-white/20 text-white border border-white/10 transition-all cursor-pointer flex items-center gap-1"
+                          >
+                            <span>✏️ Editar Letra / Karaoke</span>
+                          </button>
+                        </div>
+                      </div>
+                    ));
+                  })()}
+                </div>
+              )}
+            </div>
+
+            {/* MODAL DE EDICIÓN RÁPIDA DE LETRA, KARAOKE LRC Y HISTORIA */}
+            {editingBlogLyricsItem && (
+              <div className="fixed inset-0 z-[500] bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+                <div className="bg-[#12111f] border border-white/20 rounded-3xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
+                  <div className="p-4 border-b border-white/10 flex items-center justify-between bg-white/5">
+                    <div>
+                      <h3 className="text-sm font-black text-white flex items-center gap-2">
+                        <span>✏️ Editar Letra & Karaoke Sincronizado</span>
+                      </h3>
+                      <p className="text-[11px] text-text-secondary font-mono">{editingBlogLyricsItem.title} ({editingBlogLyricsItem.r2_key})</p>
+                    </div>
+                    <button
+                      onClick={() => setEditingBlogLyricsItem(null)}
+                      className="p-2 bg-white/5 hover:bg-white/10 text-white rounded-xl cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <div className="p-5 overflow-y-auto space-y-4 text-xs">
+                    <div>
+                      <label className="text-[10px] uppercase font-bold text-sky-300 block mb-1">Título de la Canción</label>
+                      <input
+                        type="text"
+                        value={editingBlogLyricsItem.title}
+                        onChange={e => setEditingBlogLyricsItem({ ...editingBlogLyricsItem, title: e.target.value })}
+                        className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2 text-xs text-white focus:border-sky-400 outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] uppercase font-bold text-amber-300 block mb-1">Historia / Descripción en 1ª Persona (Para Blog)</label>
+                      <textarea
+                        rows={3}
+                        value={editingBlogLyricsItem.meaning}
+                        onChange={e => setEditingBlogLyricsItem({ ...editingBlogLyricsItem, meaning: e.target.value })}
+                        placeholder="Relato poético de la inspiración de la canción..."
+                        className="w-full bg-black/40 border border-white/15 rounded-xl p-3 text-xs text-white focus:border-amber-400 outline-none"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-[10px] uppercase font-bold text-emerald-300 block mb-1">Letra en Texto Plano</label>
+                        <textarea
+                          rows={8}
+                          value={editingBlogLyricsItem.lyrics}
+                          onChange={e => setEditingBlogLyricsItem({ ...editingBlogLyricsItem, lyrics: e.target.value })}
+                          placeholder="Versos de la canción..."
+                          className="w-full bg-black/40 border border-white/15 rounded-xl p-3 text-xs text-white focus:border-emerald-400 outline-none font-mono"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] uppercase font-bold text-purple-300 block mb-1">Karaoke Sincronizado LRC [mm:ss.xx]</label>
+                        <textarea
+                          rows={8}
+                          value={editingBlogLyricsItem.lyricsSynced}
+                          onChange={e => setEditingBlogLyricsItem({ ...editingBlogLyricsItem, lyricsSynced: e.target.value })}
+                          placeholder="[00:15.20] Primer verso..."
+                          className="w-full bg-black/40 border border-white/15 rounded-xl p-3 text-xs text-white focus:border-purple-400 outline-none font-mono"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-4 border-t border-white/10 flex items-center justify-end gap-2 bg-white/5">
+                    <button
+                      onClick={() => setEditingBlogLyricsItem(null)}
+                      className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl font-bold cursor-pointer transition-colors"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      onClick={() => handleSaveSingleBlogLyrics(editingBlogLyricsItem)}
+                      className="px-5 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white rounded-xl font-black cursor-pointer shadow-lg shadow-emerald-900/30 transition-all"
+                    >
+                      💾 Guardar y Sincronizar en Blog
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {activeTab === 'stats' && (
           <div className="h-full overflow-y-auto p-6 space-y-6 bg-bg-deep no-scrollbar animate-[fadeIn_0.2s_ease]">
             {/* Page Header */}
@@ -5620,13 +9206,13 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
                 <div className="grid grid-cols-3 gap-3">
                   <div className="bg-bg-deep border border-border/50 p-3 rounded-xl">
                     <span className="text-[9px] text-text-secondary font-bold uppercase">Cuñas Configuradas</span>
-                    <p className="text-lg font-black text-white mt-1">{audioAds.length || 0}</p>
-                    <p className="text-[8px] text-accent mt-0.5">{audioAds.filter(a => a.active).length} activas</p>
+                    <p className="text-lg font-black text-white mt-1">{adPool.length || 0}</p>
+                    <p className="text-[8px] text-accent mt-0.5">{adPool.length} activas</p>
                   </div>
                   <div className="bg-bg-deep border border-border/50 p-3 rounded-xl">
                     <span className="text-[9px] text-text-secondary font-bold uppercase">Banners In-Feed</span>
                     <p className="text-lg font-black text-white mt-1">{visualBanners.length || 0}</p>
-                    <p className="text-[8px] text-purple-400 mt-0.5">{visualBanners.filter(b => b.active).length} activos</p>
+                    <p className="text-[8px] text-purple-400 mt-0.5">{visualBanners.length} activos</p>
                   </div>
                   <div className="bg-bg-deep border border-border/50 p-3 rounded-xl">
                     <span className="text-[9px] text-text-secondary font-bold uppercase">Cadencia Catálogo</span>
@@ -5640,19 +9226,19 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
                   <div className="grid grid-cols-4 gap-2 text-center text-xs">
                     <div className="p-2 bg-white/5 rounded-xl border border-white/5">
                       <span className="text-[9px] text-text-secondary block font-bold">Mañana (6-14h)</span>
-                      <span className="font-bold text-white mt-1 block">{audioAds.filter(a => !a.timeConstraint || a.timeConstraint === 'all' || a.timeConstraint === 'morning').length} cuñas</span>
+                      <span className="font-bold text-white mt-1 block">{adPool.filter(a => !a.timeConstraint || a.timeConstraint === 'all' || a.timeConstraint === 'morning').length} cuñas</span>
                     </div>
                     <div className="p-2 bg-white/5 rounded-xl border border-white/5">
                       <span className="text-[9px] text-text-secondary block font-bold">Tarde (14-22h)</span>
-                      <span className="font-bold text-white mt-1 block">{audioAds.filter(a => !a.timeConstraint || a.timeConstraint === 'all' || a.timeConstraint === 'afternoon').length} cuñas</span>
+                      <span className="font-bold text-white mt-1 block">{adPool.filter(a => !a.timeConstraint || a.timeConstraint === 'all' || a.timeConstraint === 'afternoon').length} cuñas</span>
                     </div>
                     <div className="p-2 bg-white/5 rounded-xl border border-white/5">
                       <span className="text-[9px] text-text-secondary block font-bold">Noche (22-6h)</span>
-                      <span className="font-bold text-white mt-1 block">{audioAds.filter(a => !a.timeConstraint || a.timeConstraint === 'all' || a.timeConstraint === 'night').length} cuñas</span>
+                      <span className="font-bold text-white mt-1 block">{adPool.filter(a => !a.timeConstraint || a.timeConstraint === 'all' || a.timeConstraint === 'night').length} cuñas</span>
                     </div>
                     <div className="p-2 bg-white/5 rounded-xl border border-white/5">
                       <span className="text-[9px] text-text-secondary block font-bold">24 Horas</span>
-                      <span className="font-bold text-accent mt-1 block">{audioAds.filter(a => !a.timeConstraint || a.timeConstraint === 'all').length} cuñas</span>
+                      <span className="font-bold text-accent mt-1 block">{adPool.filter(a => !a.timeConstraint || a.timeConstraint === 'all').length} cuñas</span>
                     </div>
                   </div>
                 </div>
@@ -5711,7 +9297,7 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
                 
                 <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1 no-scrollbar">
                   {categories.filter(c => c.r2_folder).map(cat => {
-                    const catSongsCount = categorySongs[cat.id]?.length || 0;
+                    const catSongsCount = categorySongs[cat.id]?.length || countSongsInFolder(cat.r2_folder);
                     const totalCatalog = Object.keys(masterConfig?.song_catalog || {}).length || 828;
                     const pct = totalCatalog > 0 ? Math.min(100, Math.round((catSongsCount / totalCatalog) * 100)) : 10;
 
@@ -5771,6 +9357,53 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
                   )}
                 </div>
               </div>
+            </div>
+
+            {/* Usuarios más activos (para premiar) — solo el top N, no el listado completo */}
+            <div className="bg-bg-surface border border-border rounded-2xl p-6 flex flex-col gap-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-black text-white uppercase tracking-wider">Usuarios Más Activos</h3>
+                  <p className="text-[10px] text-text-secondary mt-0.5">Top 15 por actividad (votos + mensajes en directo). Ideal para premiar a los oyentes más fieles.</p>
+                </div>
+                <button
+                  onClick={fetchActiveUsers}
+                  disabled={isLoadingActiveUsers}
+                  className="shrink-0 px-3 py-1.5 rounded-lg text-[10px] font-bold bg-white/5 hover:bg-white/10 text-white border border-border transition-all disabled:opacity-50 cursor-pointer"
+                >
+                  {isLoadingActiveUsers ? 'Cargando…' : 'Actualizar'}
+                </button>
+              </div>
+
+              {isLoadingActiveUsers && activeUsers.length === 0 ? (
+                <p className="text-text-secondary text-xs text-center py-6">Cargando ranking de actividad…</p>
+              ) : activeUsers.length === 0 ? (
+                <p className="text-text-secondary text-xs text-center py-6">Aún no hay actividad de usuarios registrada (votos o mensajes en directo).</p>
+              ) : (
+                <div className="space-y-2">
+                  {activeUsers.map((u, idx) => (
+                    <div key={u.id || idx} className="flex items-center gap-3 bg-bg-deep border border-border/60 rounded-xl px-4 py-2.5">
+                      <span className={`w-6 text-center text-xs font-black shrink-0 ${idx < 3 ? 'text-accent' : 'text-text-secondary'}`}>{idx + 1}</span>
+                      {u.picture ? (
+                        <img src={u.picture} alt="" className="w-8 h-8 rounded-full object-cover shrink-0" referrerPolicy="no-referrer" />
+                      ) : (
+                        <div className="w-8 h-8 rounded-full bg-accent/20 border border-accent/30 flex items-center justify-center text-accent font-bold shrink-0 text-xs">
+                          {(u.name || u.email || '?').substring(0, 1).toUpperCase()}
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-bold text-white truncate">{u.name || '—'}</p>
+                        <p className="text-[10px] text-text-secondary font-mono truncate">{u.email}</p>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0 text-[10px]">
+                        <span className="text-white font-bold" title="Votos a canciones">🗳️ {u.votes || 0}</span>
+                        <span className="text-white font-bold" title="Mensajes en directo">💬 {u.messages || 0}</span>
+                        <span className="px-2 py-0.5 rounded-full bg-accent/15 text-accent font-black" title="Actividad total">{u.activity || 0}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Fila 4: Canal de Acceso & Buzón de Sugerencias */}
@@ -6526,6 +10159,1026 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
           </motion.div>
         )}
 
+        {activeTab === 'redes' && (
+          <motion.div
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="p-6 md:p-8 space-y-6 overflow-y-auto h-full pb-24 no-scrollbar"
+          >
+            <div className="flex items-center justify-between border-b border-border pb-4">
+              <div>
+                <h2 className="text-lg font-black text-white uppercase tracking-wider flex items-center gap-2">
+                  <Share2 className="w-5 h-5 text-accent" /> Redes Sociales
+                </h2>
+                <p className="text-[11px] text-text-secondary mt-1">
+                  Publica canciones y categorías en Facebook. La tarjeta con imagen y descripción la monta Facebook solo, leyendo el enlace.
+                </p>
+              </div>
+              <button
+                onClick={handleCheckSocialStatus}
+                disabled={socialChecking}
+                className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-white text-[11px] font-bold flex items-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${socialChecking ? 'animate-spin' : ''}`} />
+                Comprobar conexión
+              </button>
+            </div>
+
+            {/* Estado de la conexión */}
+            <div className="bg-bg-surface border border-border rounded-2xl p-5 space-y-4">
+              <span className="text-[10px] font-black text-text-secondary uppercase tracking-wider">Estado del puente</span>
+
+              {(() => {
+                const tokenOk = socialStatus?.tokenPresente;
+                const pageOk = !!socialConfig.facebookPageId;
+                const conectado = socialStatus?.connected;
+                const paso = (ok: boolean | undefined, titulo: string, detalle: string) => (
+                  <div className="flex items-start gap-3">
+                    <div className={`w-5 h-5 rounded-full shrink-0 flex items-center justify-center mt-0.5 ${ok ? 'bg-green-500/20 border border-green-500/50' : 'bg-amber-500/15 border border-amber-500/40'}`}>
+                      {ok ? <Check className="w-3 h-3 text-green-400" /> : <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />}
+                    </div>
+                    <div className="min-w-0">
+                      <p className={`text-xs font-bold ${ok ? 'text-white' : 'text-amber-300'}`}>{titulo}</p>
+                      <p className="text-[10px] text-text-secondary leading-relaxed mt-0.5">{detalle}</p>
+                    </div>
+                  </div>
+                );
+
+                return (
+                  <div className="space-y-3">
+                    {paso(tokenOk, 'Token de página en el worker',
+                      tokenOk ? 'Guardado como secreto. Nunca llega al navegador.'
+                        : 'Falta. Genéralo en Business Manager y ponlo con:  npx wrangler secret put META_PAGE_TOKEN')}
+                    {paso(pageOk, 'ID de la página de Facebook',
+                      pageOk ? `Configurado: ${socialConfig.facebookPageId}` : 'Escríbelo abajo y guarda los cambios.')}
+                    {paso(conectado, 'Conexión con Facebook',
+                      conectado
+                        ? `Conectado a "${socialStatus?.page?.name}"${socialStatus?.page?.followers != null ? ` · ${socialStatus.page.followers} seguidores` : ''}${socialConfig.facebookEnabled === false ? ' — ⏸️ Sincronización Pausada' : ''}`
+                        : (socialStatus?.reason || 'Sin comprobar todavía. Pulsa "Comprobar conexión".'))}
+                    {paso(socialStatus?.instagram?.connected, 'Conexión con Instagram',
+                      socialStatus?.instagram?.connected
+                        ? `Conectado a @${socialStatus.instagram.username}${socialConfig.instagramEnabled === false ? ' — ⏸️ Sincronización Pausada' : ''}`
+                        : (socialStatus?.instagram?.reason || 'Sin comprobar todavía. Pulsa "Comprobar conexión".'))}
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Control Independiente de Sincronización por Red */}
+            <div className="bg-bg-surface border border-border rounded-2xl p-5 space-y-4">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div>
+                  <span className="text-[10px] font-black text-text-secondary uppercase tracking-wider">Interruptores Independientes de Sincronización</span>
+                  <p className="text-[10px] text-text-secondary mt-1">Pausa o activa la sincronización en Facebook e Instagram independientemente.</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Facebook Switch */}
+                <div className={`p-4 rounded-xl border transition-all ${socialConfig.facebookEnabled !== false ? 'bg-blue-950/20 border-blue-500/30' : 'bg-amber-950/20 border-amber-500/30'}`}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-8 h-8 rounded-lg bg-[#1877F2]/20 border border-[#1877F2]/40 flex items-center justify-center shrink-0">
+                        <Facebook className="w-4 h-4 text-[#1877F2]" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-white truncate">Facebook</p>
+                        <p className="text-[9px] text-text-secondary truncate">
+                          {socialConfig.facebookEnabled !== false ? '🟢 Publicación activa' : '⏸️ Pausado (no publica)'}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setSocialConfig(prev => ({ ...prev, facebookEnabled: prev.facebookEnabled === false }))}
+                      className={`px-3 py-1.5 rounded-full text-[10px] font-black border transition-all cursor-pointer shrink-0 ${
+                        socialConfig.facebookEnabled !== false
+                          ? 'bg-green-500/20 text-green-300 border-green-500/40 hover:bg-green-500/30'
+                          : 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
+                      }`}
+                    >
+                      {socialConfig.facebookEnabled !== false ? '🟢 Activo' : '⏸️ Pausado'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Instagram Switch */}
+                <div className={`p-4 rounded-xl border transition-all ${socialConfig.instagramEnabled !== false ? 'bg-purple-950/20 border-purple-500/30' : 'bg-amber-950/20 border-amber-500/30'}`}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-amber-500/20 to-purple-600/20 border border-purple-500/40 flex items-center justify-center shrink-0">
+                        <Instagram className="w-4 h-4 text-pink-400" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-white truncate">Instagram</p>
+                        <p className="text-[9px] text-text-secondary truncate">
+                          {socialConfig.instagramEnabled !== false ? '🟢 Publicación activa' : '⏸️ Pausado (no publica)'}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setSocialConfig(prev => ({ ...prev, instagramEnabled: prev.instagramEnabled === false }))}
+                      className={`px-3 py-1.5 rounded-full text-[10px] font-black border transition-all cursor-pointer shrink-0 ${
+                        socialConfig.instagramEnabled !== false
+                          ? 'bg-green-500/20 text-green-300 border-green-500/40 hover:bg-green-500/30'
+                          : 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
+                      }`}
+                    >
+                      {socialConfig.instagramEnabled !== false ? '🟢 Activo' : '⏸️ Pausado'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Configuración */}
+            <div className="bg-bg-surface border border-border rounded-2xl p-5 space-y-4">
+              <span className="text-[10px] font-black text-text-secondary uppercase tracking-wider">Configuración</span>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-text-secondary uppercase">Página de Facebook</label>
+                {socialStatus?.availablePages?.length > 0 ? (
+                  <>
+                    <select
+                      value={socialConfig.facebookPageId}
+                      onChange={e => setSocialConfig(prev => ({ ...prev, facebookPageId: e.target.value }))}
+                      className="w-full bg-bg-deep border border-border rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-accent"
+                    >
+                      <option value="">— Elige la página —</option>
+                      {socialStatus.availablePages.map((p: any) => (
+                        <option key={p.id} value={p.id}>{p.name} ({p.id})</option>
+                      ))}
+                    </select>
+                    <p className="text-[9px] text-text-secondary">
+                      Estas son las páginas que alcanza tu token. Elige una y guarda los cambios.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <input
+                      value={socialConfig.facebookPageId}
+                      onChange={e => setSocialConfig(prev => ({ ...prev, facebookPageId: e.target.value.trim() }))}
+                      placeholder="Ej: 102938475647382"
+                      className="w-full bg-bg-deep border border-border rounded-xl px-3 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-accent"
+                    />
+                    <p className="text-[9px] text-text-secondary">
+                      Pulsa "Comprobar conexión" para que aparezcan tus páginas en un desplegable, o escribe el ID a mano.
+                    </p>
+                  </>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-text-secondary uppercase">Texto por defecto de las publicaciones</label>
+                <textarea
+                  value={socialConfig.defaultMessage}
+                  onChange={e => setSocialConfig(prev => ({ ...prev, defaultMessage: e.target.value }))}
+                  rows={3}
+                  className="w-full bg-bg-deep border border-border rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-accent resize-y"
+                />
+              </div>
+
+              {socialConfig.lastPostedAt && (
+                <p className="text-[10px] text-text-secondary">
+                  Última publicación: {new Date(socialConfig.lastPostedAt).toLocaleString('es-ES')}
+                </p>
+              )}
+            </div>
+
+            {/* Automatización */}
+            <div className={`bg-bg-surface border rounded-2xl p-5 space-y-4 transition-colors ${socialConfig.autoEnabled ? 'border-[#1877F2]/50' : 'border-border'}`}>
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div>
+                  <span className="text-[10px] font-black text-text-secondary uppercase tracking-wider">Automatización</span>
+                  <p className="text-[10px] text-text-secondary mt-1">Publica sola cada cierto tiempo, sin que nadie tenga que entrar al panel.</p>
+                </div>
+                <button
+                  onClick={() => setSocialConfig(prev => ({ ...prev, autoEnabled: !prev.autoEnabled }))}
+                  className={`px-4 py-2 rounded-full text-xs font-bold transition-all cursor-pointer border shrink-0 ${
+                    socialConfig.autoEnabled
+                      ? 'bg-[#1877F2] text-white border-[#1877F2] shadow-md shadow-[#1877F2]/30 font-extrabold'
+                      : 'bg-white/5 text-text-secondary border-white/10'
+                  }`}
+                >
+                  {socialConfig.autoEnabled ? '⚡ Automático Activado' : 'Manual / Desactivado'}
+                </button>
+              </div>
+
+              {socialConfig.autoEnabled && socialNextPostEstimate && (
+                <p className="text-[10px] text-[#1877F2] bg-[#1877F2]/10 border border-[#1877F2]/20 rounded-lg px-3 py-2">
+                  Próxima publicación: {socialNextPostEstimate}
+                </p>
+              )}
+
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <span className="text-[10px] font-bold text-text-secondary uppercase">
+                  {socialConfig.schedule.length > 0 ? 'Horario por franjas (hora de Madrid)' : 'Qué publicar'}
+                </span>
+                <button
+                  onClick={() => {
+                    if (socialConfig.schedule.length > 0) {
+                      if (confirm('¿Volver a modo simple? Se borra el horario por franjas (las frases y la lista curada no se tocan).')) {
+                        setSocialConfig(prev => ({ ...prev, schedule: [] }));
+                      }
+                    } else {
+                      setSocialConfig(prev => ({ ...prev, schedule: [{ hour: 9, mode: prev.selectionMode }] }));
+                    }
+                  }}
+                  className="text-[10px] font-bold text-accent hover:underline cursor-pointer shrink-0"
+                >
+                  {socialConfig.schedule.length > 0 ? 'Volver a modo simple' : 'Activar horario por franjas →'}
+                </button>
+              </div>
+
+              {socialConfig.schedule.length === 0 ? (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-text-secondary uppercase">Cadencia</label>
+                      <select
+                        value={socialConfig.cadenceHours}
+                        onChange={e => setSocialConfig(prev => ({ ...prev, cadenceHours: Number(e.target.value) }))}
+                        className="w-full bg-bg-deep border border-border rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-accent"
+                      >
+                        {[1, 2, 3, 4, 6, 8, 12, 24, 48].map(h => (
+                          <option key={h} value={h}>Cada {h} hora{h > 1 ? 's' : ''}</option>
+                        ))}
+                      </select>
+                      <p className="text-[9px] text-text-secondary">Se comprueba cada hora en punto; nunca publica más seguido de lo elegido.</p>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <div className="flex flex-col gap-1.5">
+                        {(['featured', 'top20', 'trending', 'manual'] as const).map(mode => (
+                          <button
+                            key={mode}
+                            onClick={() => setSocialConfig(prev => ({ ...prev, selectionMode: mode }))}
+                            className={`px-3 py-2 rounded-xl text-xs font-bold border text-left transition-all cursor-pointer ${
+                              socialConfig.selectionMode === mode
+                                ? 'bg-accent border-accent text-white'
+                                : 'bg-white/5 border-white/10 text-text-secondary hover:text-white'
+                            }`}
+                          >
+                            {SOCIAL_MODE_LABELS[mode]}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {socialConfig.selectionMode === 'featured' && (
+                    <p className="text-[10px] text-text-secondary bg-white/5 rounded-lg px-3 py-2">
+                      Publica siempre el Destacado activo (pestaña "Destacado"). Si lo desactivas o lo borras ahí, la automatización se salta el ciclo sin fallar.
+                    </p>
+                  )}
+
+                  {socialConfig.selectionMode === 'top20' && (
+                    <p className="text-[10px] text-text-secondary bg-white/5 rounded-lg px-3 py-2">
+                      Elige al azar entre las 20 canciones con más favoritos y reacciones (histórico de 30 días), evitando repetir cualquiera de las últimas 15 publicadas (a mano o sola).
+                    </p>
+                  )}
+
+                  {socialConfig.selectionMode === 'trending' && (
+                    <p className="text-[10px] text-text-secondary bg-white/5 rounded-lg px-3 py-2">
+                      Elige entre lo más aplaudido (reacciones 👏 🔥) de los últimos 7 días — lo que está gustando ahora, no lo popular de siempre.
+                    </p>
+                  )}
+                </>
+              ) : (
+                <div className="space-y-2">
+                  {sortedSchedule.map(slot => (
+                    <div key={slot.hour} className="flex items-center gap-2 bg-white/5 rounded-xl px-3 py-2">
+                      <select
+                        value={slot.hour}
+                        onChange={e => {
+                          const newHour = Number(e.target.value);
+                          setSocialConfig(prev => ({
+                            ...prev,
+                            schedule: prev.schedule.map(s => s.hour === slot.hour ? { ...s, hour: newHour } : s)
+                          }));
+                        }}
+                        className="bg-bg-deep border border-border rounded-lg px-2 py-2 text-xs text-white focus:outline-none focus:border-accent shrink-0"
+                      >
+                        {Array.from({ length: 24 }).map((_, h) => (
+                          <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>
+                        ))}
+                      </select>
+                      <select
+                        value={slot.mode}
+                        onChange={e => {
+                          const newMode = e.target.value as SocialSelectionMode;
+                          setSocialConfig(prev => ({
+                            ...prev,
+                            schedule: prev.schedule.map(s => s.hour === slot.hour ? { ...s, mode: newMode } : s)
+                          }));
+                        }}
+                        className="flex-1 bg-bg-deep border border-border rounded-lg px-2 py-2 text-xs text-white focus:outline-none focus:border-accent min-w-0"
+                      >
+                        {(['featured', 'top20', 'trending', 'manual'] as const).map(m => (
+                          <option key={m} value={m}>{SOCIAL_MODE_LABELS[m]}</option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={() => handleTestScheduleSlot(slot.hour, slot.mode)}
+                        disabled={socialScheduleTestingHour !== null}
+                        title="Probar esta franja ahora mismo"
+                        className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-text-secondary hover:text-white cursor-pointer disabled:opacity-40 shrink-0"
+                      >
+                        {socialScheduleTestingHour === slot.hour ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                      </button>
+                      <button
+                        onClick={() => setSocialConfig(prev => ({ ...prev, schedule: prev.schedule.filter(s => s.hour !== slot.hour) }))}
+                        className="p-2 rounded-lg text-text-secondary hover:text-red-400 cursor-pointer shrink-0"
+                        title="Quitar franja"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+
+                  {socialScheduleTestResult && (
+                    <p className={`text-[10px] rounded-lg px-3 py-2 ${socialScheduleTestResult.ok ? 'bg-green-500/10 text-green-300' : 'bg-amber-500/10 text-amber-300'}`}>
+                      {String(socialScheduleTestResult.hour).padStart(2, '0')}:00 → {socialScheduleTestResult.text}
+                    </p>
+                  )}
+
+                  <button
+                    onClick={() => setSocialConfig(prev => ({ ...prev, schedule: [...prev.schedule, { hour: nextFreeScheduleHour, mode: 'featured' }] }))}
+                    className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-bold bg-white/5 hover:bg-white/10 text-text-secondary hover:text-white cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Añadir franja
+                  </button>
+                  <p className="text-[9px] text-text-secondary">
+                    El cron pasa cada hora en punto y publica el tipo que toque en esa franja, sin repetirla dentro de la misma hora. Fuera de las horas listadas, no publica nada solo.
+                  </p>
+                </div>
+              )}
+
+              {(socialConfig.schedule.length > 0
+                ? socialConfig.schedule.some(s => s.mode === 'manual')
+                : socialConfig.selectionMode === 'manual') && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-[10px] font-bold text-text-secondary uppercase">Lista curada</label>
+                    <button
+                      type="button"
+                      onClick={handleLoadFavoritesIntoCurated}
+                      className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-pink-500/15 hover:bg-pink-500/25 text-pink-400 border border-pink-500/20 flex items-center gap-1 cursor-pointer transition-all active:scale-95"
+                      title="Cargar tus canciones marcadas como Favoritas (❤️)"
+                    >
+                      <Heart className="w-3 h-3 fill-current text-pink-400" /> Cargar mis Favoritos
+                    </button>
+                  </div>
+                  <input
+                    value={socialManualSearch}
+                    onChange={e => setSocialManualSearch(e.target.value)}
+                    placeholder="Buscar canción para añadir..."
+                    className="w-full bg-bg-deep border border-border rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-accent"
+                  />
+                  {socialManualSearch && (
+                    <div className="max-h-40 overflow-y-auto space-y-1 bg-black/20 rounded-lg p-1.5 border border-white/5">
+                      {socialManualOptions.map(s => (
+                        <button
+                          key={s.id}
+                          onClick={() => {
+                            if (!socialConfig.manualItemIds.includes(s.id)) {
+                              setSocialConfig(prev => ({ ...prev, manualItemIds: [...prev.manualItemIds, s.id] }));
+                            }
+                            setSocialManualSearch('');
+                          }}
+                          className="w-full text-left px-2.5 py-1.5 rounded-lg text-[11px] text-white/80 hover:bg-white/10 hover:text-white flex items-center justify-between gap-2 cursor-pointer"
+                        >
+                          <span className="truncate">{s.tieneLetra ? '♪ ' : ''}{s.titulo}</span>
+                          {socialConfig.manualItemIds.includes(s.id) && <Check className="w-3 h-3 text-green-400 shrink-0" />}
+                        </button>
+                      ))}
+                      {socialManualOptions.length === 0 && (
+                        <p className="text-[10px] text-text-secondary p-2">Sin resultados.</p>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap gap-1.5">
+                    {socialConfig.manualItemIds.length === 0 && (
+                      <p className="text-[10px] text-amber-300">Aún no has añadido ninguna canción a la lista.</p>
+                    )}
+                    {socialConfig.manualItemIds.map(id => {
+                      const info = socialSongOptions.find(s => s.id === id);
+                      return (
+                        <span key={id} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/8 border border-white/10 text-[10px] text-white">
+                          {info?.titulo || id}
+                          <button
+                            onClick={() => setSocialConfig(prev => ({ ...prev, manualItemIds: prev.manualItemIds.filter(x => x !== id) }))}
+                            className="text-text-secondary hover:text-red-400 cursor-pointer"
+                            title="Quitar de la lista"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-2 pt-2 border-t border-white/5">
+                <label className="text-[10px] font-bold text-text-secondary uppercase">
+                  Frases por tipo de publicación (si un tipo no tiene, cae a las genéricas de abajo)
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {(['featured', 'top20', 'trending', 'manual'] as const).map(mode => (
+                    <button
+                      key={mode}
+                      onClick={() => setSocialPhraseModeTab(mode)}
+                      className={`px-2.5 py-1.5 rounded-lg text-[10px] font-bold cursor-pointer transition-all ${
+                        socialPhraseModeTab === mode
+                          ? 'bg-accent text-white'
+                          : 'bg-white/5 text-text-secondary hover:text-white'
+                      }`}
+                    >
+                      {SOCIAL_MODE_LABELS[mode]} ({socialConfig.phrasesByMode?.[mode]?.length || 0})
+                    </button>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    value={socialNewModePhrase}
+                    onChange={e => setSocialNewModePhrase(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && socialNewModePhrase.trim()) {
+                        setSocialConfig(prev => ({ ...prev, phrasesByMode: { ...prev.phrasesByMode, [socialPhraseModeTab]: [...(prev.phrasesByMode?.[socialPhraseModeTab] || []), socialNewModePhrase.trim()] } }));
+                        setSocialNewModePhrase('');
+                      }
+                    }}
+                    placeholder={`Ej: frase pensada para "${SOCIAL_MODE_LABELS[socialPhraseModeTab]}"...`}
+                    className="flex-1 bg-bg-deep border border-border rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-accent"
+                  />
+                  <button
+                    onClick={() => {
+                      if (socialNewModePhrase.trim()) {
+                        setSocialConfig(prev => ({ ...prev, phrasesByMode: { ...prev.phrasesByMode, [socialPhraseModeTab]: [...(prev.phrasesByMode?.[socialPhraseModeTab] || []), socialNewModePhrase.trim()] } }));
+                        setSocialNewModePhrase('');
+                      }
+                    }}
+                    className="px-3 py-2 rounded-xl bg-accent hover:bg-accent/90 text-white text-xs font-bold cursor-pointer shrink-0"
+                  >
+                    + Añadir
+                  </button>
+                </div>
+                {(socialConfig.phrasesByMode?.[socialPhraseModeTab]?.length || 0) === 0 ? (
+                  <p className="text-[10px] text-text-secondary">Sin frases propias para "{SOCIAL_MODE_LABELS[socialPhraseModeTab]}": usará las genéricas de abajo (o el texto por defecto).</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {socialConfig.phrasesByMode[socialPhraseModeTab].map((phrase, i) => (
+                      <div key={i} className="flex items-center gap-2 bg-white/5 rounded-lg px-3 py-2">
+                        <span className="text-xs text-white flex-1">{phrase}</span>
+                        <button
+                          onClick={() => setSocialConfig(prev => ({ ...prev, phrasesByMode: { ...prev.phrasesByMode, [socialPhraseModeTab]: prev.phrasesByMode[socialPhraseModeTab].filter((_, idx) => idx !== i) } }))}
+                          className="text-text-secondary hover:text-red-400 cursor-pointer shrink-0"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2 pt-2 border-t border-white/5">
+                <label className="text-[10px] font-bold text-text-secondary uppercase">
+                  Frases genéricas (reserva si un tipo no tiene frases propias; usa {'{title}'} para insertar el título)
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    value={socialNewPhrase}
+                    onChange={e => setSocialNewPhrase(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && socialNewPhrase.trim()) {
+                        setSocialConfig(prev => ({ ...prev, phrases: [...prev.phrases, socialNewPhrase.trim()] }));
+                        setSocialNewPhrase('');
+                      }
+                    }}
+                    placeholder="Ej: 🔥 {title} está sonando ahora en Aura Radio"
+                    className="flex-1 bg-bg-deep border border-border rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-accent"
+                  />
+                  <button
+                    onClick={() => {
+                      if (socialNewPhrase.trim()) {
+                        setSocialConfig(prev => ({ ...prev, phrases: [...prev.phrases, socialNewPhrase.trim()] }));
+                        setSocialNewPhrase('');
+                      }
+                    }}
+                    className="px-3 py-2 rounded-xl bg-accent hover:bg-accent/90 text-white text-xs font-bold cursor-pointer shrink-0"
+                  >
+                    + Añadir
+                  </button>
+                </div>
+                {socialConfig.phrases.length === 0 ? (
+                  <p className="text-[10px] text-text-secondary">Sin frases genéricas: usará el texto por defecto de arriba en cada publicación.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {socialConfig.phrases.map((phrase, i) => (
+                      <div key={i} className="flex items-center gap-2 bg-white/5 rounded-lg px-3 py-2">
+                        <span className="text-xs text-white flex-1">{phrase}</span>
+                        <button
+                          onClick={() => setSocialConfig(prev => ({ ...prev, phrases: prev.phrases.filter((_, idx) => idx !== i) }))}
+                          className="text-text-secondary hover:text-red-400 cursor-pointer shrink-0"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2 pt-2 border-t border-white/5">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-[10px] font-bold text-text-secondary uppercase">Hashtags automáticos</label>
+                  <button
+                    onClick={() => setSocialConfig(prev => ({ ...prev, hashtags: { ...prev.hashtags, enabled: !prev.hashtags.enabled } }))}
+                    className={`px-3 py-1.5 rounded-full text-[10px] font-bold cursor-pointer border shrink-0 ${
+                      socialConfig.hashtags?.enabled
+                        ? 'bg-accent border-accent text-white'
+                        : 'bg-white/5 border-white/10 text-text-secondary'
+                    }`}
+                  >
+                    {socialConfig.hashtags?.enabled ? 'Activados' : 'Desactivados'}
+                  </button>
+                </div>
+                <p className="text-[9px] text-text-secondary">
+                  Siempre añade #AuraRadio, un tag del tipo de publicación (#Destacado, #Top20, #Tendencia) y la categoría de la canción si tiene. Además, unos pocos al azar del pool de abajo, para que no se repitan siempre igual.
+                </p>
+                {socialConfig.hashtags?.enabled && (
+                  <>
+                    <div className="flex items-center gap-2">
+                      <label className="text-[10px] text-text-secondary">Del pool, cuántos por publicación:</label>
+                      <select
+                        value={socialConfig.hashtags.perPost}
+                        onChange={e => setSocialConfig(prev => ({ ...prev, hashtags: { ...prev.hashtags, perPost: Number(e.target.value) } }))}
+                        className="bg-bg-deep border border-border rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-accent"
+                      >
+                        {[0, 1, 2, 3, 4].map(n => <option key={n} value={n}>{n}</option>)}
+                      </select>
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        value={socialNewHashtag}
+                        onChange={e => setSocialNewHashtag(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' && socialNewHashtag.trim()) {
+                            setSocialConfig(prev => ({ ...prev, hashtags: { ...prev.hashtags, pool: [...prev.hashtags.pool, socialNewHashtag.trim().replace(/^#/, '')] } }));
+                            setSocialNewHashtag('');
+                          }
+                        }}
+                        placeholder="Ej: MusicaEnDirecto (sin #)"
+                        className="flex-1 bg-bg-deep border border-border rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-accent"
+                      />
+                      <button
+                        onClick={() => {
+                          if (socialNewHashtag.trim()) {
+                            setSocialConfig(prev => ({ ...prev, hashtags: { ...prev.hashtags, pool: [...prev.hashtags.pool, socialNewHashtag.trim().replace(/^#/, '')] } }));
+                            setSocialNewHashtag('');
+                          }
+                        }}
+                        className="px-3 py-2 rounded-xl bg-accent hover:bg-accent/90 text-white text-xs font-bold cursor-pointer shrink-0"
+                      >
+                        + Añadir
+                      </button>
+                    </div>
+                    {(socialConfig.hashtags.pool?.length || 0) === 0 ? (
+                      <p className="text-[10px] text-amber-300">Sin hashtags propios en el pool todavía.</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5">
+                        {socialConfig.hashtags.pool.map((tag, i) => (
+                          <span key={i} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/8 border border-white/10 text-[10px] text-white">
+                            #{tag}
+                            <button
+                              onClick={() => setSocialConfig(prev => ({ ...prev, hashtags: { ...prev.hashtags, pool: prev.hashtags.pool.filter((_, idx) => idx !== i) } }))}
+                              className="text-text-secondary hover:text-red-400 cursor-pointer"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+
+              <div className="pt-2 border-t border-white/5 space-y-2">
+                <button
+                  onClick={handleRunSocialNow}
+                  disabled={socialRunningNow || !socialStatus?.connected}
+                  className="w-full py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed bg-white/10 hover:bg-white/15 border border-white/15 text-white"
+                >
+                  {socialRunningNow ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+                  {socialRunningNow ? 'Probando…' : 'Probar automatización ahora'}
+                </button>
+                <p className="text-[9px] text-text-secondary text-center">
+                  Publica de verdad con la configuración de arriba, saltándose el interruptor y la cadencia. Sirve para ver el resultado mientras ajustas frases y selección — no lo pulses más de lo necesario.
+                </p>
+                {socialRunResult && (
+                  <div className={`p-2.5 rounded-xl text-[11px] border ${socialRunResult.ok ? 'bg-green-500/10 border-green-500/30 text-green-300' : 'bg-amber-500/10 border-amber-500/30 text-amber-300'}`}>
+                    {socialRunResult.text}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Plantillas y generador de tarjetas */}
+            <div className="bg-bg-surface border border-border rounded-2xl p-5 space-y-4">
+              <div>
+                <span className="text-[10px] font-black text-text-secondary uppercase tracking-wider">Plantillas y generador de tarjetas</span>
+                <p className="text-[10px] text-text-secondary mt-1">
+                  Para Instagram (donde la imagen es el post) y de paso mejora la tarjeta de Facebook: reemplaza la silueta genérica por una portada de verdad.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-text-secondary uppercase">Fondos disponibles</label>
+                {socialConfig.imageTemplates.length === 0 ? (
+                  <p className="text-[10px] text-amber-300">Aún no has subido ninguna plantilla.</p>
+                ) : (
+                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                    {socialConfig.imageTemplates.map(tpl => (
+                      <div key={tpl.id} className="relative group rounded-xl overflow-hidden border border-white/10 aspect-square">
+                        <img src={tpl.backgroundUrl} alt={tpl.name} className="w-full h-full object-cover" />
+                        {replacingTemplateId === tpl.id ? (
+                          <div className="absolute inset-0 bg-black/85 flex flex-col items-center justify-center gap-1.5 p-2">
+                            <input
+                              autoFocus
+                              value={replaceUrlValue}
+                              onChange={e => setReplaceUrlValue(e.target.value)}
+                              placeholder="URL de la imagen nueva"
+                              className="w-full bg-bg-deep border border-border rounded-lg px-2 py-1 text-[9px] text-white focus:outline-none focus:border-accent"
+                            />
+                            <div className="flex gap-1 w-full">
+                              <button
+                                onClick={() => handleReplaceTemplateImage(tpl)}
+                                disabled={socialImporting || !replaceUrlValue.trim()}
+                                className="flex-1 py-1 rounded-md bg-accent hover:bg-accent/90 text-white text-[9px] font-bold cursor-pointer disabled:opacity-40"
+                              >
+                                {socialImporting ? '…' : 'Cambiar'}
+                              </button>
+                              <button
+                                onClick={() => { setReplacingTemplateId(null); setReplaceUrlValue(''); }}
+                                className="px-2 py-1 rounded-md bg-white/10 hover:bg-white/15 text-white text-[9px] cursor-pointer"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1.5 p-1">
+                            <span className="text-[9px] text-white font-bold text-center truncate w-full px-1">{tpl.name}</span>
+                            <div className="flex gap-1">
+                              <button
+                                onClick={() => { setReplacingTemplateId(tpl.id); setReplaceUrlValue(''); }}
+                                className="p-1.5 rounded-full bg-white/15 hover:bg-white/25 text-white cursor-pointer"
+                                title="Reemplazar la imagen de esta plantilla (por URL)"
+                              >
+                                <RefreshCw className="w-3 h-3" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteTemplate(tpl)}
+                                className="p-1.5 rounded-full bg-red-500/80 hover:bg-red-500 text-white cursor-pointer"
+                                title="Borrar plantilla"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="bg-black/20 rounded-xl p-3 space-y-2 border border-white/5">
+                  <p className="text-[9px] font-bold text-text-secondary uppercase">Añadir plantilla nueva</p>
+                  <input
+                    value={socialNewTemplateName}
+                    onChange={e => setSocialNewTemplateName(e.target.value)}
+                    placeholder="Nombre (ej: Atardecer flamenco)"
+                    className="w-full bg-bg-deep border border-border rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent"
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="flex items-center gap-2 bg-bg-deep border border-border rounded-lg px-2.5">
+                      <label className="text-[9px] text-text-secondary shrink-0">Color texto</label>
+                      <input
+                        type="color"
+                        value={socialNewTemplateColor}
+                        onChange={e => setSocialNewTemplateColor(e.target.value)}
+                        className="w-7 h-7 rounded cursor-pointer bg-transparent border-0"
+                      />
+                    </div>
+                    <select
+                      value={socialNewTemplatePosition}
+                      onChange={e => setSocialNewTemplatePosition(e.target.value as 'top' | 'center' | 'bottom')}
+                      className="bg-bg-deep border border-border rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-accent"
+                    >
+                      <option value="top">Texto arriba</option>
+                      <option value="center">Texto en el centro</option>
+                      <option value="bottom">Texto abajo</option>
+                    </select>
+                  </div>
+                  <label className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-bold transition-all ${socialTemplateUploading ? 'bg-white/5 text-text-secondary cursor-wait' : 'bg-accent hover:bg-accent/90 text-white cursor-pointer'}`}>
+                    {socialTemplateUploading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                    {socialTemplateUploading ? 'Subiendo…' : 'Elegir imagen y subir'}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      disabled={socialTemplateUploading}
+                      onChange={e => {
+                        const file = e.target.files?.[0];
+                        if (file) handleUploadTemplate(file);
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 h-px bg-white/10" />
+                    <span className="text-[9px] text-text-secondary uppercase">o desde una URL</span>
+                    <div className="flex-1 h-px bg-white/10" />
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      value={socialImportUrl}
+                      onChange={e => setSocialImportUrl(e.target.value)}
+                      placeholder="https://... (imagen generada fuera, IA, etc.)"
+                      className="flex-1 bg-bg-deep border border-border rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent"
+                    />
+                    <button
+                      onClick={handleImportTemplateFromUrl}
+                      disabled={socialImporting || !socialImportUrl.trim()}
+                      className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 border border-white/15 text-white text-xs font-bold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shrink-0 flex items-center gap-1.5"
+                    >
+                      {socialImporting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : null}
+                      Importar
+                    </button>
+                  </div>
+                  <p className="text-[9px] text-text-secondary">
+                    Cuadradas van mejor (1080×1080); cualquier otra proporción se recorta al centro. El worker descarga la imagen de esa URL y la guarda en nuestro propio R2 — no queda dependiendo del sitio externo.
+                  </p>
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-white/5 space-y-3">
+                <label className="text-[10px] font-bold text-text-secondary uppercase">Generar una tarjeta</label>
+
+                <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-4 items-start">
+                  <div className="space-y-3">
+                    <select
+                      value={cardSongId}
+                      onChange={e => setCardSongId(e.target.value)}
+                      className="w-full bg-bg-deep border border-border rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-accent"
+                    >
+                      <option value="">— Elige una canción —</option>
+                      {socialSongOptions.map(s => (
+                        <option key={s.id} value={s.id}>{s.tieneLetra ? '♪ ' : ''}{s.titulo}</option>
+                      ))}
+                    </select>
+
+                    <select
+                      value={cardTemplateId}
+                      onChange={e => setCardTemplateId(e.target.value)}
+                      className="w-full bg-bg-deep border border-border rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-accent"
+                    >
+                      <option value="">— Sin plantilla (fondo liso) —</option>
+                      {socialConfig.imageTemplates.map(tpl => (
+                        <option key={tpl.id} value={tpl.id}>{tpl.name}</option>
+                      ))}
+                    </select>
+
+                    <input
+                      value={cardCaption}
+                      onChange={e => setCardCaption(e.target.value)}
+                      placeholder="Verso o frase corta (opcional)"
+                      className="w-full bg-bg-deep border border-border rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-accent"
+                    />
+                    {cardSelectedSong?.firstLine && cardCaption === cardSelectedSong.firstLine && (
+                      <p className="text-[9px] text-text-secondary">Sugerido del primer verso de la letra. Bórralo o cámbialo si quieres.</p>
+                    )}
+                  </div>
+
+                  <div className="flex justify-center">
+                    <canvas
+                      ref={cardPreviewCanvasRef}
+                      width={SOCIAL_CARD_SIZE}
+                      height={SOCIAL_CARD_SIZE}
+                      className="w-full max-w-[220px] aspect-square rounded-2xl border border-white/10 shadow-xl bg-black/40"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleGenerateCard}
+                  disabled={cardGenerating || !cardSongId}
+                  className="w-full py-3 rounded-xl text-sm font-black flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed bg-gradient-to-r from-purple-600 to-pink-500 hover:opacity-90 text-white"
+                >
+                  {cardGenerating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                  {cardGenerating ? 'Generando…' : 'Generar y guardar tarjeta'}
+                </button>
+
+                {cardResult && (
+                  <div className={`p-3 rounded-xl text-xs border ${cardResult.ok ? 'bg-green-500/10 border-green-500/30 text-green-300' : 'bg-red-500/10 border-red-500/30 text-red-300'}`}>
+                    {cardResult.text}
+                    {cardResult.url && (
+                      <a href={cardResult.url} target="_blank" rel="noopener noreferrer" className="block mt-1 underline font-bold">
+                        Ver la imagen ↗
+                      </a>
+                    )}
+                  </div>
+                )}
+
+                {cardResult?.ok && cardResult.url && (
+                  <div className="pt-3 border-t border-white/5 space-y-2">
+                    <label className="text-[10px] font-bold text-text-secondary uppercase">Publicar esta tarjeta en Instagram</label>
+                    <textarea
+                      value={igCaption}
+                      onChange={e => setIgCaption(e.target.value)}
+                      rows={3}
+                      placeholder="Pie de foto para Instagram..."
+                      className="w-full bg-bg-deep border border-border rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-accent resize-y"
+                    />
+                    <button
+                      onClick={handlePublishToInstagram}
+                      disabled={igPublishing || !socialStatus?.instagram?.connected || socialConfig.instagramEnabled === false}
+                      className="w-full py-3 rounded-xl text-sm font-black flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed bg-gradient-to-r from-purple-500 via-pink-500 to-amber-400 hover:opacity-90 text-white"
+                    >
+                      {igPublishing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                      {igPublishing ? 'Publicando… (puede tardar unos segundos)' : 'Publicar en Instagram'}
+                    </button>
+                    {!socialStatus?.instagram?.connected ? (
+                      <p className="text-[10px] text-amber-300 text-center">
+                        Instagram no está conectado todavía — revisa "Estado del puente" arriba.
+                      </p>
+                    ) : socialConfig.instagramEnabled === false ? (
+                      <p className="text-[10px] text-amber-300 text-center font-bold">
+                        ⏸️ La sincronización con Instagram está pausada. Actívala arriba para poder publicar.
+                      </p>
+                    ) : null}
+                    {igResult && (
+                      <div className={`p-3 rounded-xl text-xs border ${igResult.ok ? 'bg-green-500/10 border-green-500/30 text-green-300' : 'bg-red-500/10 border-red-500/30 text-red-300'}`}>
+                        {igResult.text}
+                        {igResult.url && (
+                          <a href={igResult.url} target="_blank" rel="noopener noreferrer" className="block mt-1 underline font-bold">
+                            Ver el perfil ↗
+                          </a>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Publicar ahora */}
+            <div className="bg-bg-surface border border-border rounded-2xl p-5 space-y-4">
+              <span className="text-[10px] font-black text-text-secondary uppercase tracking-wider">Publicar ahora</span>
+
+              <div className="flex gap-2">
+                {(['song', 'category'] as const).map(t => (
+                  <button
+                    key={t}
+                    onClick={() => { setSocialLinkType(t); setSocialItemId(''); }}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${socialLinkType === t ? 'bg-accent border-accent text-white' : 'bg-white/5 border-white/10 text-text-secondary hover:text-white'}`}
+                  >
+                    {t === 'song' ? 'Una canción' : 'Una categoría'}
+                  </button>
+                ))}
+              </div>
+
+              {socialLinkType === 'category' ? (
+                <select
+                  value={socialItemId}
+                  onChange={e => setSocialItemId(e.target.value)}
+                  className="w-full bg-bg-deep border border-border rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-accent"
+                >
+                  <option value="">— Elige una categoría —</option>
+                  {categories.filter(c => c.r2_folder).map(c => (
+                    <option key={c.id} value={c.id}>{c.alias || c.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <div className="space-y-2">
+                  <select
+                    value={socialItemId}
+                    onChange={e => setSocialItemId(e.target.value)}
+                    className="w-full bg-bg-deep border border-border rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-accent"
+                  >
+                    <option value="">— Elige una canción del catálogo —</option>
+                    {socialSongOptions.map((s) => (
+                      <option key={s.id} value={s.id}>{s.tieneLetra ? '♪ ' : ''}{s.titulo}</option>
+                    ))}
+                  </select>
+                  <p className="text-[9px] text-text-secondary">
+                    Las marcadas con ♪ tienen letra y salen primero: son las que dan una tarjeta más rica en Facebook.
+                  </p>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-text-secondary uppercase">Texto de esta publicación</label>
+                <textarea
+                  value={socialMessage}
+                  onChange={e => setSocialMessage(e.target.value)}
+                  rows={3}
+                  placeholder={socialConfig.defaultMessage}
+                  className="w-full bg-bg-deep border border-border rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-accent resize-y"
+                />
+              </div>
+
+              {/* Vista previa */}
+              {buildSocialLink() && (
+                <div className="bg-bg-deep border border-white/10 rounded-xl p-4 space-y-2">
+                  <span className="text-[9px] font-black text-accent uppercase tracking-wider">Así se publicará</span>
+                  <p className="text-xs text-white whitespace-pre-wrap">{socialMessage || socialConfig.defaultMessage}</p>
+                  <a
+                    href={buildSocialLink()}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block text-[10px] text-accent font-mono break-all hover:underline"
+                  >
+                    {buildSocialLink()}
+                  </a>
+                  <p className="text-[9px] text-text-secondary">
+                    Facebook rastreará ese enlace y montará la tarjeta con la portada, el título y la descripción.
+                  </p>
+                </div>
+              )}
+
+              <button
+                onClick={handlePublishToFacebook}
+                disabled={socialPublishing || !socialStatus?.connected || !socialItemId}
+                className="w-full py-3 rounded-xl text-sm font-black flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed bg-[#1877F2] hover:bg-[#166fe0] text-white"
+              >
+                {socialPublishing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                {socialPublishing ? 'Publicando…' : 'Publicar en Facebook'}
+              </button>
+
+              {!socialStatus?.connected && (
+                <p className="text-[10px] text-amber-300 text-center">
+                  Completa antes los tres pasos del puente.
+                </p>
+              )}
+
+              {socialResult && (
+                <div className={`p-3 rounded-xl text-xs border ${socialResult.ok ? 'bg-green-500/10 border-green-500/30 text-green-300' : 'bg-red-500/10 border-red-500/30 text-red-300'}`}>
+                  {socialResult.text}
+                  {socialResult.url && (
+                    <a href={socialResult.url} target="_blank" rel="noopener noreferrer" className="block mt-1 underline font-bold">
+                      Ver la publicación ↗
+                    </a>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Historial */}
+            <div className="bg-bg-surface border border-border rounded-2xl p-5 space-y-3">
+              <span className="text-[10px] font-black text-text-secondary uppercase tracking-wider">Historial de publicaciones</span>
+              {(socialConfig.postHistory || []).length === 0 ? (
+                <p className="text-[10px] text-text-secondary">Todavía no hay ninguna publicación registrada.</p>
+              ) : (
+                <div className="space-y-1.5 max-h-72 overflow-y-auto no-scrollbar">
+                  {socialConfig.postHistory.map((entry, i) => {
+                    const isInstagram = entry.platform === 'instagram';
+                    return (
+                      <div key={`${entry.timestamp}-${i}`} className="flex items-center gap-3 bg-white/5 rounded-xl px-3 py-2.5">
+                        <span
+                          className={`shrink-0 px-2 py-1 rounded-full text-[8px] font-black uppercase tracking-wider ${isInstagram ? 'bg-gradient-to-r from-purple-500 to-amber-400 text-white' : 'bg-[#1877F2] text-white'}`}
+                        >
+                          {isInstagram ? 'IG' : 'FB'}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs text-white font-bold truncate">{entry.title || entry.itemId}</p>
+                          <p className="text-[9px] text-text-secondary">
+                            {new Date(entry.timestamp).toLocaleString('es-ES')} · {entry.auto ? 'Automática' : 'Manual'} · {entry.itemType === 'category' ? 'Categoría' : 'Canción'}
+                          </p>
+                        </div>
+                        {entry.postUrl && (
+                          <a
+                            href={entry.postUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="shrink-0 text-[10px] text-accent hover:underline font-bold"
+                          >
+                            Ver ↗
+                          </a>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+
         {activeTab === 'destacado' && (
           <motion.div
             initial={{ opacity: 0, y: 15 }}
@@ -6541,17 +11194,30 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
                   Una canción o categoría destacada que se presenta a los visitantes justo al entrar, con su propio momento visual mientras suena la sintonía de bienvenida.
                 </p>
               </div>
-              <button
-                onClick={() => setFeaturedConfig(prev => ({ ...prev, enabled: !prev.enabled }))}
-                className={`px-3 py-1 rounded-full text-[10px] font-bold transition-all cursor-pointer border shrink-0 ${
-                  featuredConfig.enabled
-                    ? 'bg-accent text-white border-accent/60 shadow-md shadow-accent/20'
-                    : 'bg-white/5 text-text-secondary border-white/10'
-                }`}
-              >
-                {featuredConfig.enabled ? '✓ Activado' : 'Desactivado'}
-              </button>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => {
+                    triggerHaptic(10);
+                    window.dispatchEvent(new CustomEvent('aura-preview-featured', { detail: { featuredConfig } }));
+                  }}
+                  className="px-3.5 py-1.5 rounded-full text-xs font-black bg-gradient-to-r from-accent to-purple-600 hover:from-accent/90 hover:to-purple-500 text-white shadow-lg shadow-accent/20 border border-white/20 transition-all cursor-pointer active:scale-95 flex items-center gap-1.5"
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>👁️ Previsualizar Modal</span>
+                </button>
+                <button
+                  onClick={() => setFeaturedConfig(prev => ({ ...prev, enabled: !prev.enabled }))}
+                  className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer border ${
+                    featuredConfig.enabled
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-md'
+                      : 'bg-white/5 text-text-secondary border-white/10'
+                  }`}
+                >
+                  {featuredConfig.enabled ? '✓ Activado' : 'Desactivado'}
+                </button>
+              </div>
             </div>
+
 
             {/* Type + item picker */}
             <div className="p-4 bg-bg-surface border border-border rounded-2xl space-y-4">
@@ -6727,18 +11393,27 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
             animate={{ opacity: 1, y: 0 }}
             className="p-6 md:p-8 space-y-6 overflow-y-auto h-full pb-24 no-scrollbar"
           >
-            <div className="flex items-center justify-between border-b border-border pb-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-border pb-4 gap-4">
               <div>
                 <h2 className="text-xl font-black text-white uppercase flex items-center gap-3">
                   <Sparkles className="text-accent w-6 h-6 animate-pulse" /> Visualizadores GLSL
                 </h2>
                 <p className="text-xs text-text-secondary mt-1">
-                  Activa o desactiva los modos visuales del modo inmersivo (LIVE). Cada oyente ve uno elegido automáticamente; solo se muestran los que dejes activados aquí.
+                  Activa, desactiva o elimina uno a uno los modos visuales del modo inmersivo (LIVE).
                 </p>
               </div>
-              <span className="text-xs font-bold text-text-secondary bg-bg-surface border border-border px-3 py-1.5 rounded-xl whitespace-nowrap">
-                {customVisualizers.filter(v => v.enabled).length} / {customVisualizers.length} activos
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-text-secondary bg-bg-surface border border-border px-3 py-1.5 rounded-xl whitespace-nowrap">
+                  {customVisualizers.filter(v => v.enabled).length} / {customVisualizers.length} activos
+                </span>
+                <button
+                  onClick={resetVisualizersToDefault}
+                  className="text-xs font-bold text-accent hover:text-white bg-accent/10 hover:bg-accent/20 border border-accent/20 px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
+                  title="Restablecer todos los visualizadores por defecto"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" /> Restablecer
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -6749,13 +11424,20 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
                 >
                   <div className="aspect-video bg-black relative">
                     {viz.customCode && <ShaderPreview code={viz.customCode} className="w-full h-full block" />}
-                    <div className="absolute top-2 right-2">
+                    <div className="absolute top-2 right-2 flex items-center gap-2">
                       <button
                         onClick={() => toggleVisualizer(viz.id)}
                         className={`relative w-11 h-6 rounded-full transition-colors cursor-pointer ${viz.enabled ? 'bg-accent' : 'bg-white/20'}`}
                         title={viz.enabled ? 'Desactivar' : 'Activar'}
                       >
                         <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${viz.enabled ? 'translate-x-5' : 'translate-x-0'}`} />
+                      </button>
+                      <button
+                        onClick={() => deleteVisualizer(viz.id)}
+                        className="p-1 bg-black/70 hover:bg-red-600/90 text-white/70 hover:text-white rounded-lg backdrop-blur-md border border-white/10 transition-all cursor-pointer"
+                        title="Eliminar este visualizador"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   </div>
@@ -6767,11 +11449,22 @@ Aquí tienes los datos de acceso para comenzar a configurar tu radio:
               ))}
             </div>
 
-            {customVisualizers.every(v => !v.enabled) && (
+            {customVisualizers.length === 0 ? (
+              <div className="text-center py-12 space-y-3 bg-bg-surface border border-dashed border-border rounded-3xl">
+                <Sparkles className="w-8 h-8 text-accent mx-auto opacity-50" />
+                <p className="text-sm font-bold text-white">Has eliminado todos los visualizadores.</p>
+                <button
+                  onClick={resetVisualizersToDefault}
+                  className="px-4 py-2 bg-accent text-white font-bold text-xs rounded-xl hover:bg-accent/80 transition-all cursor-pointer inline-flex items-center gap-2"
+                >
+                  <RotateCcw className="w-4 h-4" /> Restablecer lista por defecto
+                </button>
+              </div>
+            ) : customVisualizers.every(v => !v.enabled) ? (
               <div className="text-center py-6 text-amber-400 text-xs bg-amber-500/10 border border-amber-500/20 rounded-2xl">
                 Sin visualizadores activos, el modo inmersivo mostrará todos por defecto. Activa al menos uno para elegir cuáles se muestran.
               </div>
-            )}
+            ) : null}
           </motion.div>
         )}
 
@@ -7183,73 +11876,58 @@ Pestañas: General, Canciones, Grilla Publicitaria, Banners, Podcasts, Widget, U
 - Muestra: carátula, título/artista, visualizador de barras, letras (customMetadata.lyrics), significado, citas rotativas.
 
 ### Gemini API
-- Usado en Cerebro Técnico y StoryGenerator.
-- Endpoint: REST API v1beta /models/gemini-1.5-flash:generateContent (con fallback a gemini-2.5-flash y gemini-1.5-pro).
-- Payload: systemInstruction (camelCase).
+- El Cerebro Técnico habla con Gemini a TRAVÉS del worker (POST /api/admin/brain/chat, admin-gated). La clave vive solo como secreto del worker (GEMINI_API_KEY), la misma que boletines y podcasts; nunca viaja por el navegador.
+- Modelos: gemini-3.6-flash con fallback a gemini-2.0-flash.
+- StoryGenerator aún usa clave en el navegador (localStorage) para generar fondos.
 
 Responde siempre en español, de forma técnica, clara y precisa.`;
 
           const sendBrainMessage = async () => {
             if (!brainInput.trim() || isBrainLoading) return;
-            const key = brainApiKey || localStorage.getItem('aura_gemini_api_key') || '';
-            if (!key) {
-              setBrainMessages(prev => [...prev, { role: 'model', text: '⚠️ Necesito una API Key de Gemini para funcionar. Introduce tu clave en el campo de arriba y guárdala.', ts: Date.now() }]);
-              return;
-            }
             const userMsg = brainInput.trim();
             setBrainInput('');
+            // Historial que enviamos (incluye el mensaje actual del usuario).
+            const historyForApi = [...brainMessages, { role: 'user', text: userMsg }];
             setBrainMessages(prev => [...prev, { role: 'user', text: userMsg, ts: Date.now() }]);
             setIsBrainLoading(true);
 
             try {
-              const history = brainMessages.map(m => ({
-                role: m.role,
-                parts: [{ text: m.text }]
-              }));
-
-              const modelsToTry = ['gemini-1.5-flash', 'gemini-2.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash-exp'];
+              // La clave de Gemini vive SOLO como secreto del worker (la misma que
+              // usan boletines y podcasts). El navegador ya no la maneja: hablamos
+              // con nuestro propio endpoint admin y el worker llama a Gemini.
               let reply = '';
               let apiErrorMessage = '';
 
-              for (const model of modelsToTry) {
-                try {
-                  const response = await fetch(
-                    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
-                    {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        systemInstruction: { parts: [{ text: AURA_SYSTEM_PROMPT }] },
-                        contents: [
-                          ...history,
-                          { role: 'user', parts: [{ text: userMsg }] }
-                        ],
-                        generationConfig: {
-                          temperature: 0.7,
-                          maxOutputTokens: 2048
-                        }
-                      })
-                    }
-                  );
-                  const data = await response.json();
-                  if (response.ok && data.candidates?.[0]?.content?.parts?.[0]?.text) {
-                    reply = data.candidates[0].content.parts[0].text;
-                    break;
-                  } else if (data.error?.message) {
-                    apiErrorMessage = data.error.message;
-                  }
-                } catch (err: any) {
-                  apiErrorMessage = err.message || 'Error de red al conectar con Google Gemini.';
+              try {
+                const response = await fetch(`${API_CONFIG.BASE_URL}/api/admin/brain/chat`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                  },
+                  body: JSON.stringify({
+                    systemPrompt: AURA_SYSTEM_PROMPT,
+                    apiKey: brainApiKey || localStorage.getItem('aura_gemini_api_key') || undefined,
+                    messages: historyForApi.map(m => ({ role: m.role, text: m.text }))
+                  })
+                });
+                const data = await response.json();
+                if (response.ok && data.success && data.reply) {
+                  reply = data.reply;
+                } else {
+                  apiErrorMessage = data.error || `El worker respondió ${response.status}.`;
                 }
+              } catch (err: any) {
+                apiErrorMessage = err.message || 'Error de red al conectar con el worker.';
               }
 
               if (reply) {
                 setBrainMessages(prev => [...prev, { role: 'model', text: reply, ts: Date.now() }]);
               } else {
-                setBrainMessages(prev => [...prev, { 
-                  role: 'model', 
-                  text: `❌ Error de Gemini API: ${apiErrorMessage || 'No se pudo obtener respuesta'}. Comprueba que la API Key es válida en el botón superior "API Key".`, 
-                  ts: Date.now() 
+                setBrainMessages(prev => [...prev, {
+                  role: 'model',
+                  text: `❌ Error del Cerebro: ${apiErrorMessage || 'No se pudo obtener respuesta'}. Revisa que el secreto GEMINI_API_KEY siga configurado en el worker.`,
+                  ts: Date.now()
                 }]);
               }
             } catch (err) {
@@ -7486,6 +12164,326 @@ Responde siempre en español, de forma técnica, clara y precisa.`;
                 </button>
               </div>
 
+              {/* ===== CLOUDFLARE R2 DIRECT UPLOAD & STORAGE EXPLORER ===== */}
+              <div className="bg-bg-surface border border-amber-500/30 rounded-3xl p-6 md:p-8 space-y-6 shadow-xl shadow-amber-500/5 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-96 h-96 bg-amber-500/10 rounded-full blur-[100px] pointer-events-none" />
+
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/70 pb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+                      <Upload className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-black text-white uppercase tracking-wider flex items-center gap-2">
+                        Control Total de Archivos R2 (Subidas, Preescucha y Borrado)
+                      </h3>
+                      <p className="text-xs text-text-secondary">
+                        Sube cuñas o jingles MP3 directo a tu bucket Cloudflare R2 y gestiónalos físicamente sin salir del panel.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-bold text-amber-300 bg-amber-500/10 px-3 py-1.5 rounded-xl border border-amber-500/30 font-mono">
+                      Carpeta activa: {adUploadFolder}/
+                    </span>
+                  </div>
+                </div>
+
+                {adUploadStatus && (
+                  <div className={`p-4 rounded-2xl text-xs font-bold flex items-center gap-3 animate-[fadeIn_0.3s_ease] ${
+                    adUploadStatus.ok
+                      ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-300'
+                      : 'bg-red-500/15 border border-red-500/30 text-red-300'
+                  }`}>
+                    {adUploadStatus.ok ? <CheckCircle2 className="w-5 h-5 shrink-0 text-emerald-400" /> : <AlertCircle className="w-5 h-5 shrink-0 text-red-400" />}
+                    <span className="flex-1 leading-relaxed">{adUploadStatus.text}</span>
+                    <button onClick={() => setAdUploadStatus(null)} className="text-white/60 hover:text-white cursor-pointer">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                  {/* Columna 1: Formulario de Subida Directa a R2 */}
+                  <div className="space-y-4 bg-black/20 p-5 rounded-2xl border border-white/5">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-black text-amber-400 uppercase tracking-wider flex items-center gap-2">
+                        <Upload className="w-4 h-4" /> Subir Nueva Cuña a R2
+                      </h4>
+                      <span className="text-[10px] text-text-secondary">Formatos: MP3, WAV, M4A</span>
+                    </div>
+
+                    {/* Drag & Drop File Selector */}
+                    <label className={`w-full flex flex-col items-center justify-center gap-2 py-6 px-4 rounded-2xl border-2 border-dashed transition-all cursor-pointer ${
+                      adUploadFile
+                        ? 'bg-amber-500/10 border-amber-400 text-white'
+                        : 'bg-white/[0.02] hover:bg-white/[0.05] border-white/10 hover:border-amber-400/50 text-text-secondary hover:text-white'
+                    }`}>
+                      <input
+                        type="file"
+                        accept="audio/mpeg,audio/mp4,audio/wav,audio/aac,.mp3,.m4a,.wav,.aac"
+                        className="hidden"
+                        disabled={isUploadingAd}
+                        onChange={e => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            setAdUploadFile(file);
+                            if (!adUploadSponsor) {
+                              const cleanName = file.name.replace(/\.[^/.]+$/, '');
+                              setAdUploadSponsor(cleanName);
+                            }
+                          }
+                          e.target.value = '';
+                        }}
+                      />
+                      {adUploadFile ? (
+                        <div className="text-center space-y-1">
+                          <CheckCircle2 className="w-8 h-8 text-amber-400 mx-auto animate-bounce" />
+                          <p className="text-xs font-bold text-white truncate max-w-xs">{adUploadFile.name}</p>
+                          <p className="text-[10px] text-amber-300/80 font-mono">{(adUploadFile.size / (1024 * 1024)).toFixed(2)} MB · Clic para cambiar</p>
+                        </div>
+                      ) : (
+                        <div className="text-center space-y-1">
+                          <Megaphone className="w-8 h-8 text-amber-400/60 mx-auto" />
+                          <p className="text-xs font-bold text-white">Haz clic o arrastra tu cuña aquí</p>
+                          <p className="text-[10px] text-text-secondary">Se enviará directamente al bucket R2</p>
+                        </div>
+                      )}
+                    </label>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {/* Carpeta R2 */}
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-text-secondary uppercase">Carpeta R2 Destino</label>
+                        <select
+                          value={adUploadFolder}
+                          onChange={e => setAdUploadFolder(e.target.value)}
+                          className="w-full bg-bg-deep border border-border rounded-xl px-3 py-2 text-xs text-white focus:border-amber-400"
+                        >
+                          <option value="audioads">📁 audioads/ (Cuñas y Promos)</option>
+                          <option value="jingles">📁 jingles/ (Jingles y Sintonías)</option>
+                          <option value="boletines">📁 boletines/ (Informativos)</option>
+                        </select>
+                      </div>
+
+                      {/* Nombre del Patrocinador / Título */}
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-text-secondary uppercase">Nombre / Sponsor</label>
+                        <input
+                          type="text"
+                          placeholder="Ej: Promo App Aura, Sponsor X..."
+                          value={adUploadSponsor}
+                          onChange={e => setAdUploadSponsor(e.target.value)}
+                          className="w-full bg-bg-deep border border-border rounded-xl px-3 py-2 text-xs text-white focus:border-amber-400"
+                        />
+                      </div>
+
+                      {/* Categoría Objetivo */}
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-text-secondary uppercase">Categoría Objetivo</label>
+                        <select
+                          value={adUploadTargetCategory}
+                          onChange={e => setAdUploadTargetCategory(e.target.value)}
+                          className="w-full bg-bg-deep border border-border rounded-xl px-3 py-2 text-xs text-white focus:border-amber-400"
+                        >
+                          <option value="all">Todas las Categorías</option>
+                          {categories.map(c => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Franja Horaria */}
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-text-secondary uppercase">Franja Horaria</label>
+                        <select
+                          value={adUploadTimeConstraint}
+                          onChange={e => setAdUploadTimeConstraint(e.target.value as any)}
+                          className="w-full bg-bg-deep border border-border rounded-xl px-3 py-2 text-xs text-white focus:border-amber-400"
+                        >
+                          <option value="all">Cualquier Hora (24h)</option>
+                          <option value="morning">Mañana (06:00 - 11:59)</option>
+                          <option value="afternoon">Tarde (12:00 - 19:59)</option>
+                          <option value="night">Noche (20:00 - 05:59)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Banner Opcional */}
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-text-secondary uppercase">URL Banner Visual en Pantalla (Opcional)</label>
+                      <input
+                        type="text"
+                        placeholder="https://... (Imagen a mostrar durante la reproducción)"
+                        value={adUploadBannerUrl}
+                        onChange={e => setAdUploadBannerUrl(e.target.value)}
+                        className="w-full bg-bg-deep border border-border rounded-xl px-3 py-2 text-xs text-white focus:border-amber-400"
+                      />
+                    </div>
+
+                    {/* Checkbox Tutorial vs Comercial */}
+                    <div className="flex items-center justify-between p-3 bg-white/[0.03] border border-white/5 rounded-xl">
+                      <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={adUploadIsTutorial}
+                          onChange={e => setAdUploadIsTutorial(e.target.checked)}
+                          className="w-4 h-4 accent-amber-400 rounded cursor-pointer"
+                        />
+                        <div className="flex flex-col">
+                          <span className="text-xs font-bold text-white">🎓 Cuña Tutorial / Instalar App (Aprende Cantando)</span>
+                          <span className="text-[9px] text-text-secondary">Se marcará como educativa en lugar de comercial puro</span>
+                        </div>
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-bold text-text-secondary">Peso:</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={10}
+                          value={adUploadWeight}
+                          onChange={e => setAdUploadWeight(parseInt(e.target.value) || 5)}
+                          className="w-12 bg-bg-deep border border-border rounded-lg px-2 py-1 text-xs text-center text-amber-400 font-bold"
+                        />
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={handleUploadAdDirectToR2}
+                      disabled={isUploadingAd || !adUploadFile}
+                      className="w-full py-3 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-white font-extrabold rounded-xl text-xs uppercase tracking-wider transition-all shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2 disabled:opacity-40 cursor-pointer active:scale-[0.99]"
+                    >
+                      {isUploadingAd ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>Subiendo archivo a Cloudflare R2...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="w-4 h-4" />
+                          <span>⚡ Subir a R2 y Añadir a la Grilla</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Columna 2: Explorador de Archivos en R2 (Bucket Storage) */}
+                  <div className="space-y-4 bg-black/20 p-5 rounded-2xl border border-white/5 flex flex-col">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <Folder className="w-4 h-4 text-amber-400" />
+                        <h4 className="text-xs font-black text-white uppercase tracking-wider">Archivos en Bucket R2</h4>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={r2AdsFolderToExplore}
+                          onChange={e => {
+                            const val = e.target.value;
+                            setR2AdsFolderToExplore(val);
+                            fetchR2AdsList(val);
+                          }}
+                          className="bg-bg-deep border border-border rounded-xl px-2.5 py-1 text-[10px] text-white focus:border-amber-400"
+                        >
+                          <option value="audioads">audioads/</option>
+                          <option value="jingles">jingles/</option>
+                          <option value="boletines">boletines/</option>
+                        </select>
+
+                        <button
+                          onClick={() => fetchR2AdsList(r2AdsFolderToExplore)}
+                          disabled={isLoadingR2Ads}
+                          className="px-3 py-1 bg-white/5 hover:bg-white/10 text-white border border-white/10 rounded-xl text-[10px] font-bold flex items-center gap-1.5 cursor-pointer active:scale-95 transition-all"
+                          title="Refrescar lista desde R2"
+                        >
+                          <RefreshCw className={`w-3 h-3 ${isLoadingR2Ads ? 'animate-spin' : ''}`} />
+                          <span>{isLoadingR2Ads ? 'Escaneando...' : 'Escanear'}</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <p className="text-[10px] text-text-secondary leading-relaxed">
+                      Estos son los archivos de audio reales alojados en tu almacenamiento Cloudflare R2. Puedes preescucharlos, incluirlos en la rotación o eliminarlos definitivamente.
+                    </p>
+
+                    {/* File List */}
+                    <div className="flex-1 min-h-[260px] max-h-[360px] overflow-y-auto space-y-2 pr-1 no-scrollbar border border-white/5 rounded-xl p-2 bg-bg-deep/50">
+                      {isLoadingR2Ads ? (
+                        <div className="h-full flex flex-col items-center justify-center p-8 text-center space-y-2">
+                          <Loader2 className="w-6 h-6 text-amber-400 animate-spin mx-auto" />
+                          <p className="text-xs text-text-secondary">Leyendo archivos en {r2AdsFolderToExplore}/...</p>
+                        </div>
+                      ) : r2AdsFileList.length === 0 ? (
+                        <div className="h-full flex flex-col items-center justify-center p-8 text-center space-y-2">
+                          <Folder className="w-8 h-8 text-text-secondary/40 mx-auto" />
+                          <p className="text-xs text-text-secondary">No se han encontrado archivos en {r2AdsFolderToExplore}/</p>
+                          <button
+                            onClick={() => fetchR2AdsList(r2AdsFolderToExplore)}
+                            className="text-[10px] text-amber-400 underline font-bold"
+                          >
+                            Pulsa para escanear de nuevo
+                          </button>
+                        </div>
+                      ) : (
+                        r2AdsFileList.map((file, i) => {
+                          const isPlaying = prelisteningUrl === file.url;
+                          const inPool = adPool.some(a => a.url === file.url || a.url.endsWith(file.name));
+                          const isDeleting = deletingR2AdKey === file.key;
+
+                          return (
+                            <div key={file.key || i} className="p-3 bg-bg-surface border border-border/60 hover:border-amber-400/40 rounded-xl flex items-center justify-between gap-3 transition-all">
+                              <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                <button
+                                  onClick={() => handlePrelisten(file.url)}
+                                  className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-colors cursor-pointer ${
+                                    isPlaying ? 'bg-amber-500 text-white' : 'bg-white/5 text-amber-400 hover:bg-amber-500/20'
+                                  }`}
+                                  title={isPlaying ? "Pausar" : "Preescuchar"}
+                                >
+                                  {isPlaying ? <Square className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 ml-0.5 fill-current" />}
+                                </button>
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-xs font-bold text-white truncate" title={file.name}>
+                                    {file.name}
+                                  </p>
+                                  <p className="text-[9px] text-text-secondary font-mono truncate">
+                                    {file.key}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2 shrink-0">
+                                <button
+                                  onClick={() => handleToggleR2FileInPool(file)}
+                                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer border ${
+                                    inPool
+                                      ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-300 hover:bg-emerald-500/30'
+                                      : 'bg-white/5 border-white/10 text-text-secondary hover:text-white hover:border-amber-400/40'
+                                  }`}
+                                  title={inPool ? "Quitar de la grilla de emisión" : "Añadir a la grilla de emisión"}
+                                >
+                                  {inPool ? '✓ En Grilla' : '+ Añadir'}
+                                </button>
+
+                                <button
+                                  onClick={() => handleDeleteR2AdFile(file.key, file.url)}
+                                  disabled={isDeleting}
+                                  className="p-1.5 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 hover:text-red-300 cursor-pointer active:scale-95 transition-all disabled:opacity-40"
+                                  title="Borrar archivo físico definitivamente de Cloudflare R2"
+                                >
+                                  {isDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               {/* Grid Layout: Config Reglas + Formulario */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
@@ -7629,8 +12627,7 @@ Responde siempre en español, de forma técnica, clara y precisa.`;
                             method: 'POST',
                             headers: {
                               'Content-Type': 'application/json',
-                              'X-User-Email': 'holasolonet@gmail.com',
-                              'X-User-Role': 'superadmin'
+                              'Authorization': `Bearer ${token}`
                             },
                             body: JSON.stringify(remotePayload)
                           }).catch(() => {}); // fire-and-forget: no bloquea el UI
@@ -7724,16 +12721,25 @@ Responde siempre en español, de forma técnica, clara y precisa.`;
                             <p className="text-[9px] text-purple-300">Búsqueda diaria en Gemini + Locución en ElevenLabs</p>
                           </div>
                         </div>
-                        <button
-                          onClick={() => setBoletinesConfig(prev => ({ ...prev, aiEnabled: !prev.aiEnabled }))}
-                          className={`px-3 py-1 rounded-full text-[10px] font-bold transition-all cursor-pointer border ${
-                            boletinesConfig.aiEnabled
-                              ? 'bg-yellow-400 text-purple-950 border-yellow-300 shadow-md shadow-yellow-400/20 font-extrabold'
-                              : 'bg-white/5 text-purple-300 border-white/10'
-                          }`}
-                        >
-                          {boletinesConfig.aiEnabled ? '⚡ Auto-IA Activada' : 'Manual / Desactivado'}
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setShowCostAuditModal(true)}
+                            className="px-3 py-1 rounded-full text-[10px] font-bold bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 transition-all cursor-pointer flex items-center gap-1"
+                          >
+                            <DollarSign className="w-3 h-3" /> Auditoría de Costes e IA
+                          </button>
+                          <button
+                            onClick={() => setBoletinesConfig(prev => ({ ...prev, aiEnabled: !prev.aiEnabled }))}
+                            className={`px-3 py-1 rounded-full text-[10px] font-bold transition-all cursor-pointer border ${
+                              boletinesConfig.aiEnabled
+                                ? 'bg-yellow-400 text-purple-950 border-yellow-300 shadow-md shadow-yellow-400/20 font-extrabold'
+                                : 'bg-white/5 text-purple-300 border-white/10'
+                            }`}
+                          >
+                            {boletinesConfig.aiEnabled ? '⚡ Auto-IA Activada' : 'Manual / Desactivado'}
+                          </button>
+                        </div>
                       </div>
 
                       {/* Configuración de API Keys */}
@@ -7765,7 +12771,7 @@ Responde siempre en español, de forma técnica, clara y precisa.`;
                           </div>
 
                           <div className="space-y-1">
-                            <label className="text-[9px] font-bold text-purple-300 uppercase">ElevenLabs API Key</label>
+                            <label className="text-[9px] font-bold text-purple-300 uppercase">ElevenLabs API Key (Boletines/Gral)</label>
                             <input
                               type={showApiKeys ? 'text' : 'password'}
                               placeholder="sk_..."
@@ -7774,7 +12780,27 @@ Responde siempre en español, de forma técnica, clara y precisa.`;
                               className="w-full bg-bg-deep border border-purple-500/20 rounded-lg px-2.5 py-1.5 text-[10px] font-mono text-yellow-200 focus:border-purple-400 focus:outline-none"
                             />
                           </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-bold text-sky-300 uppercase">ElevenLabs API Key (Exclusiva Karaoke)</label>
+                            <input
+                              type={showApiKeys ? 'text' : 'password'}
+                              placeholder="sk_... (opcional si usas ELEVENLABS_KARAOKE_API_KEY en Cloudflare)"
+                              value={boletinesConfig.elevenLabsKaraokeApiKey || ''}
+                              onChange={e => setBoletinesConfig(prev => ({ ...prev, elevenLabsKaraokeApiKey: e.target.value }))}
+                              className="w-full bg-bg-deep border border-sky-500/20 rounded-lg px-2.5 py-1.5 text-[10px] font-mono text-sky-200 focus:border-sky-400 focus:outline-none"
+                            />
+                          </div>
                         </div>
+
+                        <p className="text-[9px] text-purple-300/70 leading-relaxed flex items-start gap-1.5">
+                          <ShieldCheck className="w-3 h-3 text-green-400 shrink-0 mt-0.5" />
+                          <span>
+                            Las claves guardadas se muestran como <span className="font-mono text-purple-200">••••••••</span> y
+                            nunca se envían al navegador. Deja la máscara tal cual para conservarlas;
+                            escribe encima solo si quieres reemplazarlas. La generación se ejecuta en el servidor.
+                          </span>
+                        </p>
                       </div>
 
                       {/* Prompt Personalizable de Redacción en Gemini */}
@@ -7986,90 +13012,94 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
                         </div>
                       </div>
 
+                      {/* Preescucha del último boletín en R2 */}
+                      <div className="pt-2 space-y-2">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span className="text-[9px] font-bold text-yellow-300 uppercase tracking-wider flex items-center gap-1.5">
+                            <Headphones className="w-3 h-3" /> Preescucha del boletín actual
+                          </span>
+                          <button
+                            type="button"
+                            disabled={bulletinPreviewLoading}
+                            onClick={handlePreviewBulletin}
+                            className="px-2.5 py-1 bg-purple-800 hover:bg-purple-700 text-purple-100 rounded-lg text-[10px] font-bold flex items-center gap-1.5 transition-all cursor-pointer border border-purple-500/30 active:scale-95 disabled:opacity-50"
+                            title="Carga el último boletín generado desde R2 para escucharlo aquí mismo"
+                          >
+                            {bulletinPreviewLoading
+                              ? <RefreshCw className="w-3 h-3 animate-spin" />
+                              : <RefreshCw className="w-3 h-3" />}
+                            <span>{bulletinPreviewLoading ? 'Cargando…' : (bulletinPreviewUrl ? 'Recargar' : 'Cargar boletín')}</span>
+                          </button>
+                        </div>
+                        <p className="text-[9px] text-purple-300/80 leading-relaxed">
+                          Comprueba que el cron está generando bien sin entrar en Cloudflare ni esperar a la hora. Si suena mal o no carga, genera uno nuevo con el botón de abajo.
+                        </p>
+                        {bulletinPreviewError && (
+                          <div className="p-2 bg-red-500/10 border border-red-500/30 rounded-lg text-[10px] text-red-300">
+                            {bulletinPreviewError}
+                          </div>
+                        )}
+                        {bulletinPreviewUrl && !bulletinPreviewError && (
+                          <audio
+                            key={bulletinPreviewUrl}
+                            controls
+                            preload="metadata"
+                            src={bulletinPreviewUrl}
+                            className="w-full h-9"
+                            onError={() => setBulletinPreviewError('El navegador no pudo reproducir el boletín (¿archivo corrupto o vacío?).')}
+                          />
+                        )}
+                      </div>
+
                       {/* Botón Probar Auto-Generación Ahora */}
                       <div className="pt-2">
                         <button
                           type="button"
                           disabled={isAiGenerating}
                           onClick={async () => {
-                            const apiKeyGemini = boletinesConfig.geminiApiKey || process.env.GEMINI_API_KEY;
-                            const apiKeyEleven = boletinesConfig.elevenLabsApiKey;
-                            const voices = boletinesConfig.elevenLabsVoices || [];
-
-                            if (!apiKeyGemini) {
-                              alert('Por favor introduce tu Gemini API Key en el panel para probar la auto-generación.');
-                              return;
-                            }
-
                             setIsAiGenerating(true);
-                            setAiGenStatus('📡 Buscando noticias de Huelva en vivo con Gemini API...');
+                            setAiGenStatus('📡 Generando en el servidor: buscando noticias y locutando...');
                             setAiGenScriptResult('');
 
                             try {
-                              // 1. Llamada a Gemini con Google Search
-                              const promptText = boletinesConfig.customPrompt || 'Noticias de Huelva hoy';
-                              const urlGemini = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKeyGemini}`;
-                              
-                              const resGemini = await fetch(urlGemini, {
+                              // La generación corre entera en el worker (el mismo camino que usa el
+                              // cron diario), así las claves de Gemini y ElevenLabs nunca llegan al
+                              // navegador ni viajan por el endpoint público /api/list.
+                              const res = await fetch(`${API_CONFIG.BASE_URL}/api/admin/trigger-ai-bulletin`, {
                                 method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({
-                                  contents: [{ parts: [{ text: promptText }] }],
-                                  tools: [{ google_search: {} }]
-                                })
+                                headers: {
+                                  'Content-Type': 'application/json',
+                                  'Authorization': `Bearer ${token}`
+                                }
                               });
 
-                              if (!resGemini.ok) {
-                                throw new Error(`Error en Gemini API (${resGemini.status}): ${await resGemini.text()}`);
+                              const data = await res.json();
+
+                              if (!res.ok || !data.success) {
+                                throw new Error(data.reason || data.error || `El servidor respondió ${res.status}`);
                               }
 
-                              const dataGemini = await resGemini.json();
-                              const scriptText = dataGemini.candidates?.[0]?.content?.parts?.[0]?.text;
+                              const generatedScript = data.script || '';
+                              setAiGenScriptResult(generatedScript);
 
-                              if (!scriptText) throw new Error('Gemini no devolvió texto.');
+                              // El worker deja el MP3 en R2; cache-buster para oír la versión recién creada.
+                              const ts = Date.now();
+                              // boletinUrl: la que usa el reproductor en directo (playback
+                              // directo, no necesita CORS) — se mantiene el dominio público.
+                              const freshUrl = `https://boletines.auraradio.es/boletines/boletin_latest.mp3?t=${ts}`;
+                              setBoletinesConfig(prev => ({
+                                ...prev,
+                                boletinUrl: freshUrl,
+                                lastGeneratedAt: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
+                                lastGeneratedScript: generatedScript
+                              }));
 
-                              const cleanedScript = scriptText.replace(/[\*\_]/g, '').replace(/^#+\s+/gm, '').trim();
-                              setAiGenScriptResult(cleanedScript);
+                              // Preescucha del admin: vía proxy del worker (con CORS), igual
+                              // que handlePreviewBulletin, para que el reproductor no falle.
+                              setBulletinPreviewUrl(`${API_CONFIG.BASE_URL}/api/stream/boletines/boletines/boletin_latest.mp3?t=${ts}`);
+                              setBulletinPreviewError('');
 
-                              // 2. Selección de Voz de ElevenLabs
-                              let selectedVoiceId = voices.length > 0 ? voices[0].id : '21m00Tcm4TlvDq8ikWAM';
-                              if (voices.length > 1 && boletinesConfig.voiceRotationMode === 'random') {
-                                const randIdx = Math.floor(Math.random() * voices.length);
-                                selectedVoiceId = voices[randIdx].id;
-                              }
-
-                              if (apiKeyEleven) {
-                                setAiGenStatus(`🎙️ Sintetizando voz con ElevenLabs (Voz ID: ${selectedVoiceId})...`);
-                                const resEleven = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${selectedVoiceId}`, {
-                                  method: 'POST',
-                                  headers: {
-                                    'xi-api-key': apiKeyEleven,
-                                    'Content-Type': 'application/json',
-                                    'Accept': 'audio/mpeg'
-                                  },
-                                  body: JSON.stringify({
-                                    text: cleanedScript,
-                                    model_id: 'eleven_turbo_v2_5',
-                                    voice_settings: { stability: 0.5, similarity_boost: 0.85 }
-                                  })
-                                });
-
-                                if (!resEleven.ok) {
-                                  throw new Error(`Error en ElevenLabs API (${resEleven.status}): ${await resEleven.text()}`);
-                                }
-
-                                const audioBlob = await resEleven.blob();
-                                const audioBlobUrl = URL.createObjectURL(audioBlob);
-                                setBoletinesConfig(prev => ({
-                                  ...prev,
-                                  boletinUrl: audioBlobUrl,
-                                  lastGeneratedAt: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
-                                  lastGeneratedScript: cleanedScript
-                                }));
-                                setAiGenStatus('✅ ¡Boletín redactado y locutado con éxito! Escúchalo en la previa.');
-                              } else {
-                                setAiGenStatus('✅ Guión generado con éxito por Gemini. (Introduce tu ElevenLabs API Key para generar el audio MP3 en vivo).');
-                              }
+                              setAiGenStatus('✅ ¡Boletín redactado y locutado en el servidor! Escúchalo en la previa.');
                             } catch (e: any) {
                               console.error('Error en prueba IA boletín:', e);
                               setAiGenStatus(`❌ Error: ${e.message || 'Fallo durante la generación'}`);
@@ -8411,8 +13441,38 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
                   </div>
 
                   <p className="text-[10px] text-text-secondary leading-relaxed">
-                    Aparece automáticamente tras N segundos de uso para incentivar la instalación de la app. El botón de cerrar queda bloqueado (muestra una cuenta atrás) durante los primeros segundos configurados.
+                    Aparece automáticamente tras escuchar varias canciones o tras N segundos para incentivar la instalación de la app. El botón de cerrar queda bloqueado durante la cuenta atrás configurada.
                   </p>
+
+                  {/* Trigger Mode Selector */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-white/[0.02] border border-white/5 p-4 rounded-xl">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-emerald-300 uppercase tracking-wider">Modo de Activación</label>
+                      <select
+                        value={installInterstitialConfig.triggerMode ?? 'songs'}
+                        onChange={(e) => setInstallInterstitialConfig(prev => ({ ...prev, triggerMode: e.target.value as any }))}
+                        className="w-full bg-bg-deep border border-border rounded-xl px-3 py-2 text-xs text-white focus:border-emerald-400"
+                      >
+                        <option value="songs">🎵 Por canciones reproducidas (Recomendado: 2ª canción)</option>
+                        <option value="time">⏱ Por tiempo transcurrido (Segundos)</option>
+                        <option value="both">⚡ El que ocurra primero (Tiempo o Canciones)</option>
+                      </select>
+                    </div>
+
+                    {(installInterstitialConfig.triggerMode === 'songs' || installInterstitialConfig.triggerMode === 'both' || !installInterstitialConfig.triggerMode) && (
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-emerald-300 uppercase tracking-wider">Mostrar tras número de canciones</label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={20}
+                          value={installInterstitialConfig.songsThreshold ?? 2}
+                          onChange={(e) => setInstallInterstitialConfig(prev => ({ ...prev, songsThreshold: parseInt(e.target.value) || 2 }))}
+                          className="w-full bg-bg-deep border border-border rounded-xl px-3 py-2 text-xs text-white focus:border-emerald-400"
+                        />
+                      </div>
+                    )}
+                  </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div className="space-y-1">
@@ -8508,6 +13568,225 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
             </motion.div>
           );
         })()}
+
+        {activeTab === 'salud' && (
+          <div className="h-full overflow-y-auto p-8 no-scrollbar bg-bg-deep animate-[fadeIn_0.2s_ease]">
+            <div className="max-w-4xl mx-auto space-y-6 pb-20">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-2xl font-black text-white mb-1 flex items-center gap-2">
+                    <Activity className="w-6 h-6 text-emerald-400" />
+                    Salud del sistema
+                  </h2>
+                  <p className="text-sm text-text-secondary">
+                    Errores que han visto los usuarios en el frontend. Recibes un resumen por email cada 6 horas; aquí tienes el detalle.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={fetchClientErrors}
+                    disabled={loadingClientErrors}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    {loadingClientErrors ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                    <span>Actualizar</span>
+                  </button>
+                  <button
+                    onClick={clearClientErrors}
+                    disabled={clearingErrors || !clientErrors || (clientErrors.total || 0) === 0}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-300 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:opacity-40"
+                  >
+                    {clearingErrors ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                    <span>Limpiar</span>
+                  </button>
+                </div>
+              </div>
+
+              {loadingClientErrors && !clientErrors ? (
+                <div className="py-20 text-center space-y-3">
+                  <Loader2 className="w-8 h-8 animate-spin text-emerald-400 mx-auto" />
+                  <p className="text-xs text-text-secondary">Cargando errores…</p>
+                </div>
+              ) : !clientErrors || (clientErrors.groups.length === 0 && clientErrors.recent.length === 0) ? (
+                <div className="py-16 text-center border border-dashed border-emerald-500/20 rounded-2xl bg-emerald-500/5">
+                  <CheckCircle2 className="w-10 h-10 text-emerald-400/70 mx-auto mb-3" />
+                  <p className="text-sm font-bold text-white">Todo tranquilo</p>
+                  <p className="text-xs text-text-secondary mt-1">No hay errores registrados en los últimos 7 días.</p>
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    <div className="bg-bg-surface border border-border rounded-2xl p-4">
+                      <p className="text-[10px] text-text-secondary uppercase font-bold">Errores (7 días)</p>
+                      <p className="text-2xl font-black text-white mt-1">{clientErrors.total}</p>
+                    </div>
+                    <div className="bg-bg-surface border border-border rounded-2xl p-4">
+                      <p className="text-[10px] text-text-secondary uppercase font-bold">Tipos distintos</p>
+                      <p className="text-2xl font-black text-white mt-1">{clientErrors.groups.length}</p>
+                    </div>
+                  </div>
+
+                  {clientErrors.groups.length > 0 && (
+                    <div className="space-y-2">
+                      <h3 className="text-xs font-bold text-white uppercase tracking-wider">Agrupados por tipo</h3>
+                      <div className="space-y-2">
+                        {clientErrors.groups.map((g, i) => (
+                          <div key={i} className="bg-bg-surface border border-border rounded-xl p-3 flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs text-white font-mono truncate" title={g.message}>{g.message || '(sin mensaje)'}</p>
+                              <p className="text-[10px] text-text-secondary mt-1">
+                                <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 font-bold uppercase text-[9px]">{g.kind}</span>
+                                <span className="ml-2">Última vez: {g.last_seen ? new Date(g.last_seen + 'Z').toLocaleString('es-ES') : '—'}</span>
+                              </p>
+                            </div>
+                            <span className="px-2 py-1 rounded-lg bg-red-500/15 text-red-300 text-xs font-black shrink-0">{g.count}×</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {clientErrors.recent.length > 0 && (
+                    <div className="space-y-2">
+                      <h3 className="text-xs font-bold text-white uppercase tracking-wider">Más recientes</h3>
+                      <div className="space-y-1.5">
+                        {clientErrors.recent.map((r) => (
+                          <div key={r.id} className="bg-black/20 border border-white/5 rounded-lg p-2.5 text-[10px] font-mono flex items-center justify-between gap-3">
+                            <span className="text-white/90 truncate min-w-0 flex-1" title={`${r.message}\n${r.url}`}>{r.message}</span>
+                            <span className="text-text-secondary shrink-0">{r.created_at ? new Date(r.created_at + 'Z').toLocaleString('es-ES') : ''}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'radar' && (
+          <div className="h-full overflow-y-auto p-8 no-scrollbar bg-bg-deep animate-[fadeIn_0.2s_ease]">
+            <div className="max-w-4xl mx-auto space-y-6 pb-20">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-2xl font-black text-white mb-1 flex items-center gap-2">
+                    <Sparkles className="w-6 h-6 text-fuchsia-400" />
+                    Radar de Producción
+                  </h2>
+                  <p className="text-sm text-text-secondary max-w-xl">
+                    ¿Qué produzco ahora? Analiza el tirón real <b>por tema</b> (no en bruto: una categoría de 100 temas suena más pero puede rendir menos por tema). Y te da las canciones ganadoras con su nombre e ID para reutilizar su prompt en Suno.
+                  </p>
+                </div>
+                <button
+                  onClick={fetchProductionRadar}
+                  disabled={loadingRadar}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-lg active:scale-95 cursor-pointer disabled:opacity-50 shrink-0"
+                >
+                  {loadingRadar ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                  {loadingRadar ? 'Analizando…' : 'Analizar ahora'}
+                </button>
+              </div>
+
+              {radarError && (
+                <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-xs text-red-300">{radarError}</div>
+              )}
+
+              {!radarData && !loadingRadar && !radarError && (
+                <div className="py-16 text-center border border-dashed border-fuchsia-500/20 rounded-2xl bg-fuchsia-500/5">
+                  <Sparkles className="w-10 h-10 text-fuchsia-400/60 mx-auto mb-3" />
+                  <p className="text-sm text-text-secondary">Pulsa "Analizar ahora" para que el sistema estudie qué género y qué canciones te funcionan mejor.</p>
+                </div>
+              )}
+
+              {radarData && (
+                <>
+                  {/* Recomendación de la IA */}
+                  {radarData.aiRecommendation && (
+                    <div className="bg-gradient-to-br from-purple-950/60 to-fuchsia-950/30 border border-fuchsia-500/30 rounded-2xl p-5">
+                      <p className="text-[10px] font-black text-fuchsia-300 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                        <Brain className="w-3.5 h-3.5" /> Recomendación
+                      </p>
+                      <p className="text-sm text-white/90 leading-relaxed whitespace-pre-wrap">{radarData.aiRecommendation}</p>
+                    </div>
+                  )}
+
+                  {/* Ranking de oportunidad por categoría */}
+                  <div className="space-y-2">
+                    <h3 className="text-xs font-bold text-white uppercase tracking-wider">Oportunidad por categoría</h3>
+                    <p className="text-[10px] text-text-secondary">Ordenado por score de oportunidad (tirón por tema × confianza × tendencia). Media global: {radarData.globalPerTrack} engagement/tema.</p>
+                    <div className="overflow-x-auto rounded-xl border border-border">
+                      <table className="w-full text-[11px]">
+                        <thead className="bg-white/5 text-text-secondary">
+                          <tr>
+                            <th className="text-left p-2.5 font-bold uppercase text-[9px]">Categoría</th>
+                            <th className="text-right p-2.5 font-bold uppercase text-[9px]">Temas</th>
+                            <th className="text-right p-2.5 font-bold uppercase text-[9px]">Eng/tema</th>
+                            <th className="text-right p-2.5 font-bold uppercase text-[9px]">Shares/tema</th>
+                            <th className="text-right p-2.5 font-bold uppercase text-[9px]">Tendencia</th>
+                            <th className="text-right p-2.5 font-bold uppercase text-[9px]">Oport.</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {radarData.categories.map((c: any, i: number) => (
+                            <tr key={c.id} className={`border-t border-white/5 ${i === 0 ? 'bg-fuchsia-500/10' : ''}`}>
+                              <td className="p-2.5 text-white font-bold flex items-center gap-1.5">
+                                {i === 0 && <span className="text-fuchsia-400">★</span>}
+                                {c.name}
+                                {c.lowSample && <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 text-[8px] font-black uppercase">muestra baja</span>}
+                              </td>
+                              <td className="p-2.5 text-right text-text-secondary">{c.tracks}</td>
+                              <td className="p-2.5 text-right text-white font-mono">{c.perTrack}</td>
+                              <td className="p-2.5 text-right text-white/80 font-mono">{c.sharesPerTrack}</td>
+                              <td className={`p-2.5 text-right font-mono ${c.trendPct > 0 ? 'text-emerald-400' : c.trendPct < 0 ? 'text-red-400' : 'text-text-secondary'}`}>{c.trendPct > 0 ? '+' : ''}{c.trendPct}%</td>
+                              <td className="p-2.5 text-right text-fuchsia-300 font-black font-mono">{c.opportunity}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Canciones ganadoras para reutilizar en Suno */}
+                  {radarData.topSongs && radarData.topSongs.length > 0 && (
+                    <div className="space-y-2">
+                      <h3 className="text-xs font-bold text-white uppercase tracking-wider">🏆 Canciones ganadoras — busca su prompt en Suno</h3>
+                      <p className="text-[10px] text-text-secondary">Las de más tirón demostrado. Busca el título en Suno para reutilizar/clonar su prompt.</p>
+                      <div className="space-y-1.5">
+                        {radarData.topSongs.map((s: any, i: number) => (
+                          <div key={s.songId} className="bg-bg-surface border border-border rounded-xl p-3 flex items-center justify-between gap-3">
+                            <div className="min-w-0 flex-1 flex items-center gap-2.5">
+                              <span className="text-fuchsia-400/70 font-black text-xs w-5 shrink-0">{i + 1}</span>
+                              <div className="min-w-0">
+                                <p className="text-xs text-white font-bold truncate" title={s.title}>{s.title}</p>
+                                <p className="text-[10px] text-text-secondary">
+                                  {s.numericId && <span className="font-mono text-accent">ID {s.numericId}</span>}
+                                  <span className="ml-2">{s.category}</span>
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-3 shrink-0 text-[10px]">
+                              <span className="text-white/80" title="Engagement total">⚡ {s.engagement}</span>
+                              {s.shares > 0 && <span className="text-emerald-300" title="Shares">↗ {s.shares}</span>}
+                              {s.favorites > 0 && <span className="text-red-300" title="Favoritos">♥ {s.favorites}</span>}
+                              <button
+                                onClick={() => { navigator.clipboard.writeText(s.title); triggerHaptic(10); }}
+                                className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white/70 hover:text-white cursor-pointer"
+                                title="Copiar título para buscarlo en Suno"
+                              >
+                                <Copy className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        )}
 
       </main>
 
@@ -8928,6 +14207,7 @@ REGLAS CRÍTICAS DE LOCUCIÓN PARA ELEVENLABS (SISTEMA TTS):
           </div>
         )}
       </AnimatePresence>
+      <AICostAuditModal isOpen={showCostAuditModal} onClose={() => setShowCostAuditModal(false)} />
     </div>
   );
 }

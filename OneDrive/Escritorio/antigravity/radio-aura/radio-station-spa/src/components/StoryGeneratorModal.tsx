@@ -39,7 +39,7 @@ export const StoryGeneratorModal: React.FC<StoryGeneratorModalProps> = ({
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // Auto-generate initial visual prompt from lyrics and title
+  // Set initial prompt from lyrics and title without auto-firing duplicate AI requests
   useEffect(() => {
     if (!isOpen) return;
 
@@ -55,7 +55,10 @@ export const StoryGeneratorModal: React.FC<StoryGeneratorModalProps> = ({
     const initialPrompt = `${songTitle}, ${cleanContext || 'magical music atmosphere'}, cinematic lighting, 8k resolution, photorealistic, atmospheric background`;
     setPrompt(initialPrompt);
 
-    generateAIBackground(initialPrompt);
+    // Only generate background if none is present yet to prevent duplicate/accidental calls
+    if (!bgImageUrl) {
+      generateAIBackground(initialPrompt);
+    }
   }, [isOpen, songTitle, artistName, stationName]);
 
   // Load custom fonts into DOM
@@ -109,7 +112,7 @@ export const StoryGeneratorModal: React.FC<StoryGeneratorModalProps> = ({
     }
 
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key.trim()}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${key.trim()}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

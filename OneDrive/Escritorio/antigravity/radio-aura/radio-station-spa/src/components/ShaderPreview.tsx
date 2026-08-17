@@ -1,10 +1,13 @@
 import React, { useEffect, useRef } from 'react';
+import { audioEngine } from '../lib/AudioEngine';
 
 interface ShaderPreviewProps {
   code: string;
   className?: string;
   colorPrimary?: [number, number, number];
   colorSecondary?: [number, number, number];
+  isPlaying?: boolean;
+  audioElement?: HTMLAudioElement | null;
 }
 
 const VERTEX_SRC = `
@@ -14,10 +17,52 @@ const VERTEX_SRC = `
   }
 `;
 
-// Self-contained WebGL preview used only inside the Admin panel — each card gets its own
-// canvas/context so multiple shaders can render side by side without fighting over the
-// single offscreen canvas the production LiveView renderer reuses.
-export const ShaderPreview: React.FC<ShaderPreviewProps> = ({ code, className, colorPrimary = [0.39, 0.4, 0.95], colorSecondary = [0.98, 0.4, 0.7] }) => {
+const DEFAULT_RADIAL_GLSL = `
+precision highp float;
+uniform vec2 u_resolution;
+uniform float u_time;
+uniform float u_audio_bass;
+uniform float u_audio_voice;
+uniform float u_audio_mid;
+uniform float u_audio_treble;
+uniform vec3 u_color_primary;
+uniform vec3 u_color_secondary;
+
+void main() {
+    vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution.xy) / u_resolution.y;
+    float r = length(uv);
+    float a = atan(uv.y, uv.x);
+
+    float bassPulse = u_audio_bass * 0.35;
+    float voicePulse = u_audio_voice * 0.4;
+    float orbSize = 0.22 + bassPulse + sin(a * 6.0 + u_time * 2.0) * (voicePulse * 0.08 + 0.02);
+
+    float core = (0.025 + u_audio_bass * 0.03 + voicePulse * 0.05) / (abs(r - orbSize * 0.5) + 0.005);
+
+    float rings = 0.0;
+    for (float i = 1.0; i <= 4.0; i += 1.0) {
+        float ringRadius = orbSize + i * 0.07 + sin(u_time * 2.5 + i * 1.2 + a * 4.0) * (0.015 + voicePulse * 0.03);
+        float dist = abs(r - ringRadius);
+        rings += (0.004 + u_audio_mid * 0.006 + voicePulse * 0.008) / (dist + 0.003);
+    }
+
+    vec3 color1 = (length(u_color_primary) > 0.01) ? u_color_primary : vec3(0.39, 0.4, 0.95);
+    vec3 color2 = (length(u_color_secondary) > 0.01) ? u_color_secondary : vec3(0.98, 0.4, 0.7);
+
+    vec3 col = mix(color1, color2, sin(a * 2.0 + u_time) * 0.5 + 0.5);
+
+    gl_FragColor = vec4(col * (core + rings), 1.0);
+}
+`;
+
+// Integrated WebGL Shader component directly consuming Aura Radio's central AudioEngine
+export const ShaderPreview: React.FC<ShaderPreviewProps> = ({
+  code,
+  className,
+  colorPrimary = [0.39, 0.4, 0.95],
+  colorSecondary = [0.98, 0.4, 0.7],
+  isPlaying = false,
+}) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -25,7 +70,34 @@ export const ShaderPreview: React.FC<ShaderPreviewProps> = ({ code, className, c
     if (!canvas) return;
 
     const gl = (canvas.getContext('webgl') || canvas.getContext('experimental-webgl')) as WebGLRenderingContext | null;
-    if (!gl) return;
+    if (!gl) {
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        const resize2d = () => {
+          if (!canvas.parentElement) return;
+          const rect = canvas.parentElement.getBoundingClientRect();
+          canvas.width = Math.max(1, Math.round(rect.width));
+          canvas.height = Math.max(1, Math.round(rect.height));
+          const r1 = Math.round((colorPrimary[0] || 0.39) * 255);
+          const g1 = Math.round((colorPrimary[1] || 0.4) * 255);
+          const b1 = Math.round((colorPrimary[2] || 0.95) * 255);
+          const r2 = Math.round((colorSecondary[0] || 0.98) * 255);
+          const g2 = Math.round((colorSecondary[1] || 0.4) * 255);
+          const b2 = Math.round((colorSecondary[2] || 0.7) * 255);
+          const grad = ctx.createRadialGradient(
+            canvas.width * 0.5, canvas.height * 0.4, 10,
+            canvas.width * 0.5, canvas.height * 0.5, Math.max(canvas.width, canvas.height) * 0.8
+          );
+          grad.addColorStop(0, `rgb(${r1}, ${g1}, ${b1})`);
+          grad.addColorStop(0.6, `rgb(${r2}, ${g2}, ${b2})`);
+          grad.addColorStop(1, '#07070c');
+          ctx.fillStyle = grad;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        };
+        resize2d();
+      }
+      return;
+    }
 
     const compileShader = (type: number, src: string) => {
       const shader = gl.createShader(type);
@@ -40,13 +112,19 @@ export const ShaderPreview: React.FC<ShaderPreviewProps> = ({ code, className, c
       return shader;
     };
 
-    let fsSource = code;
-    if (!fsSource.includes('precision ')) {
-      fsSource = 'precision highp float;\n' + fsSource;
+    let targetCode = code && code.trim().length > 10 ? code : DEFAULT_RADIAL_GLSL;
+    if (!targetCode.includes('precision ')) {
+      targetCode = 'precision highp float;\n' + targetCode;
     }
 
     const vs = compileShader(gl.VERTEX_SHADER, VERTEX_SRC);
-    const fs = compileShader(gl.FRAGMENT_SHADER, fsSource);
+    let fs = compileShader(gl.FRAGMENT_SHADER, targetCode);
+
+    // Fallback to default shader if custom code failed to compile
+    if (!fs) {
+      fs = compileShader(gl.FRAGMENT_SHADER, 'precision highp float;\n' + DEFAULT_RADIAL_GLSL);
+    }
+
     if (!vs || !fs) return;
 
     const program = gl.createProgram();
@@ -103,13 +181,35 @@ export const ShaderPreview: React.FC<ShaderPreviewProps> = ({ code, className, c
       const time = t / 1000;
       gl.viewport(0, 0, width, height);
 
-      // Simulated audio envelope so idle admin previews still feel alive
-      const bass = 0.35 + Math.sin(time * 0.9) * 0.25 + Math.max(0, Math.sin(time * 2.3)) * 0.15;
-      const voice = 0.3 + Math.sin(time * 1.3 + 1.0) * 0.22;
-      const vocalPresence = 0.25 + Math.sin(time * 1.1 + 2.0) * 0.2;
-      const mid = 0.3 + Math.sin(time * 1.7 + 0.5) * 0.2;
-      const treble = 0.3 + Math.sin(time * 2.1 + 1.5) * 0.2;
-      const air = 0.25 + Math.sin(time * 2.7 + 0.8) * 0.2;
+      // Idle ambient pulse
+      let bass = 0.35 + Math.sin(time * 0.9) * 0.25 + Math.max(0, Math.sin(time * 2.3)) * 0.15;
+      let voice = 0.3 + Math.sin(time * 1.3 + 1.0) * 0.22;
+      let vocalPresence = 0.25 + Math.sin(time * 1.1 + 2.0) * 0.2;
+      let mid = 0.3 + Math.sin(time * 1.7 + 0.5) * 0.2;
+      let treble = 0.3 + Math.sin(time * 2.1 + 1.5) * 0.2;
+      let air = 0.25 + Math.sin(time * 2.7 + 0.8) * 0.2;
+
+      // Extract real audio frequency spectrum directly from central AudioEngine when playing
+      if (isPlaying) {
+        try {
+          const analysis = audioEngine.getAudioAnalysis();
+          if (analysis && analysis.overall > 0.002) {
+            bass = analysis.bass * 2.2;
+            voice = analysis.voice * 2.0;
+            vocalPresence = analysis.vocalPresence * 2.0;
+            mid = analysis.mids * 1.8;
+            treble = analysis.treble * 1.8;
+            air = analysis.air * 1.8;
+          } else {
+            // Generative active playback pulse
+            bass = 0.5 + Math.sin(time * 3.5) * 0.3 + Math.cos(time * 7.0) * 0.15;
+            voice = 0.4 + Math.sin(time * 4.2 + 1.0) * 0.3;
+            vocalPresence = 0.45 + Math.cos(time * 3.8 + 2.0) * 0.3;
+            mid = 0.4 + Math.sin(time * 5.1) * 0.25;
+            treble = 0.35 + Math.sin(time * 6.5) * 0.25;
+          }
+        } catch (e) {}
+      }
 
       setU2f('u_resolution', width, height);
       setU2f('iResolution', width, height);
@@ -141,7 +241,7 @@ export const ShaderPreview: React.FC<ShaderPreviewProps> = ({ code, className, c
       gl.deleteShader(fs);
       gl.deleteBuffer(positionBuffer);
     };
-  }, [code, colorPrimary, colorSecondary]);
+  }, [code, colorPrimary, colorSecondary, isPlaying]);
 
   return <canvas ref={canvasRef} className={className} />;
 };

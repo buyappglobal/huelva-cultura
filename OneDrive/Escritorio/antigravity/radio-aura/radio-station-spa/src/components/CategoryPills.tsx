@@ -510,6 +510,31 @@ export default function CategoryPills({
     return categories.filter(c => !c.parentId);
   }, [categories]);
 
+  // Los grupos padre solo agrupan: no tienen canciones, así que en la rejilla
+  // del modal serían fichas que no llevan a ninguna parte. Se excluyen de ahí,
+  // pero siguen en `categories` para poder resolver el nombre del grupo en el
+  // distintivo de cada hija.
+  const containerIds = useMemo(() => {
+    // Podcasts, Favoritos, Top 20 y Red de Emisoras pueden tener hijas colgando
+    // pero son navegables por sí mismas: no se ocultan nunca de la rejilla.
+    const SPECIAL_CATEGORY_IDS = ['all', 'favorites', 'popular', 'podcasts', 'red-emisoras'];
+    return new Set(
+      (categories.map(c => c.parentId).filter(Boolean) as string[])
+        .filter(id => !SPECIAL_CATEGORY_IDS.includes(id))
+    );
+  }, [categories]);
+
+  const browsableCategories = useMemo(() => {
+    return [...categories]
+      .filter(c => !containerIds.has(c.id))
+      .sort((a, b) => {
+        const nameA = (a.alias || a.name || '').toString().toLowerCase();
+        const nameB = (b.alias || b.name || '').toString().toLowerCase();
+        return nameA.localeCompare(nameB, 'es', { sensitivity: 'base' });
+      });
+  }, [categories, containerIds]);
+
+
   // 2. Identify the active main category ID
   const activeMainCategoryId = useMemo(() => {
     const activeCat = categories.find(c => c.id === activeCategoryId);
@@ -584,21 +609,6 @@ export default function CategoryPills({
 
   return (
     <nav className="w-full sticky top-0 bg-bg-deep/85 backdrop-blur-xl z-30 px-4 md:px-6 border-b border-border py-2.5 flex flex-col gap-2.5 relative">
-      
-      {/* Mobile Centered Category Grid Trigger Pill */}
-      <div className="flex md:hidden justify-center w-full">
-        <button
-          onClick={() => {
-            triggerHaptic(10);
-            setIsGridModalOpen(true);
-          }}
-          className="w-full px-4 py-2 rounded-full text-xs font-black uppercase tracking-wider bg-gradient-to-r from-accent/25 via-purple-500/25 to-accent/25 hover:bg-accent/35 border border-accent/40 text-white shadow-[0_0_12px_rgba(99,102,241,0.25)] flex items-center justify-center gap-2 active:scale-95 transition-all cursor-pointer"
-        >
-          <LayoutGrid className="w-4 h-4 text-accent animate-pulse" />
-          <span>Ver todas las categorías</span>
-        </button>
-      </div>
-
       <div className="max-w-7xl mx-auto w-full flex flex-col md:flex-row items-stretch md:items-center gap-3">
         
         {/* Integrated Category Search Input */}
@@ -675,11 +685,11 @@ export default function CategoryPills({
                 triggerHaptic(10);
                 setIsGridModalOpen(true);
               }}
-              className="sticky left-0 z-20 shrink-0 px-4 py-2.5 rounded-full text-xs sm:text-sm font-black uppercase tracking-wider bg-gradient-to-r from-accent/90 to-purple-600/90 hover:from-accent hover:to-purple-600 text-white shadow-[0_0_15px_rgba(99,102,241,0.4)] flex items-center justify-center gap-2 transition-all cursor-pointer border border-white/30 backdrop-blur-xl active:scale-95 min-h-[42px]"
+              className="sticky left-0 z-20 shrink-0 px-2.5 md:px-4 py-2.5 rounded-full text-xs sm:text-sm font-black uppercase tracking-wider bg-gradient-to-r from-accent/90 to-purple-600/90 hover:from-accent hover:to-purple-600 text-white shadow-[0_0_15px_rgba(99,102,241,0.4)] flex items-center justify-center gap-2 transition-all cursor-pointer border border-white/30 backdrop-blur-xl active:scale-95 min-h-[42px]"
               title="Ver todas las categorías en cuadrícula"
             >
               <LayoutGrid className="w-4 h-4 text-white shrink-0 animate-pulse" />
-              <span>Categorías</span>
+              <span className="hidden md:inline">Categorías</span>
             </button>
             {mainCategories.map((category) => (
               <CategoryPill
@@ -834,7 +844,7 @@ export default function CategoryPills({
                         Todas las Categorías
                       </h2>
                       <p className="text-xs text-text-secondary">
-                        {categories.length} experiencias musicales disponibles
+                        {browsableCategories.length} experiencias musicales disponibles
                       </p>
                     </div>
                   </div>
@@ -870,13 +880,15 @@ export default function CategoryPills({
                 {/* Modal Grid View */}
                 <div className="overflow-y-auto no-scrollbar flex-1 py-2 pr-1">
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                    {categories
+                    {browsableCategories
                       .filter(cat => {
                         if (!gridSearchQuery.trim()) return true;
                         const q = gridSearchQuery.toLowerCase();
                         const name = (cat.name || '').toLowerCase();
                         const alias = (cat.alias || '').toLowerCase();
-                        return name.includes(q) || alias.includes(q);
+                        const parent = cat.parentId ? categories.find(c => c.id === cat.parentId) : null;
+                        const parentName = (parent?.alias || parent?.name || '').toLowerCase();
+                        return name.includes(q) || alias.includes(q) || parentName.includes(q);
                       })
                       .map((cat) => {
                         const isActive = activeCategoryId === cat.id;
@@ -885,6 +897,11 @@ export default function CategoryPills({
                         const catDisplayName = (cat.alias && typeof cat.alias === 'string') 
                           ? cat.alias 
                           : (cat.id === 'all' ? cat.name : formatCategoryName(cat.name));
+
+                        const parentCat = cat.parentId ? categories.find(c => c.id === cat.parentId) : null;
+                        const parentLabel = parentCat
+                          ? ((parentCat.alias && typeof parentCat.alias === 'string') ? parentCat.alias : formatCategoryName(parentCat.name))
+                          : null;
 
                         return (
                           <button
@@ -904,7 +921,7 @@ export default function CategoryPills({
                               borderColor: 'rgba(255, 255, 255, 0.4)',
                               boxShadow: `0 0 16px ${themeColor}66`
                             } : undefined}
-                            className={`p-3.5 rounded-2xl text-xs font-bold transition-all border flex items-center gap-2.5 text-left cursor-pointer active:scale-95 backdrop-blur-md relative overflow-hidden group ${
+                            className={`p-3.5 rounded-2xl text-xs font-bold transition-all border flex flex-col gap-1.5 text-left cursor-pointer active:scale-95 backdrop-blur-md relative overflow-hidden group ${
                               isLocked
                                 ? 'bg-white/5 border-amber-400/30 text-amber-300 hover:border-amber-400 hover:bg-amber-500/10'
                                 : isActive
@@ -912,15 +929,22 @@ export default function CategoryPills({
                                   : 'bg-white/5 hover:bg-white/12 border-white/10 hover:border-white/20 text-white/90 hover:text-white'
                             }`}
                           >
-                            {isLocked ? (
-                              <Lock className="w-4 h-4 text-amber-400 shrink-0" />
-                            ) : (
-                              <span 
-                                className={`w-3 h-3 rounded-full shrink-0 transition-transform ${isActive ? 'bg-white scale-110 shadow-[0_0_8px_#ffffff]' : ''}`} 
-                                style={!isActive ? { backgroundColor: themeColor, boxShadow: `0 0 8px ${themeColor}` } : undefined}
-                              />
+                            <div className="flex items-center gap-2.5">
+                              {isLocked ? (
+                                <Lock className="w-4 h-4 text-amber-400 shrink-0" />
+                              ) : (
+                                <span
+                                  className={`w-3 h-3 rounded-full shrink-0 transition-transform ${isActive ? 'bg-white scale-110 shadow-[0_0_8px_#ffffff]' : ''}`}
+                                  style={!isActive ? { backgroundColor: themeColor, boxShadow: `0 0 8px ${themeColor}` } : undefined}
+                                />
+                              )}
+                              <span className="truncate flex-1">{catDisplayName}</span>
+                            </div>
+                            {parentLabel && (
+                              <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-md bg-white/8 text-white/40 self-start">
+                                {parentLabel}
+                              </span>
                             )}
-                            <span className="truncate flex-1">{catDisplayName}</span>
                           </button>
                         );
                       })}

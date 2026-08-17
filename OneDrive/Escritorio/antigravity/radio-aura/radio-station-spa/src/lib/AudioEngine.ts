@@ -481,6 +481,13 @@ class AudioEngine {
     }
   }
 
+  seekTo(seconds: number) {
+    if (this.audio) {
+      this.audio.currentTime = Math.max(0, seconds);
+      this.notify();
+    }
+  }
+
   getFrequencyData(): Uint8Array {
     if (!this.analyser) return new Uint8Array(128);
     const data = new Uint8Array(this.analyser.frequencyBinCount);

@@ -32,15 +32,28 @@ export default function GuestIncentiveModal({
     window.dispatchEvent(new CustomEvent('trigger-pwa-install'));
   };
 
-  const title = config?.title || (restrictedCategoryName 
-    ? `Desbloquea "${restrictedCategoryName}" y todo el catálogo`
-    : '¡Accede a todas las emisoras gratis!');
+  const isZenTrigger = Boolean(
+    restrictedCategoryName && 
+    (restrictedCategoryName.toLowerCase().includes('zen') || restrictedCategoryName.toLowerCase().includes('sleep'))
+  );
 
-  const description = config?.description || 
-    'Crea tu cuenta en menos de 10 segundos o instala la App para escuchar sin límites, guardar tus favoritos y activar el Modo Zen.';
+  const title = config?.title || (isZenTrigger
+    ? 'Activa el Modo Zen & Pantalla Bloqueada 🌙'
+    : restrictedCategoryName 
+      ? `Desbloquea "${restrictedCategoryName}" y todo el catálogo`
+      : '¡Accede a todas las emisoras gratis!');
 
-  const primaryBtnText = config?.ctaPrimaryText || 'Crear Cuenta Gratis';
-  const secondaryBtnText = config?.ctaSecondaryText || 'Instalar la App';
+  const description = config?.description || (isZenTrigger
+    ? 'Instala Aura Radio gratis en tu pantalla de inicio para activar el temporizador de sueño y escuchar con la pantalla apagada o bloqueada sin cortes en segundo plano.'
+    : 'Crea tu cuenta en menos de 10 segundos o instala la App para escuchar sin límites, guardar tus favoritos y activar el Modo Zen.');
+
+  const primaryBtnText = isZenTrigger 
+    ? 'Instalar App Gratis (PWA)' 
+    : (config?.ctaPrimaryText || 'Crear Cuenta Gratis');
+
+  const secondaryBtnText = isZenTrigger 
+    ? 'Guardar Perfil / Registrarme' 
+    : (config?.ctaSecondaryText || 'Instalar la App');
 
   return (
     <AnimatePresence>
@@ -80,8 +93,8 @@ export default function GuestIncentiveModal({
 
           {/* Top Badge */}
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-accent/15 border border-accent/30 text-accent text-[10px] font-black uppercase tracking-wider mb-4">
-            <Lock className="w-3 h-3 animate-bounce" />
-            <span>{restrictedCategoryName ? 'Categoría Exclusiva' : 'Experiencia Completa'}</span>
+            {isZenTrigger ? <Moon className="w-3 h-3 text-purple-400 animate-pulse" /> : <Lock className="w-3 h-3 animate-bounce" />}
+            <span>{isZenTrigger ? 'Modo Zen Exclusivo' : restrictedCategoryName ? 'Categoría Exclusiva' : 'Experiencia Completa'}</span>
           </div>
 
           {/* Optional Banner Image */}
@@ -106,6 +119,22 @@ export default function GuestIncentiveModal({
 
           {/* Features Grid */}
           <div className="grid grid-cols-2 gap-3 mb-6">
+            <div className={`flex flex-col gap-1 p-3 rounded-2xl border transition-all ${isZenTrigger ? 'bg-purple-500/10 border-purple-500/30' : 'bg-white/[0.03] border-white/5 hover:border-white/10'}`}>
+              <div className="w-7 h-7 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-400 mb-1">
+                <Moon className="w-3.5 h-3.5" />
+              </div>
+              <span className="text-xs font-bold text-white">Modo Zen & Sueño</span>
+              <span className="text-[10px] text-white/50 leading-tight">Temporizador para descansar</span>
+            </div>
+
+            <div className={`flex flex-col gap-1 p-3 rounded-2xl border transition-all ${isZenTrigger ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-white/[0.03] border-white/5 hover:border-white/10'}`}>
+              <div className="w-7 h-7 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mb-1">
+                <Smartphone className="w-3.5 h-3.5" />
+              </div>
+              <span className="text-xs font-bold text-white">App Gratis (PWA)</span>
+              <span className="text-[10px] text-white/50 leading-tight">Sin cortes en 2º plano</span>
+            </div>
+
             <div className="flex flex-col gap-1 p-3 rounded-2xl bg-white/[0.03] border border-white/5 hover:border-white/10 transition-all">
               <div className="w-7 h-7 rounded-xl bg-accent/20 border border-accent/30 flex items-center justify-center text-accent mb-1">
                 <Radio className="w-3.5 h-3.5" />
@@ -115,46 +144,30 @@ export default function GuestIncentiveModal({
             </div>
 
             <div className="flex flex-col gap-1 p-3 rounded-2xl bg-white/[0.03] border border-white/5 hover:border-white/10 transition-all">
-              <div className="w-7 h-7 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mb-1">
-                <Smartphone className="w-3.5 h-3.5" />
-              </div>
-              <span className="text-xs font-bold text-white">App Gratis (PWA)</span>
-              <span className="text-[10px] text-white/50 leading-tight">Sin anuncios y en 2º plano</span>
-            </div>
-
-            <div className="flex flex-col gap-1 p-3 rounded-2xl bg-white/[0.03] border border-white/5 hover:border-white/10 transition-all">
               <div className="w-7 h-7 rounded-xl bg-rose-500/20 border border-rose-500/30 flex items-center justify-center text-rose-400 mb-1">
                 <Heart className="w-3.5 h-3.5" />
               </div>
               <span className="text-xs font-bold text-white">Guardar Favoritos</span>
-              <span className="text-[10px] text-white/50 leading-tight">Colecciona tus emisoras y temas</span>
-            </div>
-
-            <div className="flex flex-col gap-1 p-3 rounded-2xl bg-white/[0.03] border border-white/5 hover:border-white/10 transition-all">
-              <div className="w-7 h-7 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 mb-1">
-                <Moon className="w-3.5 h-3.5" />
-              </div>
-              <span className="text-xs font-bold text-white">Modo Zen & Sueño</span>
-              <span className="text-[10px] text-white/50 leading-tight">Temporizador para descansar</span>
+              <span className="text-[10px] text-white/50 leading-tight">Colecciona tus temas preferidos</span>
             </div>
           </div>
 
           {/* Action Buttons */}
           <div className="flex flex-col gap-2.5">
             <button
-              onClick={handleOpenAuth}
+              onClick={isZenTrigger ? handleInstallApp : handleOpenAuth}
               className="w-full py-3.5 px-6 rounded-2xl bg-accent hover:brightness-110 active:scale-[0.98] text-white font-extrabold text-sm tracking-wider flex items-center justify-center gap-2 shadow-[0_0_25px_rgba(var(--color-accent),0.4)] transition-all cursor-pointer"
             >
-              <Sparkles className="w-4 h-4 fill-white/20 animate-pulse" />
+              {isZenTrigger ? <Smartphone className="w-4 h-4 text-emerald-300" /> : <Sparkles className="w-4 h-4 fill-white/20 animate-pulse" />}
               <span>{primaryBtnText}</span>
               <ArrowRight className="w-4 h-4" />
             </button>
 
             <button
-              onClick={handleInstallApp}
+              onClick={isZenTrigger ? handleOpenAuth : handleInstallApp}
               className="w-full py-3 px-6 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 active:scale-[0.98] text-white/90 font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer"
             >
-              <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
+              {isZenTrigger ? <Sparkles className="w-3.5 h-3.5 text-accent" /> : <Smartphone className="w-3.5 h-3.5 text-emerald-400" />}
               <span>{secondaryBtnText}</span>
             </button>
 

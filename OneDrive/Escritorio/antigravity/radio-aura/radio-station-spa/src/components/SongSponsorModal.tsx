@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, ExternalLink, Share2, Check, Sparkles } from 'lucide-react';
 import { Song } from '../types';
+import { buildShareMessage, executeShareMessage } from '../lib/shareHelper';
 
 interface SongSponsorModalProps {
   isOpen: boolean;
@@ -30,23 +31,11 @@ export const SongSponsorModal: React.FC<SongSponsorModalProps> = ({
   };
 
   const handleShare = async () => {
-    const shareUrl = getShareUrl();
-    const text = `¡Escucha "${song.title}" de ${song.artist} en Aura Radio!`;
-
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: 'Aura Radio',
-          text: text,
-          url: shareUrl
-        });
-      } catch (err) {
-        console.warn('Native share failed:', err);
-        copyToClipboard(shareUrl);
-      }
-    } else {
-      copyToClipboard(shareUrl);
-    }
+    if (!song) return;
+    const shareData = buildShareMessage(song);
+    await executeShareMessage(shareData, '¡Enlace de canción copiado!');
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const copyToClipboard = (text: string) => {

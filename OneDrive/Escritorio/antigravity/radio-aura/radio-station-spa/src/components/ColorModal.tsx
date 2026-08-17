@@ -42,7 +42,7 @@ export default function ColorModal({ isOpen, onClose, onSelectColor, circadianMo
           {/* Subtle accent glow */}
           <div className="absolute -top-20 -left-20 w-40 h-40 bg-accent/20 blur-[60px] rounded-full pointer-events-none" />
 
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center justify-between mb-2">
             <h2 className="text-xl font-bold text-white tracking-tight">¿Cómo te sientes hoy?</h2>
             <button 
               onClick={onClose}
@@ -51,6 +51,10 @@ export default function ColorModal({ isOpen, onClose, onSelectColor, circadianMo
               <X className="w-5 h-5" />
             </button>
           </div>
+
+          <h2 className="text-xs text-text-secondary leading-relaxed mb-5 font-normal">
+            Elige un tono para personalizar el color visual de la app. <span className="text-white/90 font-semibold">Esta opción solo cambia los colores y no influye en la música</span> (a diferencia del botón <span className="text-amber-400 font-bold">ESTADOS</span> que sí cambia la programación musical).
+          </h2>
 
           <div className="space-y-6">
             <div className="grid grid-cols-2 gap-3">

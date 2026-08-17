@@ -112,7 +112,7 @@ export const SEOModule: React.FC<SEOModuleProps> = ({
     }
 
     setIsGeneratingAI(true);
-    const modelsToTry = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+    const modelsToTry = ['gemini-3.6-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
     let lastErr = '';
 
     for (const model of modelsToTry) {

@@ -7,7 +7,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Music, Loader2, Play, Search, X, Lock, Radio, Heart, RefreshCw, CheckCircle2, LogOut, Shield, User, Users, Mic, Clock, Share2, Instagram, Facebook, Twitter, Globe, MessageCircle, Video, Info, Sparkles, Moon, FileText } from 'lucide-react';
 import { triggerHaptic } from './lib/haptics';
-import { Song, API_CONFIG, CATEGORIES, Category, VisualBanner, AudioAd, SpecialBanner, WelcomeJingle, CircadianBlock, TenantConfig, FeaturedConfig } from './types';
+import { Song, API_CONFIG, CATEGORIES, Category, VisualBanner, AudioAd, SpecialBanner, WelcomeJingle, CircadianBlock, TenantConfig, FeaturedConfig, PODCAST_PARENT_CATEGORY, DEFAULT_PODCAST_CHILD_CATEGORIES, DEFAULT_DEMO_PODCASTS } from './types';
+
 import { audioEngine } from './lib/AudioEngine';
 import { createAvatar } from '@dicebear/core';
 import { shapes } from '@dicebear/collection';
@@ -20,6 +21,7 @@ import LiveView from './components/LiveView';
 import AdminPanel from './components/AdminPanel';
 import ProfilePage from './components/ProfilePage';
 import TenantSalesPage from './components/TenantSalesPage';
+import BlogPage from './components/BlogPage';
 import InstallPWA from './components/InstallPWA';
 import { useAuth } from './contexts/AuthContext';
 import WelcomeModal from './components/WelcomeModal';
@@ -27,12 +29,14 @@ import FeaturedModal from './components/FeaturedModal';
 import { InterstitialAd } from './components/InterstitialAdModal';
 import { LiveMarquee } from './components/LiveMarquee';
 import { SongSponsorModal } from './components/SongSponsorModal';
+import { TutorialModal } from './components/TutorialModal';
 import GuestIncentiveModal from './components/GuestIncentiveModal';
 import InstallInterstitialModal from './components/InstallInterstitialModal';
 import { LiveStudioDashboard } from './components/LiveStudioDashboard';
 import { CategoryHeroBanner } from './components/CategoryHeroBanner';
 import { getFallbackMeaning } from './lib/fallbackMeanings';
-import { buildCategoryShareMessage } from './lib/shareHelper';
+import { buildCategoryShareMessage, buildCategoryShareUrl, buildShareUrl, buildShareMessage, executeShareMessage } from './lib/shareHelper';
+import { isPWAInstalled } from './lib/pwaHelper';
 
 // Detects whether a newer build has been deployed since this tab loaded, by comparing
 // the hashed entry-chunk path referenced in a freshly-fetched (uncached) index.html
@@ -432,13 +436,14 @@ export default function App() {
   }, []);
 
 
-  const { isLoggedIn, user, login, logout, syncFavorites, syncPreferences } = useAuth();
+  const { isLoggedIn, user, token, login, logout, syncFavorites, syncPreferences } = useAuth();
   const [isAdmin, setIsAdmin] = useState(window.location.pathname.startsWith('/admin'));
   const [isProfile, setIsProfile] = useState(window.location.pathname.startsWith('/profile'));
   const [profileTab, setProfileTab] = useState<'overview' | 'favorites' | 'ratings' | 'maquetas' | 'saludos'>('overview');
   const [isColorModalOpen, setIsColorModalOpen] = useState(false);
   const [isWidget, setIsWidget] = useState(window.location.pathname.startsWith('/widget'));
   const [isTenantSales, setIsTenantSales] = useState(window.location.pathname.startsWith('/tenant'));
+  const [isBlog, setIsBlog] = useState(window.location.pathname.startsWith('/blog'));
   const [userCategoryOrder, setUserCategoryOrder] = useState<string[]>(() => {
     const saved = localStorage.getItem('user_category_order');
     return saved ? JSON.parse(saved) : [];
@@ -525,8 +530,7 @@ export default function App() {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'X-User-Email': 'holasolonet@gmail.com',
-            'X-User-Role': 'superadmin'
+            'Authorization': `Bearer ${token}`
           },
           body: JSON.stringify(updatedConfig)
         });
@@ -549,20 +553,27 @@ export default function App() {
   // --- Jingle Logic ---
   const jingleAudioRef = useRef<HTMLAudioElement | null>(null);
 
-  const stopJingle = () => {
+  const stopJingle = (immediate: boolean = false) => {
     if (jingleAudioRef.current) {
-      // Fade out effect
       const audio = jingleAudioRef.current;
-      const fadeInterval = setInterval(() => {
-        if (audio.volume > 0.1) {
-          audio.volume -= 0.1;
-        } else {
-          audio.pause();
-          audio.currentTime = 0;
-          clearInterval(fadeInterval);
-          jingleAudioRef.current = null;
-        }
-      }, 50);
+      audio.onended = null;
+      if (immediate) {
+        audio.pause();
+        audio.currentTime = 0;
+        jingleAudioRef.current = null;
+      } else {
+        // Fade out effect
+        const fadeInterval = setInterval(() => {
+          if (audio.volume > 0.1) {
+            audio.volume -= 0.1;
+          } else {
+            audio.pause();
+            audio.currentTime = 0;
+            clearInterval(fadeInterval);
+            jingleAudioRef.current = null;
+          }
+        }, 50);
+      }
     }
   };
 
@@ -611,10 +622,12 @@ export default function App() {
       } catch (e) {}
     });
 
-    // If we loaded a shared song, play that song directly and skip any jingles or auto-play
-    if (isSharedSongRef.current) {
+    // If we loaded a shared song or shared category, play directly and skip any jingles or default fallback
+    if (isSharedSongRef.current || window.location.pathname.startsWith('/categoria/')) {
       if (currentSong) {
         audioEngine.play(currentSong);
+      } else {
+        pendingSharedPlayRef.current = true;
       }
       return;
     }
@@ -732,10 +745,13 @@ export default function App() {
     return [
       { id: 'popular', name: 'Top 20', r2_folder: '' },
       { id: 'favorites', name: 'Favoritos' },
+      PODCAST_PARENT_CATEGORY,
+      ...DEFAULT_PODCAST_CHILD_CATEGORIES,
       { id: 'podcasts', name: 'Podcasts', r2_folder: '' },
       { id: 'red-emisoras', name: 'Red de Emisoras', r2_folder: '' },
       ...CATEGORIES.filter(c => c.id !== 'favorites')
     ].filter(Boolean);
+
   });
 
   const [activeTenantConfig, setActiveTenantConfig] = useState<TenantConfig | null>(null);
@@ -743,6 +759,16 @@ export default function App() {
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [showGuestIncentiveModal, setShowGuestIncentiveModal] = useState(false);
   const [incentiveCategoryName, setIncentiveCategoryName] = useState<string | undefined>(undefined);
+
+  // Global listener for Zen Mode / Sleep Timer installation incentives
+  useEffect(() => {
+    const handleZenIncentive = () => {
+      setIncentiveCategoryName('Modo Zen & Pantalla Bloqueada');
+      setShowGuestIncentiveModal(true);
+    };
+    window.addEventListener('trigger-pwa-zen-incentive', handleZenIncentive);
+    return () => window.removeEventListener('trigger-pwa-zen-incentive', handleZenIncentive);
+  }, []);
 
   const [activeCategory, setActiveCategory] = useState(() => {
     // Use admin-configured default category, falling back to 'popular'
@@ -852,6 +878,7 @@ export default function App() {
   const lastMarqueeMessageTimeRef = useRef<number>(0);
   const isSharedSongRef = useRef(false);
   const appliedCategoryShareRef = useRef(false);
+  const pendingSharedPlayRef = useRef(false);
   const isFirstConfigLoadRef = useRef(true);
 
   // Trigger system messages organically when songs change / start playing
@@ -960,77 +987,38 @@ export default function App() {
   });
   const [visibleSongsCount, setVisibleSongsCount] = useState(10);
 
-  // Inactivity detection for Zen Mode / Energy Saving (3 minutes of no interaction)
-  useEffect(() => {
-    if (isAdmin) return; // Don't trigger Zen Mode while in Admin Panel
 
-    let idleTimeout: NodeJS.Timeout;
-    let wakeLock: any = null;
 
-    const requestWakeLock = async () => {
-      try {
-        if ('wakeLock' in navigator) {
-          wakeLock = await (navigator as any).wakeLock.request('screen');
-        }
-      } catch (err) {
-        console.warn('Wake Lock error:', err);
-      }
-    };
-
-    const releaseWakeLock = () => {
-      if (wakeLock !== null) {
-        wakeLock.release().catch(() => {});
-        wakeLock = null;
-      }
-    };
-
-    const resetIdleTimer = () => {
-      clearTimeout(idleTimeout);
-      idleTimeout = setTimeout(() => {
-        if (!isAdmin) {
-          console.log('[ZenMode] 3 minutes of inactivity reached. Activating Zen Mode energy saver.');
-          setIsZenMode(true);
-          requestWakeLock();
-        }
-      }, 180000); // 3 minutes = 180,000 ms
-    };
-
-    const handleUserActivity = () => {
-      if (!isZenMode) {
-        resetIdleTimer();
-      }
-    };
-
-    const events = ['click', 'touchstart', 'keydown', 'scroll'];
-    
-    // Start initial 3-minute idle timer
-    resetIdleTimer();
-
-    events.forEach(event => {
-      document.addEventListener(event, handleUserActivity, { passive: true });
-    });
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && isZenMode) {
-        requestWakeLock();
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      clearTimeout(idleTimeout);
-      releaseWakeLock();
-      events.forEach(event => {
-        document.removeEventListener(event, handleUserActivity);
-      });
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, [isAdmin, isZenMode]);
+  const currentPlayingTrackIdRef = useRef<string | null>(null);
+  const hasCountedCurrentTrackRef = useRef<boolean>(false);
 
   useEffect(() => {
-    const removeListener = audioEngine.addListener((song, playing) => {
+    const removeListener = audioEngine.addListener((song, playing, progress) => {
       setCurrentSong(prev => prev?.id === song?.id ? prev : song);
       setIsPlaying(prev => prev === playing ? prev : playing);
+
+      // Track genuine play (> 60s active listening or >= 90% progress for tracks >= 20s) for Radar metrics
+      if (song && !song.isAd && !song.isLive && !song.isBoletin && !song.isBoletinJingle && !song.isBoletinPitos && !song.isBoletinHora) {
+        if (currentPlayingTrackIdRef.current !== song.id) {
+          currentPlayingTrackIdRef.current = song.id;
+          hasCountedCurrentTrackRef.current = false;
+          setSongsPlayed(prev => prev + 1);
+        }
+
+        if (playing && !hasCountedCurrentTrackRef.current) {
+          const currentTime = audioEngine.getCurrentTime();
+          const isListenThresholdMet = currentTime >= 60 || (progress >= 90 && currentTime >= 20);
+
+          if (isListenThresholdMet) {
+            hasCountedCurrentTrackRef.current = true;
+            fetch(`${API_CONFIG.BASE_URL}/api/songs/react`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ song_id: song.id, reaction: 'play' })
+            }).catch(() => {});
+          }
+        }
+      }
     });
     return () => { removeListener(); };
   }, []);
@@ -1060,9 +1048,21 @@ export default function App() {
       if (e.detail.featuredConfig) setFeaturedConfig(e.detail.featuredConfig);
     };
 
+    const handlePreviewFeatured = (e: any) => {
+      if (e.detail?.featuredConfig) {
+        setFeaturedConfig(e.detail.featuredConfig);
+      }
+      setShowFeaturedModal(true);
+    };
+
     window.addEventListener('aura_config_updated', handleConfigUpdate as EventListener);
-    return () => window.removeEventListener('aura_config_updated', handleConfigUpdate as EventListener);
+    window.addEventListener('aura-preview-featured', handlePreviewFeatured as EventListener);
+    return () => {
+      window.removeEventListener('aura_config_updated', handleConfigUpdate as EventListener);
+      window.removeEventListener('aura-preview-featured', handlePreviewFeatured as EventListener);
+    };
   }, []);
+
   const [searchQuery, setSearchQuery] = useState('');
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [volume, setVolume] = useState(() => {
@@ -1325,19 +1325,53 @@ export default function App() {
 
     window.addEventListener('trigger-bulletin-now', handleTriggerBulletinNow);
 
-    let bc: BroadcastChannel | null = null;
+    let bcEvents: BroadcastChannel | null = null;
+    let bcSync: BroadcastChannel | null = null;
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
       try {
-        bc = new BroadcastChannel('aura-radio-events');
-        bc.onmessage = (event) => {
+        bcEvents = new BroadcastChannel('aura-radio-events');
+        bcEvents.onmessage = (event) => {
           if (event.data?.type === 'trigger-bulletin-now') {
             handleTriggerBulletinNow();
           }
         };
       } catch (e) {}
+
+      try {
+        bcSync = new BroadcastChannel('aura_realtime_sync');
+        bcSync.onmessage = (event) => {
+          if (event.data?.type === 'song_updated' || event.data?.updatedCustomSongNames || event.data?.updatedCatalog) {
+            handleConfigUpdated(new CustomEvent('aura-config-updated', { detail: event.data }));
+          }
+        };
+      } catch (e) {}
     }
 
-    const handleConfigUpdated = () => {
+    const handleConfigUpdated = (e?: Event) => {
+      const customEv = e as CustomEvent;
+      if (customEv && customEv.detail) {
+        const d = customEv.detail;
+        if (d.updatedCustomSongNames) {
+          setCustomSongNames(prev => ({ ...prev, ...d.updatedCustomSongNames }));
+        }
+        if (d.updatedCatalog) {
+          setSongCatalog(prev => ({ ...prev, ...d.updatedCatalog }));
+        }
+        if (d.songId && d.metadata) {
+          const { songId, numericId, metadata } = d;
+          if (numericId) {
+            setSongCatalog(prev => ({
+              ...prev,
+              [numericId]: { ...(prev[numericId] || {}), ...metadata }
+            }));
+          }
+          setCustomSongNames(prev => ({
+            ...prev,
+            [songId]: { ...(prev[songId] || {}), ...metadata },
+            ...(numericId ? { [numericId]: { ...(prev[numericId] || {}), ...metadata } } : {})
+          }));
+        }
+      }
       setSyncTrigger(prev => prev + 1);
     };
 
@@ -1347,14 +1381,15 @@ export default function App() {
       }
     };
     window.addEventListener('storage', handleStorageChange);
-    window.addEventListener('aura-config-updated', handleConfigUpdated);
+    window.addEventListener('aura-config-updated', handleConfigUpdated as EventListener);
 
     return () => {
       window.removeEventListener('trigger-bulletin-now', handleTriggerBulletinNow);
       window.removeEventListener('storage', handleStorageChange);
-      window.removeEventListener('aura-config-updated', handleConfigUpdated);
+      window.removeEventListener('aura-config-updated', handleConfigUpdated as EventListener);
       clearInterval(remoteSyncInterval);
-      if (bc) bc.close();
+      if (bcEvents) bcEvents.close();
+      if (bcSync) bcSync.close();
     };
   }, [currentSong, boletinesConfig, activeTenantConfig]);
 
@@ -1365,12 +1400,22 @@ export default function App() {
     const cleanId = decodedId.split('/').pop() || decodedId;
     const noExtId = cleanId.replace(/\.[^/.]+$/, "");
 
-    // 1) First attempt resolution from central songCatalog (numeric ID or key map)
-    const catalogEntry = songCatalog[rawId] 
-      || songCatalog[r2KeyToId[rawId] || '']
-      || songCatalog[r2KeyToId[decodedId] || '']
-      || songCatalog[r2KeyToId[cleanId] || '']
-      || songCatalog[r2KeyToId[noExtId] || ''];
+    // Direct numeric ID resolution from song or maps
+    const numericId = song.numericId
+      || r2KeyToId[rawId]
+      || r2KeyToId[decodedId]
+      || r2KeyToId[cleanId]
+      || r2KeyToId[noExtId]
+      || (songCatalog[rawId] ? rawId : undefined);
+
+    const catalogEntry = (numericId ? songCatalog[numericId] : null)
+      || songCatalog[rawId] 
+      || songCatalog[decodedId]
+      || songCatalog[cleanId]
+      || songCatalog[noExtId];
+
+    const r2KeyFromCatalog = catalogEntry?.r2_key || '';
+    const cleanCatalogKey = r2KeyFromCatalog ? r2KeyFromCatalog.split('/').pop() || '' : '';
 
     const customMap: Record<string, any> = {
       ...(activeTenantConfig?.customSongNames || {}),
@@ -1380,15 +1425,20 @@ export default function App() {
     const normalize = (str: string) => (str || '').toLowerCase().trim().replace(/%20/g, ' ');
 
     const targetKeys = [
+      numericId,
       rawId,
       decodedId,
       cleanId,
       noExtId,
+      r2KeyFromCatalog,
+      cleanCatalogKey,
+      normalize(numericId || ''),
       normalize(rawId),
       normalize(decodedId),
       normalize(cleanId),
-      normalize(noExtId)
-    ];
+      normalize(noExtId),
+      normalize(r2KeyFromCatalog)
+    ].filter(Boolean) as string[];
 
     let customFromMap: any = null;
     for (const key of targetKeys) {
@@ -1410,6 +1460,16 @@ export default function App() {
     const cleanFilename = noExtId && !noExtId.startsWith('track-') ? noExtId.replace(/%20/g, ' ') : '';
 
     const lyrics = customFromMap?.lyrics || catalogEntry?.lyrics || song.lyrics || (song as any).lyric || (song as any).text;
+    // Letra sincronizada (karaoke) por separado: NO pisa `lyrics` (que se muestra
+    // como texto plano en otros sitios); los consumidores que la sepan usar
+    // (reel, visualizador) la prefieren cuando existe. Fallback a cualquier fuente LRC con timestamps [mm:ss.xx].
+    const lyricsSynced = customFromMap?.lyricsSynced
+      || catalogEntry?.lyricsSynced
+      || (song as any).lyricsSynced
+      || (customFromMap?.lyrics && /\[\d+:\d+/.test(customFromMap.lyrics) ? customFromMap.lyrics : '')
+      || (catalogEntry?.lyrics && /\[\d+:\d+/.test(catalogEntry.lyrics) ? catalogEntry.lyrics : '')
+      || (song.lyrics && /\[\d+:\d+/.test(song.lyrics) ? song.lyrics : '')
+      || '';
     const meaning = customFromMap?.meaning || catalogEntry?.meaning || (song as any).meaning || (song as any).description;
 
     let title = (customFromMap?.title && customFromMap.title.trim())
@@ -1423,13 +1483,14 @@ export default function App() {
       || song.artist
       || 'Aura Radio';
 
-    const sponsor = customFromMap?.sponsor || catalogEntry?.sponsor || songSponsors[rawId] || songSponsors[cleanId] || null;
+    const sponsor = customFromMap?.sponsor || catalogEntry?.sponsor || songSponsors[rawId] || songSponsors[cleanId] || (numericId ? songSponsors[numericId] : null) || null;
 
     return {
       title: title,
       artist: artist,
       meaning: meaning,
       lyrics: lyrics,
+      lyricsSynced: lyricsSynced,
       sponsor: sponsor
     };
   };
@@ -1506,10 +1567,16 @@ export default function App() {
   const [podcasts, setPodcasts] = useState<any[]>(() => {
     const saved = localStorage.getItem('aura_podcasts');
     if (saved) {
-      try { return JSON.parse(saved); } catch(e) {}
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0 && !JSON.stringify(parsed).includes('temp_boletin.mp3')) {
+          return parsed;
+        }
+      } catch(e) {}
     }
-    return [];
+    return DEFAULT_DEMO_PODCASTS;
   });
+
   const [welcomeJingles, setWelcomeJingles] = useState<WelcomeJingle[]>(() => {
     const saved = localStorage.getItem('aura_welcome_jingles');
     if (saved) {
@@ -1531,6 +1598,84 @@ export default function App() {
   const [activeWidgetUrl, setActiveWidgetUrl] = useState<string | null>(null);
   const [promoPodcast, setPromoPodcast] = useState<any | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
+
+  // Inactivity detection for Zen Mode / Energy Saving (3 minutes of no interaction)
+  useEffect(() => {
+    const isSpecialViewOrModalActive = () => {
+      if (isAdmin) return true;
+      if (showLiveView || activeCategory === 'live') return true;
+      if (activeCategory === 'blog' || window.location.pathname.includes('/blog')) return true;
+      if (activeDetailSong !== null || isSponsorModalOpen || isColorModalOpen) return true;
+      if (typeof document !== 'undefined' && document.querySelector('[data-reel-studio]')) return true;
+      return false;
+    };
+
+    if (isSpecialViewOrModalActive()) return; // Don't trigger Zen Mode in special views or active modals
+
+    let idleTimeout: NodeJS.Timeout;
+    let wakeLock: any = null;
+
+    const requestWakeLock = async () => {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLock = await (navigator as any).wakeLock.request('screen');
+        }
+      } catch (err) {
+        console.warn('Wake Lock error:', err);
+      }
+    };
+
+    const releaseWakeLock = () => {
+      if (wakeLock !== null) {
+        wakeLock.release().catch(() => {});
+        wakeLock = null;
+      }
+    };
+
+    const resetIdleTimer = () => {
+      clearTimeout(idleTimeout);
+      idleTimeout = setTimeout(() => {
+        if (!isSpecialViewOrModalActive()) {
+          console.log('[ZenMode] 3 minutes of inactivity reached. Activating Zen Mode energy saver.');
+          setIsZenMode(true);
+          requestWakeLock();
+        } else {
+          resetIdleTimer();
+        }
+      }, 180000); // 3 minutes = 180,000 ms
+    };
+
+    const handleUserActivity = () => {
+      if (!isZenMode) {
+        resetIdleTimer();
+      }
+    };
+
+    const events = ['click', 'touchstart', 'keydown', 'scroll'];
+    
+    // Start initial 3-minute idle timer
+    resetIdleTimer();
+
+    events.forEach(event => {
+      document.addEventListener(event, handleUserActivity, { passive: true });
+    });
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && isZenMode) {
+        requestWakeLock();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      clearTimeout(idleTimeout);
+      releaseWakeLock();
+      events.forEach(event => {
+        document.removeEventListener(event, handleUserActivity);
+      });
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [isAdmin, isZenMode, showLiveView, activeCategory, activeDetailSong, isSponsorModalOpen, isColorModalOpen]);
 
   const activeCategoryName = dynamicCategories.find(c => c.id === activeCategory)?.name ||
                               (activeCategory === 'all' ? (activeTenantConfig && activeTenantConfig.id !== 'aura-radio' ? `${activeTenantConfig.name} Mix` : 'AuraMix') :
@@ -1720,8 +1865,9 @@ export default function App() {
       } catch (e) {}
 
       // Resolve numeric ID (e.g. "0148") or R2 key
-      const catalogSong = songCatalog[playId];
-      const resolvedKey = catalogSong?.r2_key || r2KeyToId[playId] || playId;
+      const numericId = songCatalog[playId] ? playId : r2KeyToId[playId];
+      const catalogSong = numericId ? songCatalog[numericId] : songCatalog[playId];
+      const resolvedKey = catalogSong?.r2_key || (songCatalog[playId] ? catalogSong?.r2_key : playId);
       const cleanKeyFilename = (resolvedKey.split('/').pop() || resolvedKey).replace(/\.[^/.]+$/, "");
 
       // 1. Try to find matching song in allKnownSongs
@@ -1828,14 +1974,37 @@ export default function App() {
     let categoryId = rawId;
     try { categoryId = decodeURIComponent(rawId); } catch (e) {}
 
-    const matchedCat = dynamicCategories.find(c => c.id === categoryId);
+    const cleanRawId = categoryId.toLowerCase().trim();
+    const matchedCat = dynamicCategories.find(c => {
+      if (!c) return false;
+      const cId = String(c.id).toLowerCase().trim();
+      const cName = String(c.name || '').toLowerCase().trim();
+      const cAlias = String(c.alias || '').toLowerCase().trim();
+      return cId === cleanRawId || 
+             cId === rawId.toLowerCase().trim() ||
+             encodeURIComponent(c.id).toLowerCase() === rawId.toLowerCase() ||
+             cName === cleanRawId ||
+             (cAlias && cAlias === cleanRawId);
+    });
+
     if (!matchedCat) return; // Catalog may still be filling in; retry on next render
 
     appliedCategoryShareRef.current = true;
     if (activeCategory !== matchedCat.id) {
       setActiveCategory(matchedCat.id);
     }
-    fetchSongs(matchedCat.id);
+
+    fetchSongs(matchedCat.id).then(catSongs => {
+      if (catSongs && catSongs.length > 0) {
+        const songToPlay = catSongs[0];
+        setCurrentSong(songToPlay);
+        isSharedSongRef.current = true;
+        if (pendingSharedPlayRef.current) {
+          pendingSharedPlayRef.current = false;
+          audioEngine.play(songToPlay);
+        }
+      }
+    });
   }, [dynamicCategories, isLoading, activeCategory]);
 
   // Trigger sponsor modal automatically for shared sponsored songs
@@ -2097,9 +2266,17 @@ export default function App() {
         }
 
         if (finalCategories.length > 0) {
+          // Los grupos padre (Diurno, Noche, Estilos...) son contenedores puros:
+          // no tienen carpeta ni URL propia, solo agrupan subcategorías. Sin
+          // tenerlos en cuenta aquí se caían del filtro y nunca llegaban al
+          // frontend, dejando a las hijas apuntando a un padre inexistente.
+          const parentIds = new Set(
+            finalCategories.map((c: any) => c && c.parentId).filter(Boolean)
+          );
           const filteredCats = finalCategories.filter((cat: any) => {
-            // Keep categories that have an associated folder, live URL, or are default categories
-            return !!(cat.r2_folder || cat.live_url || cat.id === 'all' || cat.id === 'favorites' || cat.id === 'popular' || cat.id === 'podcasts' || cat.id === 'red-emisoras');
+            // Keep categories that have an associated folder, live URL, are a
+            // parent of other categories, or are default categories
+            return !!(cat.r2_folder || cat.live_url || parentIds.has(cat.id) || cat.id === 'all' || cat.id === 'favorites' || cat.id === 'popular' || cat.id === 'podcasts' || cat.id === 'red-emisoras');
           });
 
           const baseCats2 = [
@@ -2441,6 +2618,7 @@ export default function App() {
       setIsWidget(window.location.pathname.startsWith('/widget'));
       setIsProfile(window.location.pathname.startsWith('/profile'));
       setIsTenantSales(window.location.pathname.startsWith('/tenant'));
+      setIsBlog(window.location.pathname.startsWith('/blog'));
       if (window.location.pathname.startsWith('/widget')) {
         document.body.style.backgroundColor = 'transparent';
         document.body.style.background = 'transparent';
@@ -2471,44 +2649,6 @@ export default function App() {
     return () => {
       window.removeEventListener('popstate', handleLocationChange);
     };
-  }, []);
-
-  // Ref to track current song safely across async closures
-  const currentSongRef = useRef(currentSong);
-  currentSongRef.current = currentSong;
-
-  const startFullBulletinSequence = () => {
-    console.log('[Boletines] Starting full bulletin sequence (Pitos -> Hora -> Jingle -> Noticias)...');
-    
-    const curr = currentSongRef.current;
-    if (curr && !curr.isBoletin && !curr.isBoletinJingle && !curr.isBoletinPitos && !curr.isBoletinHora) {
-      lastNonAdIdRef.current = curr.isLive ? 'live-radio' : curr.id;
-    }
-
-    const pitosAudio: Song = {
-      id: 'boletin_pitos_' + Date.now(),
-      title: '⚡ Señal Horaria (Pitos)',
-      artist: 'Aura Radio',
-      coverUrl: 'https://images.unsplash.com/photo-1585829365295-ab7cd400c167?w=600&auto=format&fit=crop&q=80',
-      streamUrl: 'https://boletines.auraradio.es/pitos_senal_horaria.wav',
-      category: 'noticias',
-      isBoletinPitos: true
-    };
-
-    setBoletinTriggered(false);
-    setCurrentSong(pitosAudio);
-    setIsPlaying(true);
-    audioEngine.play(pitosAudio);
-  };
-
-  // Manual trigger-bulletin-now listener
-  useEffect(() => {
-    const handleTriggerBulletin = () => {
-      console.log('[Boletines] Manual trigger received! Forcing full sequence (Pitos -> Hora -> Jingle -> Noticias)...');
-      startFullBulletinSequence();
-    };
-    window.addEventListener('trigger-bulletin-now', handleTriggerBulletin);
-    return () => window.removeEventListener('trigger-bulletin-now', handleTriggerBulletin);
   }, []);
 
   // Live Radio Stream Ad Interrupter
@@ -2705,7 +2845,11 @@ export default function App() {
             coverUrl = avatar.toDataUri();
           }
           
-          return { ...s, id: uniqueId, title, artist, streamUrl, coverUrl, category: songCategory, folder: songFolder, rank, score };
+          const cleanFilename = uniqueId.split('/').pop() || uniqueId;
+          const noExtId = cleanFilename.replace(/\.[^/.]+$/, "");
+          const numericId = r2KeyToId[uniqueId] || r2KeyToId[cleanFilename] || r2KeyToId[noExtId] || (songCatalog[uniqueId] ? uniqueId : undefined);
+
+          return { ...s, id: uniqueId, numericId, title, artist, streamUrl, coverUrl, category: songCategory, folder: songFolder, rank, score };
         });
     };
         
@@ -2743,15 +2887,27 @@ export default function App() {
       return finalFavs;
     }
 
-    if (categoryId === 'podcasts') {
-      setActivePodcastSection('Todos'); // Reset filter on category change
-      setSongs(podcasts);
-      if (allKnownSongs.size === 0 && podcasts.length > 0) {
-        setAllKnownSongs(new Map(podcasts.map(p => [p.id, p])));
+    const isPodcastCat = categoryId === 'podcasts' || 
+      categoryId === 'podcast-lm' || 
+      DEFAULT_PODCAST_CHILD_CATEGORIES.some(c => c.id === categoryId);
+
+    if (isPodcastCat) {
+      setActivePodcastSection('Todos');
+      const combinedPodcasts = [...DEFAULT_DEMO_PODCASTS, ...podcasts];
+      
+      let filteredPodcasts = combinedPodcasts;
+      if (categoryId !== 'podcasts' && categoryId !== 'podcast-lm') {
+        filteredPodcasts = combinedPodcasts.filter(p => p.category === categoryId);
+      }
+
+      setSongs(filteredPodcasts);
+      if (allKnownSongs.size === 0 && filteredPodcasts.length > 0) {
+        setAllKnownSongs(new Map(filteredPodcasts.map(p => [p.id, p])));
       }
       setIsLoading(false);
-      return podcasts;
+      return filteredPodcasts;
     }
+
 
     try {
       if (categoryId === 'popular') {
@@ -3518,29 +3674,26 @@ export default function App() {
   const handleShareCategory = async (categoryId: string, categoryName: string) => {
     triggerHaptic(10);
     const shareData = buildCategoryShareMessage(categoryId, categoryName, stationName, activeTenantConfig);
+    await executeShareMessage(shareData, `¡Enlace de "${categoryName}" copiado! Compártelo directamente.`);
+  };
 
-    if (navigator.share) {
-      try {
-        // No separate `url` — shareData.text already ends with the encoded link, and
-        // passing both makes WhatsApp append its own mangled (unencoded-spaces) copy.
-        await navigator.share({ title: shareData.title, text: shareData.text });
-      } catch (err) {
-        console.warn('Native share failed or cancelled', err);
-      }
-      return;
-    }
+  const handleShareSong = async (songToShare?: Song | null, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const targetSong = songToShare || currentSong;
+    if (!targetSong) return;
 
-    try {
-      await navigator.clipboard.writeText(shareData.text);
-      window.dispatchEvent(new CustomEvent('aura-system-msg', {
-        detail: {
-          text: `¡Enlace de "${categoryName}" copiado! Compártelo directamente.`,
-          user_name: 'AURA SYSTEM'
-        }
-      }));
-    } catch (err) {
-      console.warn('Could not copy category share text:', err);
-    }
+    triggerHaptic(10);
+
+    fetch(`${API_CONFIG.BASE_URL}/api/songs/react`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ song_id: targetSong.id, reaction: 'share' })
+    }).catch(() => {});
+
+    const currentStation = activeTenantConfig?.name || stationName || 'Aura Radio';
+    const customMeta = getResolvedSongMetadata(targetSong);
+    const shareData = buildShareMessage(targetSong, customMeta, currentStation, activeTenantConfig);
+    await executeShareMessage(shareData, '¡Enlace directo de la canción copiado!');
   };
 
   const handleDragScrollMouseDown = (e: React.MouseEvent, ref: React.RefObject<HTMLDivElement | null>, axis: 'x' | 'y' = 'x') => {
@@ -3680,12 +3833,13 @@ export default function App() {
     stopJingle();
 
     if (song && !song.isAd && !song.isLive) {
-      // Register play action with backend API (+0.5 points weight)
-      fetch(`${API_CONFIG.BASE_URL}/api/songs/react`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ song_id: song.id, reaction: 'play' })
-      }).catch(() => {});
+      try {
+        const shareUrl = buildShareUrl(song, activeTenantConfig);
+        const urlObj = new URL(shareUrl);
+        window.history.pushState({}, '', urlObj.pathname + urlObj.search);
+      } catch (e) {}
+
+      // Play reaction is now registered after >= 60 seconds of genuine listening in the audioEngine listener
 
       const catId = findCategoryForSong(song);
       if (catId && catId !== activeCategory && catId !== 'all') {
@@ -3792,14 +3946,44 @@ export default function App() {
     }
   };
 
+  // Un grupo padre no tiene canciones propias. Si se pulsa, saltamos a su
+  // primera subcategoría para no dejar la pantalla vacía; la segunda fila de
+  // píldoras se despliega igual, porque se calcula desde el parentId de la
+  // categoría activa. Las categorías especiales sin carpeta (Favoritos, Top 20,
+  // Podcasts...) no tienen hijas, así que caen al comportamiento de siempre.
+  const handleSelectCategoryPill = React.useCallback((categoryId: string) => {
+    const SPECIAL_CATEGORY_IDS = ['all', 'favorites', 'popular', 'podcasts', 'red-emisoras'];
+    const target = dynamicCategories.find(c => c.id === categoryId);
+    let finalCatId = categoryId;
+    if (target && !SPECIAL_CATEGORY_IDS.includes(categoryId) && !target.r2_folder && !target.live_url) {
+      const firstChild = dynamicCategories.find(c => c.parentId === categoryId);
+      if (firstChild) {
+        finalCatId = firstChild.id;
+      }
+    }
+    setActiveCategory(finalCatId);
+    if (finalCatId && !['all', 'favorites'].includes(finalCatId)) {
+      try {
+        const shareUrl = buildCategoryShareUrl(finalCatId, activeTenantConfig);
+        const urlObj = new URL(shareUrl);
+        window.history.pushState({}, '', urlObj.pathname + urlObj.search);
+      } catch (e) {}
+    }
+  }, [dynamicCategories, activeTenantConfig]);
+
   const displayCategories = React.useMemo(() => {
     const mappedCategories = dynamicCategories
       .filter(cat => cat.id !== 'all' && cat.name !== 'AuraMix')
       .map(cat => cat);
 
     const cats = userCategoryOrder.length === 0 
-      ? mappedCategories 
+      ? [...mappedCategories].sort((a, b) => {
+          const nameA = (a.alias || a.name || '').toString().toLowerCase();
+          const nameB = (b.alias || b.name || '').toString().toLowerCase();
+          return nameA.localeCompare(nameB, 'es', { sensitivity: 'base' });
+        })
       : [...mappedCategories].sort((a, b) => {
+
           const idxA = userCategoryOrder.indexOf(a.id);
           const idxB = userCategoryOrder.indexOf(b.id);
           if (idxA === -1 && idxB === -1) return 0;
@@ -3834,6 +4018,53 @@ export default function App() {
 
 
 
+  const mainNavCategories = React.useMemo(() => {
+    return displayCategories.filter(c => c.id !== 'all' && c.name !== 'AuraMix');
+  }, [displayCategories]);
+
+  const currentStationIndex = React.useMemo(() => {
+    const idx = mainNavCategories.findIndex(c => c.id === activeCategory);
+    return idx !== -1 ? idx + 1 : 1;
+  }, [mainNavCategories, activeCategory]);
+
+  const handleNextCategory = React.useCallback(() => {
+    if (mainNavCategories.length === 0) return;
+    const currentIdx = mainNavCategories.findIndex(c => c.id === activeCategory);
+    const nextIdx = currentIdx === -1 ? 0 : (currentIdx + 1) % mainNavCategories.length;
+    handleSelectCategoryPill(mainNavCategories[nextIdx].id);
+    triggerHaptic(10);
+  }, [mainNavCategories, activeCategory, handleSelectCategoryPill]);
+
+  const handlePrevCategory = React.useCallback(() => {
+    if (mainNavCategories.length === 0) return;
+    const currentIdx = mainNavCategories.findIndex(c => c.id === activeCategory);
+    const prevIdx = currentIdx === -1 ? 0 : (currentIdx - 1 + mainNavCategories.length) % mainNavCategories.length;
+    handleSelectCategoryPill(mainNavCategories[prevIdx].id);
+    triggerHaptic(10);
+  }, [mainNavCategories, activeCategory, handleSelectCategoryPill]);
+
+  const nextCategoryObj = React.useMemo(() => {
+    if (mainNavCategories.length === 0) return null;
+    const currentIdx = mainNavCategories.findIndex(c => c.id === activeCategory);
+    const nextIdx = currentIdx === -1 ? 0 : (currentIdx + 1) % mainNavCategories.length;
+    return mainNavCategories[nextIdx];
+  }, [mainNavCategories, activeCategory]);
+
+  const prevCategoryObj = React.useMemo(() => {
+    if (mainNavCategories.length === 0) return null;
+    const currentIdx = mainNavCategories.findIndex(c => c.id === activeCategory);
+    const prevIdx = currentIdx === -1 ? 0 : (currentIdx - 1 + mainNavCategories.length) % mainNavCategories.length;
+    return mainNavCategories[prevIdx];
+  }, [mainNavCategories, activeCategory]);
+
+  const getCategoryDisplayName = React.useCallback((cat?: Category | null) => {
+    if (!cat) return '';
+    if (cat.alias && typeof cat.alias === 'string') return cat.alias;
+    const clean = (cat.name || '').replace(/\/$/, '').replace(/^\d+_/, '');
+    if (!clean) return cat.name || 'Estación';
+    return clean.split(/[_-]/).filter(Boolean).map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ');
+  }, []);
+
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
   const touchEndX = useRef<number | null>(null);
@@ -3856,37 +4087,20 @@ export default function App() {
     }
   };
 
-  const handleTouchEnd = (e: React.TouchEvent) => {
+  const handleTouchEnd = () => {
     if (!touchStartX.current || !touchEndX.current || !touchStartY.current || !touchEndY.current) return;
     
     const distanceX = touchStartX.current - touchEndX.current;
     const distanceY = touchStartY.current - touchEndY.current;
     
-    // If the finger moved significantly (more than 15px), prevent simulated clicks/taps on child items
-    if (Math.abs(distanceX) > 15 || Math.abs(distanceY) > 15) {
-      e.preventDefault();
-    }
-
-    // Check if horizontal movement is larger than vertical movement
-    if (Math.abs(distanceX) > Math.abs(distanceY)) {
-      const mainDisplayCats = displayCategories.filter(c => !c.parentId);
-      const activeMainId = displayCategories.find(c => c.id === activeCategory)?.parentId || activeCategory;
-      const currentIndex = mainDisplayCats.findIndex(c => c.id === activeMainId);
-
-      // Swipe left (next category)
-      if (distanceX > 60) {
-        if (currentIndex !== -1 && currentIndex < mainDisplayCats.length - 1) {
-          setActiveCategory(mainDisplayCats[currentIndex + 1].id);
-          triggerHaptic(10);
-        }
-      }
-      
-      // Swipe right (prev category)
-      if (distanceX < -60) {
-        if (currentIndex > 0) {
-          setActiveCategory(mainDisplayCats[currentIndex - 1].id);
-          triggerHaptic(10);
-        }
+    // Check if horizontal movement is dominant (>1.4x vertical) and exceeds threshold (45px)
+    if (Math.abs(distanceX) > Math.abs(distanceY) * 1.4 && Math.abs(distanceX) > 45) {
+      if (distanceX > 0) {
+        // Swiped Left (finger right to left) -> Next station
+        handleNextCategory();
+      } else {
+        // Swiped Right (finger left to right) -> Previous station
+        handlePrevCategory();
       }
     }
     
@@ -3898,6 +4112,10 @@ export default function App() {
 
   if (isTenantSales) {
     return <TenantSalesPage />;
+  }
+
+  if (isBlog) {
+    return <BlogPage stationName={activeTenantConfig?.name || 'Aura Radio'} logoUrl={activeTenantConfig?.logoUrl} />;
   }
 
   if (isWidget) {
@@ -3988,9 +4206,41 @@ export default function App() {
           </div>
         )}
 
-        {/* Top-Right Control Group (unaffected by overflow-x-auto) */}
+        {/* Top-Left Control Group (Zen & Color) */}
+        <div className="absolute top-6 left-6 md:left-8 flex items-center gap-2 z-50">
+          {/* Modo Zen Trigger (Icono Luna Compacto) */}
+          <button 
+            onClick={(e) => {
+              e.stopPropagation();
+              triggerHaptic(15);
+              if (!isPWAInstalled()) {
+                setIncentiveCategoryName('Modo Zen & Pantalla Bloqueada');
+                setShowGuestIncentiveModal(true);
+                return;
+              }
+              setIsZenMode(true);
+            }}
+            className="flex items-center justify-center w-8 h-8 rounded-full border border-white/15 hover:border-amber-400/50 bg-white/5 hover:bg-amber-500/10 text-text-secondary hover:text-amber-300 transition-all active:scale-95 cursor-pointer shrink-0"
+            title={isPWAInstalled() ? "Activar Modo Zen / Ahorro de Energía" : "Instala la App para activar el Modo Zen"}
+          >
+            <Moon className="w-4 h-4 text-amber-300/90" />
+          </button>
+
+          {/* Color Customize Trigger */}
+          <button 
+            onClick={() => {
+              triggerHaptic(15);
+              setIsColorModalOpen(true);
+            }}
+            className="flex items-center justify-center w-8 h-8 rounded-full border border-white/15 hover:bg-white/5 text-text-secondary hover:text-white transition-all active:scale-95 cursor-pointer shrink-0"
+            title="Personalizar color"
+          >
+            <div className="w-3.5 h-3.5 rounded-full bg-accent shadow-[0_0_8px_var(--color-accent)]" />
+          </button>
+        </div>
+
+        {/* Top-Right Control Group (Social & Profile) */}
         <div className="absolute top-6 right-6 md:right-8 flex items-center gap-2 z-50">
-          
           {/* Social Links Trigger */}
           {activeTenantConfig?.socialLinks && Object.values(activeTenantConfig.socialLinks).some(val => !!val) && (
             <button 
@@ -4002,19 +4252,7 @@ export default function App() {
             </button>
           )}
 
-           {/* Color Customize Trigger */}
-           <button 
-             onClick={() => {
-               triggerHaptic(15);
-               setIsColorModalOpen(true);
-             }}
-             className="flex items-center justify-center w-8 h-8 rounded-full border border-white/15 hover:bg-white/5 text-text-secondary hover:text-white transition-all active:scale-95 cursor-pointer shrink-0"
-             title="Personalizar color"
-           >
-             <div className="w-3.5 h-3.5 rounded-full bg-accent shadow-[0_0_8px_var(--color-accent)]" />
-           </button>
-
-           {/* User profile dropdown container */}
+          {/* User profile dropdown container */}
            <div className="relative shrink-0 flex items-center">
              {isLoggedIn && user ? (
                <button 
@@ -4235,7 +4473,7 @@ export default function App() {
             <span>LIVE</span>
           </button>
 
-          {/* Circadiano Toggle Pill */}
+          {/* Estados / Momento Circadiano Toggle Pill */}
           <button
             onClick={() => {
               triggerHaptic(10);
@@ -4246,25 +4484,10 @@ export default function App() {
                 ? 'bg-accent/15 border-accent text-accent shadow-[0_0_10px_rgba(var(--color-accent),0.2)]' 
                 : 'bg-white/5 border-white/5 text-text-secondary hover:text-white hover:border-white/20'
             }`}
+            title="Seleccionar Estado de Ánimo / Bloque Horario"
           >
             <span className={`w-1.5 h-1.5 rounded-full ${circadianMode ? 'bg-accent animate-pulse' : 'bg-text-secondary'}`} />
-            Circadiano
-          </button>
-
-          {/* Zen Mode Button */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              triggerHaptic(10);
-              setIsZenMode(true);
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 border border-white/5 hover:border-white/20 text-[10px] font-black uppercase tracking-wider text-text-secondary hover:text-white transition-all rounded-full shrink-0 active:scale-95 cursor-pointer"
-            title="Activar Modo Zen / Ahorro de Energía"
-          >
-            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 2a10 10 0 1 0 10 10 4 4 0 0 1-10-10z" />
-            </svg>
-            <span>Zen</span>
+            ESTADOS
           </button>
 
           {/* Visualizador Button */}
@@ -4279,6 +4502,16 @@ export default function App() {
             <Sparkles className="w-3.5 h-3.5 text-accent" />
             <span>Visualizador</span>
           </button>
+
+          {/* Blog & Historias Button */}
+          <a
+            href="/blog"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-gradient-to-r from-pink-500/20 via-purple-500/20 to-sky-500/20 hover:from-pink-500/40 hover:to-sky-500/40 border border-pink-500/40 text-[10px] font-black uppercase tracking-wider text-pink-300 hover:text-white transition-all rounded-full shrink-0 active:scale-95 cursor-pointer shadow-[0_0_12px_rgba(236,72,153,0.3)] animate-pulse"
+            title="Explorar Historias y Letras 'Detrás de la Música'"
+          >
+            <FileText className="w-3.5 h-3.5 text-pink-400" />
+            <span>BLOG & HISTORIAS</span>
+          </a>
 
           {/* Aprende Cantando (Tutorial) Button */}
           {activeTenantConfig?.tutorialConfig?.enabled && (
@@ -4303,7 +4536,7 @@ export default function App() {
       <CategoryPills 
         categories={displayCategories}
         activeCategoryId={activeCategory} 
-        onSelectCategory={setActiveCategory} 
+        onSelectCategory={handleSelectCategoryPill}
         onReorderCategories={handleReorderCategories}
         onShareMix={handleShareMix}
         pcScrollMode={pcScrollMode}
@@ -4312,7 +4545,7 @@ export default function App() {
           setIncentiveCategoryName(catName);
           setShowGuestIncentiveModal(true);
         }}
-        onOpenProfile={() => setShowProfilePage(true)}
+        onOpenProfile={() => setIsProfile(true)}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
       />
@@ -4530,6 +4763,12 @@ export default function App() {
                               onOpenVisualizer={() => setShowLiveView(true)}
                               onShareCategory={() => handleShareCategory(activeCategory, activeCategoryName)}
                               accentColor={accentColor}
+                              onNextCategory={handleNextCategory}
+                              onPrevCategory={handlePrevCategory}
+                              nextCategoryName={getCategoryDisplayName(nextCategoryObj)}
+                              prevCategoryName={getCategoryDisplayName(prevCategoryObj)}
+                              currentStationIndex={currentStationIndex}
+                              totalStations={mainNavCategories.length}
                             />
                           )}
 
@@ -4867,7 +5106,18 @@ export default function App() {
           title={featuredDisplay.title}
           coverUrl={featuredDisplay.coverUrl}
           phrases={featuredConfig.phrases}
-          onDismiss={() => setShowFeaturedModal(false)}
+          onDismiss={() => {
+            stopJingle(true);
+            setShowFeaturedModal(false);
+          }}
+          onPlay={() => {
+            try {
+              audioEngine.resumeContext();
+            } catch (e) {}
+            stopJingle(true);
+            setShowFeaturedModal(false);
+            playFeatured();
+          }}
         />
       )}
 
@@ -5142,7 +5392,12 @@ export default function App() {
                   </a>
                 )}
                 {activeTenantConfig?.socialLinks?.instagram && (
-                  <a href={activeTenantConfig.socialLinks.instagram} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 p-4 rounded-xl bg-pink-500/10 hover:bg-pink-500/20 text-pink-400 transition-all border border-pink-500/10 hover:border-pink-500/30">
+                  <a href={(() => {
+                    const val = activeTenantConfig.socialLinks.instagram.trim();
+                    if (/^https?:\/\//i.test(val)) return val;
+                    const clean = val.replace(/^@/, '');
+                    return clean.includes('instagram.com') ? `https://${clean}` : `https://instagram.com/${clean}`;
+                  })()} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 p-4 rounded-xl bg-pink-500/10 hover:bg-pink-500/20 text-pink-400 transition-all border border-pink-500/10 hover:border-pink-500/30">
                     <Instagram className="w-6 h-6" />
                     <div className="flex flex-col">
                       <span className="text-sm font-bold">Instagram</span>
@@ -5151,7 +5406,12 @@ export default function App() {
                   </a>
                 )}
                 {activeTenantConfig?.socialLinks?.facebook && (
-                  <a href={activeTenantConfig.socialLinks.facebook} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 p-4 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 transition-all border border-blue-500/10 hover:border-blue-500/30">
+                  <a href={(() => {
+                    const val = activeTenantConfig.socialLinks.facebook.trim();
+                    if (/^https?:\/\//i.test(val)) return val;
+                    const clean = val.replace(/^@/, '');
+                    return clean.includes('facebook.com') ? `https://${clean}` : `https://facebook.com/${clean}`;
+                  })()} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 p-4 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 transition-all border border-blue-500/10 hover:border-blue-500/30">
                     <Facebook className="w-6 h-6" />
                     <div className="flex flex-col">
                       <span className="text-sm font-bold">Facebook</span>
@@ -5160,7 +5420,12 @@ export default function App() {
                   </a>
                 )}
                 {activeTenantConfig?.socialLinks?.x && (
-                  <a href={activeTenantConfig.socialLinks.x} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 p-4 rounded-xl bg-gray-500/10 hover:bg-gray-500/20 text-gray-300 transition-all border border-gray-500/10 hover:border-gray-500/30">
+                  <a href={(() => {
+                    const val = activeTenantConfig.socialLinks.x.trim();
+                    if (/^https?:\/\//i.test(val)) return val;
+                    const clean = val.replace(/^@/, '');
+                    return (clean.includes('x.com') || clean.includes('twitter.com')) ? `https://${clean}` : `https://x.com/${clean}`;
+                  })()} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 p-4 rounded-xl bg-gray-500/10 hover:bg-gray-500/20 text-gray-300 transition-all border border-gray-500/10 hover:border-gray-500/30">
                     <Twitter className="w-6 h-6" />
                     <div className="flex flex-col">
                       <span className="text-sm font-bold">X (Twitter)</span>
@@ -5169,7 +5434,12 @@ export default function App() {
                   </a>
                 )}
                 {activeTenantConfig?.socialLinks?.tiktok && (
-                  <a href={activeTenantConfig.socialLinks.tiktok} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 p-4 rounded-xl bg-white/5 hover:bg-white/10 text-white transition-all border border-white/5 hover:border-white/20">
+                  <a href={(() => {
+                    const val = activeTenantConfig.socialLinks.tiktok.trim();
+                    if (/^https?:\/\//i.test(val)) return val;
+                    const clean = val.replace(/^@/, '');
+                    return clean.includes('tiktok.com') ? `https://${clean}` : `https://tiktok.com/@${clean}`;
+                  })()} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 p-4 rounded-xl bg-white/5 hover:bg-white/10 text-white transition-all border border-white/5 hover:border-white/20">
                     <Music className="w-6 h-6" />
                     <div className="flex flex-col">
                       <span className="text-sm font-bold">TikTok</span>
@@ -5178,7 +5448,10 @@ export default function App() {
                   </a>
                 )}
                 {activeTenantConfig?.socialLinks?.website && (
-                  <a href={activeTenantConfig.socialLinks.website} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 p-4 rounded-xl bg-accent/10 hover:bg-accent/20 text-accent transition-all border border-accent/10 hover:border-accent/30">
+                  <a href={(() => {
+                    const val = activeTenantConfig.socialLinks.website.trim();
+                    return /^https?:\/\//i.test(val) ? val : `https://${val}`;
+                  })()} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 p-4 rounded-xl bg-accent/10 hover:bg-accent/20 text-accent transition-all border border-accent/10 hover:border-accent/30">
                     <Globe className="w-6 h-6" />
                     <div className="flex flex-col">
                       <span className="text-sm font-bold">Página Web</span>
@@ -5277,6 +5550,7 @@ export default function App() {
                 <AdminPanel 
                   isFullScreen={isAdminFullScreen}
                   onToggleFullScreen={() => setIsAdminFullScreen(!isAdminFullScreen)}
+                  songCatalog={songCatalog}
                   onClose={() => {
                     setIsAdmin(false);
                     setIsAdminFullScreen(false);
@@ -5305,13 +5579,17 @@ export default function App() {
                 <X className="w-4 h-4" />
               </button>
 
-              <div className="text-center mb-6 mt-2">
+              <div className="text-center mb-6 mt-2 space-y-2">
                 <h3 className="text-lg font-black text-white uppercase tracking-wider flex items-center justify-center gap-2">
                   <span className="w-2.5 h-2.5 bg-accent rounded-full animate-pulse" />
-                  Perfil Circadiano
+                  Estados de Ánimo & Bloques Horarios
                 </h3>
-                <p className="text-xs text-text-secondary mt-1">Selecciona una sintonía emocional para adaptar la música y el color.</p>
+                <div className="p-3 bg-accent/10 border border-accent/20 rounded-2xl text-[11px] text-text-secondary leading-relaxed text-left space-y-1">
+                  <p><strong className="text-accent">📻 LIVE (Emisión en Directo):</strong> Sigue automáticamente el reloj biológico de la emisora en tiempo real.</p>
+                  <p><strong className="text-white">🌅 ESTADOS (Sintonía a la Carta):</strong> Elige manualmente el momento o energía musical que prefieres escuchar ahora mismo (Mañana, Atardecer, Noche o Madrugada).</p>
+                </div>
               </div>
+
 
               <div className="grid grid-cols-2 gap-2.5 mb-6">
                 {COLORS.map((color) => {
@@ -5460,7 +5738,17 @@ export default function App() {
                       )}
                     </div>
                     <div>
-                      <h3 className="text-lg font-black text-white leading-snug">{title}</h3>
+                      <div className="flex items-center justify-center gap-2">
+                        <h3 className="text-lg font-black text-white leading-snug">{title}</h3>
+                        <button
+                          type="button"
+                          onClick={(e) => handleShareSong(activeDetailSong, e)}
+                          className="p-1.5 text-text-secondary hover:text-white rounded-lg hover:bg-white/5 transition-colors cursor-pointer shrink-0"
+                          title="Compartir Canción"
+                        >
+                          <Share2 className="w-4 h-4 text-accent" />
+                        </button>
+                      </div>
                       <p className="text-xs text-accent font-medium mt-0.5">{artist}</p>
                       {(() => {
                         const cat = dynamicCategories.find(c => c.id === activeDetailSong.category);
@@ -5506,6 +5794,18 @@ export default function App() {
                       "{meaning}"
                     </p>
                   </div>
+
+                  {/* Acceso al Blog completo */}
+                  <a
+                    href="/blog"
+                    className="flex items-center justify-between p-4 bg-gradient-to-r from-pink-500/20 via-purple-500/20 to-sky-500/20 hover:from-pink-500/30 hover:to-sky-500/30 border border-pink-500/30 rounded-2xl text-xs font-black text-pink-300 hover:text-white transition-all shadow-lg cursor-pointer"
+                  >
+                    <span className="flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-pink-400" />
+                      <span>Leer historias y letras en el Blog</span>
+                    </span>
+                    <span className="text-xs">↗</span>
+                  </a>
 
                   {/* Patrocinador / Banner de Publicidad */}
                   {sponsor && sponsor.name && (
@@ -5560,7 +5860,7 @@ export default function App() {
               favorites={favorites}
               onToggleFavorite={toggleFavorite}
               accentColor={accentColor}
-              onShare={(e) => handleShare(currentSong?.id || '', e)}
+              onShare={(e) => handleShareSong(currentSong, e)}
               customMetadata={getResolvedSongMetadata(currentSong)}
               onExitToCatalog={() => setShowLiveView(false)}
               circadianQuotes={activeTenantConfig?.circadianQuotes || []}
@@ -5586,10 +5886,11 @@ export default function App() {
         restrictedCategoryName={incentiveCategoryName}
       />
 
-      {/* Time-based Install App Interstitial (fires N seconds after entering the app) */}
+      {/* Install App Interstitial (fires after 2 songs or configured time/songs count) */}
       <InstallInterstitialModal
         active={!showWelcome && !isAdmin}
         config={activeTenantConfig?.installInterstitialConfig}
+        songsPlayed={songsPlayed}
       />
     </div>
   );

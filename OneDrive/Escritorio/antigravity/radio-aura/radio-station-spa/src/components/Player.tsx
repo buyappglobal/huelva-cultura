@@ -1,11 +1,12 @@
 import { motion, AnimatePresence } from 'motion/react';
-import { Play, Pause, Volume2, VolumeX, AlertCircle, Loader2, Music, X, Heart, Timer, Share2, ThumbsUp, RotateCcw, RotateCw, FastForward, Info, Sparkles, SlidersHorizontal, ChevronUp, Sliders } from 'lucide-react';
+import { Play, Pause, Volume2, VolumeX, AlertCircle, Loader2, Music, X, Heart, Timer, Share2, ThumbsUp, RotateCcw, RotateCw, FastForward, Info, Sparkles, SlidersHorizontal, ChevronUp, Sliders, Moon, Lock } from 'lucide-react';
 import React, { useState, useRef, useEffect } from 'react';
 import { Song, API_CONFIG } from '../types';
 import { audioEngine, EQ_PRESETS } from '../lib/AudioEngine';
 import { triggerHaptic } from '../lib/haptics';
 import { useAuth } from '../contexts/AuthContext';
-import { buildShareMessage, buildStationShareUrl } from '../lib/shareHelper';
+import { buildShareMessage, buildStationShareUrl, executeShareMessage } from '../lib/shareHelper';
+import { isPWAInstalled, triggerZenInstallModal } from '../lib/pwaHelper';
 
 // ─── Color utilities for circadian-derived band colors ───────────────────────
 function hexToHsl(hex: string): [number, number, number] {
@@ -117,15 +118,28 @@ export default function Player({
   const [showSeekMenu, setShowSeekMenu] = useState(false);
   const [eqPreset, setEqPreset] = useState(() => audioEngine.getEQPreset());
   const [eqIsAuto, setEqIsAuto] = useState(() => audioEngine.isEQAuto());
+  const [playbackTime, setPlaybackTime] = useState({ current: 0, duration: 0, progress: 0 });
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const wakeLockRef = useRef<any>(null);
 
   useEffect(() => {
-    return audioEngine.addEQListener((preset, isAuto) => {
+    const unsubEQ = audioEngine.addEQListener((preset, isAuto) => {
       setEqPreset(preset);
       setEqIsAuto(isAuto);
     });
+    const unsubTime = audioEngine.addListener((song, isPlaying, prog) => {
+      setPlaybackTime({
+        current: audioEngine.getCurrentTime(),
+        duration: audioEngine.getDuration(),
+        progress: prog || 0
+      });
+    });
+    return () => {
+      unsubEQ();
+      unsubTime();
+    };
   }, []);
+
 
   const { user } = useAuth();
   const [showCopied, setShowCopied] = useState(false);
@@ -144,29 +158,9 @@ export default function Player({
       }).catch(() => {});
 
       const shareData = buildShareMessage(currentSong, customMetadata, stationName, tenantConfig);
-      
-      if (navigator.share) {
-        try {
-          // Deliberately omit `url` here: shareData.text already ends with the encoded
-          // share link, and WhatsApp (and some other share targets) append a *separate*,
-          // differently-encoded copy of `url` after the text when both are present —
-          // that second copy loses its %20 encoding and renders as a broken link.
-          await navigator.share({
-            title: shareData.title,
-            text: shareData.text
-          });
-        } catch (err) {
-          console.warn('Native share failed or cancelled', err);
-        }
-      } else {
-        try {
-          await navigator.clipboard.writeText(shareData.text);
-          setShowCopied(true);
-          setTimeout(() => setShowCopied(false), 2000);
-        } catch (err) {
-          console.error('Failed to copy', err);
-        }
-      }
+      await executeShareMessage(shareData, '¡Enlace de la canción copiado!');
+      setShowCopied(true);
+      setTimeout(() => setShowCopied(false), 2000);
     } else {
       const effectiveStation = tenantConfig?.name || stationName || 'Aura Radio';
       const shareText = `📻 Escucha ${effectiveStation} en directo con la mejor música sin interrupciones!`;
@@ -224,7 +218,21 @@ export default function Player({
   };
 
   const isAd = currentSong?.isAd;
-  const isPodcast = currentSong?.category?.toLowerCase().includes('podcast') || currentSong?.id?.startsWith('podcast-');
+  const isPodcast = currentSong?.category?.toLowerCase().includes('podcast') ||
+    currentSong?.category === 'misterios-enigmas' ||
+    currentSong?.category === 'aura-beats' ||
+    currentSong?.category === 'hackea-tu-dia' ||
+    currentSong?.category === 'historias-increibles' ||
+    currentSong?.id?.startsWith('podcast-') ||
+    currentSong?.id?.startsWith('pod-');
+
+  const formatSeconds = (sec: number) => {
+    if (isNaN(sec) || !isFinite(sec) || sec < 0) return "00:00";
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  };
+
 
   const bassRef = useRef<HTMLDivElement>(null);
   const voiceRef = useRef<HTMLDivElement>(null);
@@ -671,9 +679,36 @@ export default function Player({
               )}
             </div>
           </div>
+
+          {/* Podcast Countdown & Progress Bar */}
+          {isPodcast && playbackTime.duration > 0 && (
+            <div className="w-full flex items-center justify-between gap-3 text-[10px] font-mono font-bold text-text-secondary px-2 mt-1">
+              <span className="text-accent shrink-0">{formatSeconds(playbackTime.current)}</span>
+              <div 
+                className="flex-1 h-1.5 bg-white/10 hover:bg-white/20 rounded-full overflow-hidden relative cursor-pointer transition-all"
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const clickX = e.clientX - rect.left;
+                  const ratio = Math.max(0, Math.min(1, clickX / rect.width));
+                  const targetTime = ratio * playbackTime.duration;
+                  audioEngine.seek(targetTime - playbackTime.current);
+                }}
+                title="Hacer clic para avanzar o retroceder"
+              >
+                <div 
+                  className="h-full bg-gradient-to-r from-accent to-pink-500 rounded-full transition-all duration-150"
+                  style={{ width: `${Math.max(0, Math.min(100, playbackTime.progress))}%` }}
+                />
+              </div>
+              <span className="text-pink-400 font-black shrink-0">
+                -{formatSeconds(Math.max(0, playbackTime.duration - playbackTime.current))}
+              </span>
+            </div>
+          )}
           
 
           <AnimatePresence>
+
             {error && (
               <motion.div 
                 initial={{ opacity: 0, y: 10 }}
@@ -688,91 +723,27 @@ export default function Player({
           </AnimatePresence>
         </div>
 
-        {/* Desktop Only Volume & Timer Controls (On mobile, accessible via Options Drawer) */}
-        <div className="hidden md:flex items-center gap-2 md:gap-6 w-auto md:w-[250px] justify-end">
-          {/* Equalizer — opens the same full controls modal used on mobile
-              (was a separate cramped dropdown that visually collided with the
-              favorites sidebar on desktop) */}
+        {/* Controls Drawer Trigger (Controles de Emisión: Volumen, Sleep Timer, Ecualizador) */}
+        <div className="hidden md:flex items-center gap-2 justify-end shrink-0">
           <button
-            onClick={() => setShowMobileControlsDrawer(true)}
-            className={`w-10 h-10 flex flex-col items-center justify-center gap-1 transition-colors ${!eqIsAuto ? 'text-accent' : 'text-text-secondary hover:text-white'}`}
-            title="Ecualizador"
+            onClick={() => {
+              triggerHaptic(10);
+              setShowMobileControlsDrawer(true);
+            }}
+            className={`w-10 h-10 rounded-full flex items-center justify-center transition-all border active:scale-95 cursor-pointer relative ${
+              !eqIsAuto || sleepTimer 
+                ? 'bg-accent/20 border-accent/40 text-accent shadow-[0_0_12px_rgba(99,102,241,0.3)]' 
+                : 'bg-white/5 border-white/10 text-text-secondary hover:text-white hover:bg-white/10'
+            }`}
+            title="Controles de Emisión (Volumen, Sleep Timer, Ecualizador)"
           >
             <Sliders className="w-5 h-5" />
+            {sleepTimer && (
+              <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-accent text-white rounded-full text-[8px] font-mono font-bold flex items-center justify-center shadow-md">
+                ⏱
+              </span>
+            )}
           </button>
-
-          {/* Sleep Timer */}
-          <div className="relative">
-            <button
-              onClick={() => setShowTimerMenu(!showTimerMenu)}
-              className={`w-10 h-10 flex flex-col items-center justify-center gap-1 transition-colors ${sleepTimer ? 'text-accent' : 'text-text-secondary hover:text-white'}`}
-            >
-              <Timer className="w-5 h-5" />
-              {sleepTimer && <span className="text-[8px] font-mono font-bold leading-none">{formatTimer(sleepTimer)}</span>}
-            </button>
-
-            <AnimatePresence>
-              {showTimerMenu && (
-                <motion.div
-                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                  className="absolute bottom-full right-0 mb-4 bg-bg-pill border border-border rounded-xl p-2 min-w-[120px] shadow-2xl backdrop-blur-xl"
-                >
-                  <p className="text-[9px] font-black text-text-secondary uppercase tracking-widest mb-2 px-2">Apagado Automático</p>
-                  <div className="grid grid-cols-1 gap-1">
-                    {[15, 30, 60, 90].map(mins => (
-                      <button
-                        key={mins}
-                        onClick={() => setTimer(mins)}
-                        className="text-left px-3 py-1.5 rounded-lg text-xs text-white hover:bg-white/5 transition-colors flex justify-between items-center"
-                      >
-                        <span>{mins} min</span>
-                        {sleepTimer === mins * 60 && <div className="w-1.5 h-1.5 bg-accent rounded-full" />}
-                      </button>
-                    ))}
-                    {sleepTimer && (
-                      <button
-                        onClick={clearTimer}
-                        className="text-left px-3 py-1.5 rounded-lg text-[10px] text-red-400 hover:bg-red-400/5 transition-colors mt-1 border-t border-white/5 pt-2"
-                      >
-                        Cancelar timer
-                      </button>
-                    )}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-
-          <div className="flex items-center gap-3 w-full md:w-[150px]">
-            <button 
-              onClick={() => {
-                triggerHaptic(10);
-                toggleMute();
-              }}
-              className="w-10 h-10 flex items-center justify-center text-text-secondary hover:text-white transition-colors opacity-60"
-            >
-              {isMuted || volume === 0 ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
-            </button>
-            <div className="flex-1 h-3 flex items-center relative group cursor-pointer">
-              <div className="w-full h-1 bg-[#2d2d35] rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-white group-hover:bg-accent transition-colors" 
-                  style={{ width: `${volume * 100}%` }}
-                />
-              </div>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                value={volume}
-                onChange={(e) => setVolume(parseFloat(e.target.value))}
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 touch-none"
-              />
-            </div>
-          </div>
         </div>
       </div>
 
@@ -921,25 +892,47 @@ export default function Player({
                 </div>
               </div>
 
-              {/* Sleep Timer Selector */}
-              <div className="p-4 bg-white/5 border border-white/8 rounded-2xl space-y-2">
+              {/* Sleep Timer & Modo Zen Selector */}
+              <div className="p-4 bg-white/5 border border-white/8 rounded-2xl space-y-2 relative overflow-hidden">
                 <div className="flex items-center justify-between text-xs font-bold text-white">
                   <span className="flex items-center gap-2">
-                    <Timer className="w-4 h-4 text-purple-400" />
-                    Apagado Automático (Sleep Timer)
+                    <Moon className="w-4 h-4 text-purple-400" />
+                    <span>Modo Zen & Apagado (Sleep Timer)</span>
                   </span>
-                  {sleepTimer && <span className="font-mono text-purple-400 text-[11px] font-bold">{formatTimer(sleepTimer)}</span>}
+                  {!isPWAInstalled() ? (
+                    <span className="px-2 py-0.5 rounded-full bg-purple-500/20 border border-purple-500/40 text-purple-300 text-[9px] font-black uppercase tracking-wider flex items-center gap-1">
+                      <Lock className="w-2.5 h-2.5" /> Exclusivo App
+                    </span>
+                  ) : sleepTimer ? (
+                    <span className="font-mono text-purple-400 text-[11px] font-bold">{formatTimer(sleepTimer)}</span>
+                  ) : null}
                 </div>
+
+                <p className="text-[10px] text-text-secondary leading-snug">
+                  {isPWAInstalled()
+                    ? 'Temporizador con apagado progresivo para descansar con la pantalla bloqueada.'
+                    : 'Apagado automático y escucha con la pantalla bloqueada sin cortes (Exclusivo en la App).'}
+                </p>
+
                 <div className="grid grid-cols-4 gap-2 pt-1">
                   {[15, 30, 60, 90].map(mins => (
                     <button
                       key={mins}
-                      onClick={() => { triggerHaptic(10); setTimer(mins); }}
+                      onClick={() => {
+                        triggerHaptic(10);
+                        if (!isPWAInstalled()) {
+                          setShowMobileControlsDrawer(false);
+                          triggerZenInstallModal();
+                          return;
+                        }
+                        setTimer(mins);
+                      }}
                       className={`py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                         sleepTimer === mins * 60
                           ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/30'
                           : 'bg-white/5 border border-white/5 text-text-secondary hover:text-white'
                       }`}
+                      title={!isPWAInstalled() ? 'Instala la App gratis para activar el Modo Zen' : `Apagar en ${mins} minutos`}
                     >
                       {mins}m
                     </button>
@@ -948,7 +941,7 @@ export default function Player({
                 {sleepTimer && (
                   <button
                     onClick={clearTimer}
-                    className="w-full mt-2 py-2 text-[10px] text-red-400 font-bold hover:bg-red-500/10 rounded-xl transition-colors border border-red-500/20"
+                    className="w-full mt-2 py-2 text-[10px] text-red-400 font-bold hover:bg-red-500/10 rounded-xl transition-colors border border-red-500/20 cursor-pointer"
                   >
                     Cancelar Timer
                   </button>

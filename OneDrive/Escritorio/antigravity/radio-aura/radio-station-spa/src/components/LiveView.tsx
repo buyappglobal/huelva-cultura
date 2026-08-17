@@ -1,10 +1,32 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Radio, Heart, Share2, Maximize2, Minimize2, Sparkles, Sun, Moon, Sunrise, Sunset, Volume2, Flame, Music, MessageCircle, Users, Activity, Eye, EyeOff, ListMusic, Smartphone, ExternalLink, Megaphone } from 'lucide-react';
+import { Radio, Heart, Share2, Maximize2, Minimize2, Sparkles, Sun, Moon, Sunrise, Sunset, Volume2, Flame, Music, MessageCircle, Users, Activity, Eye, EyeOff, ListMusic, Smartphone, ExternalLink, Megaphone, Video, Mic } from 'lucide-react';
 import { Song, CircadianQuote, AudioVisualizerConfig, API_CONFIG } from '../types';
 import { audioEngine } from '../lib/AudioEngine';
 import { triggerHaptic } from '../lib/haptics';
-import { buildShareMessage } from '../lib/shareHelper';
+import { buildShareMessage, executeShareMessage } from '../lib/shareHelper';
+import { ReelStudio } from './ReelStudio';
+
+interface LyricLine { t: number; text: string; }
+function parseLrc(lyrics: string): LyricLine[] {
+  const out: LyricLine[] = [];
+  if (!lyrics) return out;
+  const lines = String(lyrics).split('\n');
+  const timeRegex = /\[(\d+):(\d+(?:\.\d+)?)\]/;
+  lines.forEach(line => {
+    const m = timeRegex.exec(line);
+    if (m) {
+      const t = parseInt(m[1], 10) * 60 + parseFloat(m[2]);
+      const text = line.replace(/\[\d+:\d+(?:\.\d+)?\]/g, '').trim();
+      if (text) out.push({ t, text });
+    }
+  });
+  return out.sort((a, b) => a.t - b.t);
+}
+
+function stripTimestamps(lyrics: string): string {
+  return String(lyrics || '').replace(/\[\d+:\d+(?:\.\d+)?\]/g, '').replace(/\n{3,}/g, '\n\n').trim();
+}
 
 interface LiveViewProps {
   currentSong: Song | null;
@@ -14,7 +36,7 @@ interface LiveViewProps {
   onToggleFavorite: (id: string, e: React.MouseEvent) => void;
   accentColor: string;
   onShare: (e: React.MouseEvent) => void;
-  customMetadata?: { title?: string; artist?: string; meaning?: string; lyrics?: string };
+  customMetadata?: { title?: string; artist?: string; meaning?: string; lyrics?: string; lyricsSynced?: string };
   onExitToCatalog?: () => void;
   isLiveDedicatedDomain?: boolean;
   onInstallDefinitiveApp?: () => void;
@@ -390,33 +412,93 @@ void main() {
     gl_FragColor = vec4(tunnelCol * grid * (r * 2.5 + voiceMod * 0.8), 1.0);
 }`;
 
-const RADIAL_GLSL = `// Espectro Radial — Espectro Circular Neón GLSL
+const RADIAL_GLSL = `// Espectro Radial — 3 Capas Circulares Continuas de Crestas Neón GLSL
 precision highp float;
 uniform vec2 u_resolution;
 uniform float u_time;
 uniform float u_audio_bass;
 uniform float u_audio_voice;
+uniform float u_audio_mid;
 uniform float u_audio_treble;
+uniform float u_audio_air;
+uniform vec3 u_color_primary;
+uniform vec3 u_color_secondary;
+
+#define TWO_PI 6.28318530718
+
+// Renderiza una capa circular completa 360° sin cortes en la juntura
+vec4 renderRadialLayer(
+    vec2 uv,
+    float r,
+    float a,
+    float baseRadius,
+    float numBars,
+    float barWidthRatio,
+    float audioIntensity,
+    float rotSpeed,
+    vec3 layerColor
+) {
+    float rotAngle = a + u_time * rotSpeed;
+    float normAngle = mod(rotAngle, TWO_PI);
+    float barStep = TWO_PI / numBars;
+    
+    // Índice de barra y ángulo dentro de cada celda circular
+    float barIdx = floor(normAngle / barStep);
+    float localAngle = mod(normAngle, barStep) - (barStep * 0.5);
+
+    // Variación periódica suave y audio para altura de cresta
+    float waveMod = sin(barIdx * 0.5 + u_time * 2.8) * 0.5 + 0.5;
+    float harmonicMod = sin(normAngle * 3.0 - u_time * 1.5) * 0.25 + 0.75;
+    float barHeight = 0.015 + audioIntensity * 0.16 * harmonicMod + waveMod * (0.01 + audioIntensity * 0.05);
+
+    // Grosor angular de las crestas
+    float halfWidth = barStep * barWidthRatio * 0.5;
+    float angularMask = smoothstep(halfWidth + 0.003, halfWidth - 0.003, abs(localAngle));
+
+    // Posición radial
+    float radialDist = r - baseRadius;
+    float inBar = step(0.0, radialDist) * step(radialDist, barHeight) * angularMask;
+
+    // Resplandor neón en las puntas de las crestas
+    float tipDist = abs(radialDist - barHeight);
+    float tipGlow = (0.0025 + audioIntensity * 0.004) / (tipDist + 0.0012) * angularMask;
+
+    // Ring circular continuo de soporte para la capa
+    float ringDist = abs(radialDist);
+    float ringGlow = (0.0012 + audioIntensity * 0.002) / (ringDist + 0.0012);
+
+    float totalGlow = inBar * 0.95 + tipGlow * 0.85 + ringGlow * 0.45;
+    return vec4(layerColor * totalGlow, totalGlow);
+}
 
 void main() {
-    vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution.xy) / u_resolution.y;
+    vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution.xy) / min(u_resolution.x, u_resolution.y);
     float r = length(uv);
     float a = atan(uv.y, uv.x);
+    if (a < 0.0) a += TWO_PI;
 
-    float numBars = 48.0;
-    float angleStep = 6.283185 / numBars;
-    float barIdx = floor((a + 3.14159) / angleStep);
+    vec3 colPrimary = length(u_color_primary) > 0.1 ? u_color_primary : vec3(0.0, 0.9, 1.0);
+    vec3 colSecondary = length(u_color_secondary) > 0.1 ? u_color_secondary : vec3(1.0, 0.15, 0.6);
 
-    float isVocalBin = step(8.0, barIdx) * step(barIdx, 28.0);
-    float barAudio = mix(u_audio_bass, u_audio_treble, barIdx / numBars) + isVocalBin * u_audio_voice * 0.4;
-    float barLen = 0.2 + barAudio * 0.35 + sin(barIdx * 0.5 + u_time * 3.0) * 0.03;
+    // 1. CAPA INTERNA (BAJOS) — Crestas muy gruesas y potentes
+    vec3 c1 = mix(colPrimary, vec3(1.0, 0.35, 0.1), 0.65);
+    vec4 l1 = renderRadialLayer(uv, r, a, 0.13, 16.0, 0.72, u_audio_bass, 0.12, c1);
 
-    float distToRing = abs(r - barLen);
-    float barGlow = (0.005 + barAudio * 0.008) / (distToRing + 0.002);
+    // 2. CAPA INTERMEDIA (VOZ / MEDIOS) — Crestas de grosor medio
+    vec3 c2 = mix(colSecondary, vec3(0.4, 0.15, 0.95), 0.4);
+    vec4 l2 = renderRadialLayer(uv, r, a, 0.25, 36.0, 0.46, u_audio_voice, -0.08, c2);
 
-    vec3 barColor = mix(vec3(0.2, 0.9, 0.4), vec3(0.9, 0.2, 0.6), barIdx / numBars);
-    barColor = mix(barColor, vec3(0.0, 0.95, 0.95), isVocalBin * clamp(u_audio_voice * 1.2, 0.0, 0.8));
-    gl_FragColor = vec4(barColor * pow(barGlow, 1.2), 1.0);
+    // 3. CAPA EXTERNA (AGUDOS / TREBLE) — Crestas finas tipo agujas neón
+    vec3 c3 = mix(vec3(0.0, 0.95, 0.8), colPrimary, 0.5);
+    vec4 l3 = renderRadialLayer(uv, r, a, 0.37, 72.0, 0.24, u_audio_treble, 0.04, c3);
+
+    // Aura central de plasma pulsante
+    float coreGlow = (0.012 + u_audio_bass * 0.02) / (r + 0.06);
+    vec3 color = colPrimary * coreGlow * 0.25 + l1.rgb * 1.1 + l2.rgb * 1.0 + l3.rgb * 0.9;
+
+    // Viñeta circular suave
+    float vignette = smoothstep(0.49, 0.40, r);
+    gl_FragColor = vec4(color * vignette, 1.0);
 }`;
 
 const MATRIX_GLSL = `// Lluvia Digital Matrix — Estelas Ciberpunk GLSL
@@ -653,7 +735,290 @@ void main() {
     gl_FragColor = vec4(col, 1.0);
 }`;
 
+const SPHERE_DOTS_GLSL = `// Esfera de Puntos — nube de puntos cian bioluminiscente sobre esfera 3D giratoria
+precision highp float;
+uniform vec2 u_resolution;
+uniform float u_time;
+uniform float u_audio_bass;
+uniform float u_audio_voice;
+uniform float u_audio_vocal_presence;
+uniform float u_audio_mid;
+uniform float u_audio_treble;
+uniform float u_audio_air;
+uniform vec3 u_color_primary;
+uniform vec3 u_color_secondary;
+
+float hash11(float p) { return fract(sin(p * 127.1) * 43758.5453); }
+
+void main() {
+    vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution.xy) / u_resolution.y;
+    float r = length(uv);
+
+    float bass = clamp(u_audio_bass, 0.0, 1.0);
+    float mid  = clamp(u_audio_mid, 0.0, 1.0);
+    float treb = clamp(u_audio_treble, 0.0, 1.0);
+
+    vec3 cyan = (length(u_color_primary) > 0.01) ? u_color_primary : vec3(0.10, 0.95, 1.0);
+    vec3 deep = (length(u_color_secondary) > 0.01) ? u_color_secondary : vec3(0.05, 0.40, 0.85);
+
+    // Fondo profundo con un halo tenue detrás de la esfera
+    vec3 col = vec3(0.01, 0.02, 0.05);
+    col += deep * 0.05 * (1.0 - smoothstep(0.0, 1.1, r));
+
+    const float PI = 3.14159265;
+    const float TWO_PI = 6.28318530;
+    const float RINGS = 18.0;
+
+    // La esfera late suavemente con el bajo (más pequeña que el encuadre para
+    // que quede un margen negro alrededor, como en la referencia)
+    float R = 0.44 + bass * 0.04;
+
+    if (r < R) {
+        float z = sqrt(max(0.0, R * R - r * r));
+        vec3 p = vec3(uv, z) / R;            // punto en la esfera unidad (= normal)
+
+        // Giro en Y (los medios aceleran) + inclinación fija para verla en 3D
+        float ay = u_time * 0.25 + mid * 0.5;
+        float cy = cos(ay), sy = sin(ay);
+        vec3 q = vec3(cy * p.x + sy * p.z, p.y, -sy * p.x + cy * p.z);
+        float tx = 0.45;
+        float cx = cos(tx), sx = sin(tx);
+        q = vec3(q.x, cx * q.y - sx * q.z, sx * q.y + cx * q.z);
+
+        // Coordenadas esféricas -> rejilla de puntos
+        float phi = acos(clamp(q.y, -1.0, 1.0));  // latitud 0..PI
+        float theta = atan(q.z, q.x);             // longitud -PI..PI
+
+        float fy = phi / PI * RINGS;
+        float iy = floor(fy);
+        float gy = fract(fy);
+
+        // Puntos por banda proporcionales a la circunferencia -> reparto uniforme
+        float phiCenter = (iy + 0.5) / RINGS * PI;
+        float count = floor(RINGS * 2.0 * sin(phiCenter)) + 1.0;
+
+        float fx = (theta / TWO_PI + 0.5) * count;
+        float ix = floor(fx);
+        float gx = fract(fx);
+
+        vec2 d = vec2(gx - 0.5, gy - 0.5);
+        float dist = length(d);
+
+        float id = hash11(iy * 131.0 + ix * 7.0);
+        float pulse = 0.5 + 0.5 * sin(u_time * 2.5 + id * TWO_PI);
+        float dotR = 0.30 + treb * 0.10 + pulse * 0.06 * (0.4 + treb);
+
+        float core = smoothstep(dotR, dotR * 0.4, dist);
+        float halo = smoothstep(dotR * 1.8, dotR * 0.6, dist) * 0.18;  // halo corto: puntos discretos sobre negro
+
+        // Sombreado esférico: los puntos frontales brillan, en el borde se apagan
+        float facing = clamp(z / R, 0.0, 1.0);
+        float shade = 0.25 + 0.75 * facing;
+
+        vec3 dotCol = mix(deep, cyan, 0.3 + 0.7 * facing);
+        dotCol += cyan * step(0.85, id) * mid * core * 0.8;  // algunos puntos saltan con la voz
+
+        col += dotCol * (core + halo) * shade * 1.5;
+        col += cyan * 0.02 * facing * (1.0 - smoothstep(0.0, R, r));  // volumen interno muy tenue
+    }
+
+    // Un par de puntos sueltos orbitando fuera, como en la referencia
+    for (float i = 0.0; i < 2.0; i += 1.0) {
+        float a = u_time * (0.15 + i * 0.05) + i * 2.3;
+        vec2 fp = vec2(cos(a), sin(a * 1.3)) * (R + 0.18 + i * 0.08);
+        float fd = length(uv - fp);
+        col += cyan * (0.006 / (fd + 0.01)) * (0.5 + treb);
+    }
+
+    gl_FragColor = vec4(col, 1.0);
+}`;
+
+const TORUS_DOTS_GLSL = `// Toro de Puntos — donut de puntos cian girando en 3D (raymarch), reactivo al ritmo
+precision highp float;
+uniform vec2 u_resolution;
+uniform float u_time;
+uniform float u_audio_bass;
+uniform float u_audio_voice;
+uniform float u_audio_mid;
+uniform float u_audio_treble;
+uniform vec3 u_color_primary;
+uniform vec3 u_color_secondary;
+
+float hash11(float p) { return fract(sin(p * 127.1) * 43758.5453); }
+mat3 rotX(float a) { float c = cos(a), s = sin(a); return mat3(1.0, 0.0, 0.0, 0.0, c, -s, 0.0, s, c); }
+mat3 rotY(float a) { float c = cos(a), s = sin(a); return mat3(c, 0.0, s, 0.0, 1.0, 0.0, -s, 0.0, c); }
+
+void main() {
+    vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution.xy) / u_resolution.y;
+
+    float bass = clamp(u_audio_bass, 0.0, 1.0);
+    float mid  = clamp(u_audio_mid, 0.0, 1.0);
+    float treb = clamp(u_audio_treble, 0.0, 1.0);
+
+    vec3 cyan = (length(u_color_primary) > 0.01) ? u_color_primary : vec3(0.15, 0.95, 1.0);
+    vec3 deep = (length(u_color_secondary) > 0.01) ? u_color_secondary : vec3(0.05, 0.45, 0.85);
+
+    vec3 col = vec3(0.01, 0.02, 0.05);
+    col += deep * 0.05 * (1.0 - smoothstep(0.0, 1.1, length(uv)));
+
+    vec3 ro = vec3(0.0, 0.0, -2.6);
+    vec3 rd = normalize(vec3(uv, 1.4));
+
+    mat3 rot = rotX(0.9 + sin(u_time * 0.2) * 0.05) * rotY(u_time * 0.3 + mid * 0.5);
+
+    float R = 0.85;                 // radio mayor del anillo
+    float rr = 0.28 + bass * 0.03;  // radio del tubo (late con el bajo)
+
+    float t = 0.0;
+    float hit = -1.0;
+    vec3 pos = ro;
+    for (int i = 0; i < 64; i++) {
+        pos = ro + rd * t;
+        vec3 pp = rot * pos;
+        vec2 qd = vec2(length(pp.xz) - R, pp.y);
+        float d = length(qd) - rr;
+        if (d < 0.002) { hit = t; break; }
+        t += d;
+        if (t > 6.0) break;
+    }
+
+    if (hit > 0.0) {
+        vec3 pp = rot * pos;
+        float v = atan(pp.z, pp.x);                   // ángulo alrededor del anillo
+        vec2 qd = vec2(length(pp.xz) - R, pp.y);
+        float u = atan(qd.y, qd.x);                   // ángulo alrededor del tubo
+
+        const float TWO_PI = 6.28318530;
+        float majN = 64.0;   // puntos alrededor del anillo
+        float minN = 16.0;   // puntos alrededor del tubo
+
+        float fu = (u / TWO_PI + 0.5) * minN;
+        float fv = (v / TWO_PI + 0.5) * majN;
+        float gu = fract(fu), gv = fract(fv);
+        float iu = floor(fu), iv = floor(fv);
+
+        vec2 dd = vec2(gu - 0.5, gv - 0.5);
+        float dist = length(dd);
+
+        float id = hash11(iu * 53.0 + iv * 17.0);
+        float pulse = 0.5 + 0.5 * sin(u_time * 2.5 + id * TWO_PI);
+        float dotR = 0.32 + treb * 0.10 + pulse * 0.05;
+        float core = smoothstep(dotR, dotR * 0.4, dist);
+        float halo = smoothstep(dotR * 2.0, 0.0, dist) * 0.3;
+
+        vec3 dotCol = mix(deep, cyan, 0.4 + 0.6 * depth);
+        dotCol += cyan * step(0.85, id) * mid * core * 0.7;
+
+        col += dotCol * (core + halo) * depth * 1.5;
+    }
+
+    gl_FragColor = vec4(col, 1.0);
+}`;
+
+const SOLAR_ECLIPSE_GLSL = `// Eclipse Solar 2026 — Corona solar incandescente y anillo de diamante reactivo al audio
+precision highp float;
+uniform vec2 u_resolution;
+uniform float u_time;
+uniform float u_audio_bass;
+uniform float u_audio_voice;
+uniform float u_audio_mid;
+uniform float u_audio_treble;
+uniform vec3 u_color_primary;
+uniform vec3 u_color_secondary;
+
+float hash21(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+
+float noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = hash21(i);
+    float b = hash21(i + vec2(1.0, 0.0));
+    float c = hash21(i + vec2(0.0, 1.0));
+    float d = hash21(i + vec2(1.0, 1.0));
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+float fbm(vec2 p) {
+    float v = 0.0;
+    float a = 0.5;
+    mat2 rot = mat2(0.8, 0.6, -0.6, 0.8);
+    for (int i = 0; i < 5; i++) {
+        v += a * noise(p);
+        p = rot * p * 2.0;
+        a *= 0.5;
+    }
+    return v;
+}
+
+void main() {
+    vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution.xy) / u_resolution.y;
+    float r = length(uv);
+    float angle = atan(uv.y, uv.x);
+
+    float bass = clamp(u_audio_bass, 0.0, 1.0);
+    float voice = clamp(u_audio_voice, 0.0, 1.0);
+    float treb = clamp(u_audio_treble, 0.0, 1.0);
+
+    vec3 gold = (length(u_color_primary) > 0.01) ? u_color_primary : vec3(1.0, 0.62, 0.12);
+    vec3 hotWhite = vec3(1.0, 0.96, 0.85);
+    vec3 deepOrange = (length(u_color_secondary) > 0.01) ? u_color_secondary : vec3(0.85, 0.20, 0.02);
+    vec3 cosmicBg = vec3(0.02, 0.01, 0.02);
+
+    float moonRadius = 0.28 + bass * 0.02;
+
+    vec2 polarUV = vec2(angle * 3.0, (r - moonRadius) * 4.0 - u_time * 0.3);
+    float n1 = fbm(polarUV + vec2(u_time * 0.2, 0.0));
+    float n2 = fbm(polarUV * 2.0 - vec2(0.0, u_time * 0.4 + voice * 0.5));
+    float coronaFilaments = n1 * 0.6 + n2 * 0.4;
+
+    float distFromLimb = r - moonRadius;
+    float coronaGlow = 0.0;
+    if (distFromLimb > 0.0) {
+        float falloff = exp(-distFromLimb * (4.5 - bass * 1.2));
+        coronaGlow = falloff * (0.8 + coronaFilaments * (1.2 + voice * 0.8));
+    }
+
+    float flareAngle = sin(angle * 7.0 + u_time * 1.5) * cos(angle * 13.0 - u_time * 0.8);
+    float flareMod = smoothstep(0.1, 0.9, flareAngle) * (0.15 + voice * 0.25 + treb * 0.2);
+    float innerRimGlow = smoothstep(moonRadius + 0.08, moonRadius, r) * smoothstep(moonRadius - 0.005, moonRadius + 0.002, r);
+
+    vec2 diamondPos = vec2(-0.20, 0.18);
+    float diamondDist = length(uv - diamondPos);
+    float diamondFlash = (0.012 + bass * 0.015 + treb * 0.02) / (diamondDist + 0.008);
+    diamondFlash *= smoothstep(moonRadius + 0.08, moonRadius - 0.02, r);
+
+    float outerGlow = exp(-r * 2.2) * (0.35 + bass * 0.3);
+
+    vec3 col = cosmicBg;
+    col += mix(deepOrange, gold, outerGlow) * outerGlow * 0.8;
+
+    if (distFromLimb > 0.0) {
+        vec3 coronaCol = mix(deepOrange, gold, clamp(coronaGlow, 0.0, 1.0));
+        coronaCol = mix(coronaCol, hotWhite, clamp(coronaGlow - 0.7, 0.0, 1.0));
+        col += coronaCol * coronaGlow;
+    }
+
+    col += mix(gold, hotWhite, 0.7) * innerRimGlow * (3.0 + bass * 2.0 + flareMod * 4.0);
+
+    col += hotWhite * diamondFlash * 1.8;
+    col += gold * pow(diamondFlash, 1.5) * 0.6;
+
+    float moonMask = smoothstep(moonRadius, moonRadius - 0.004, r);
+    col = mix(col, vec3(0.002, 0.001, 0.003), moonMask);
+
+    float grain = (hash21(gl_FragCoord.xy + u_time * 10.0) - 0.5) * 0.03;
+    col += vec3(grain);
+
+    gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+}`;
+
 export const VISUALIZER_DESCRIPTIONS: Record<string, string> = {
+  solar_eclipse: 'Eclipse Solar Total 2026 con corona incandescente, destello de diamante y ráfagas solares reactivas al audio.',
   atlantic_pulse: 'Esfera de puntos bioluminiscentes cian, reactiva a la voz.',
   galaxy: 'Galaxia espiral de partículas doradas y violetas.',
   orb: 'Núcleo de plasma pulsante con anillos concéntricos de energía.',
@@ -666,9 +1031,14 @@ export const VISUALIZER_DESCRIPTIONS: Record<string, string> = {
   nova_plasma: 'Núcleo de energía explosivo con flujo de plasma orgánico.',
   quantum_kaleidoscope: 'Patrones fractales simétricos e hipnóticos en movimiento.',
   aurora: 'Cortinas de luz fluidas inspiradas en la aurora polar.',
+  sphere_dots: 'Esfera 3D de puntos cian bioluminiscentes girando, late con el bajo.',
+  torus_dots: 'Donut de puntos cian rotando en 3D, con brillo por profundidad.',
 };
 
 export const AVAILABLE_VISUALIZERS: AudioVisualizerConfig[] = [
+  { id: 'solar_eclipse', name: 'Eclipse Solar 2026', style: 'custom', enabled: true, customCode: SOLAR_ECLIPSE_GLSL },
+  { id: 'sphere_dots', name: 'Esfera de Puntos (Cian)', style: 'custom', enabled: true, customCode: SPHERE_DOTS_GLSL },
+  { id: 'torus_dots', name: 'Toro de Puntos (Cian)', style: 'custom', enabled: true, customCode: TORUS_DOTS_GLSL },
   { id: 'atlantic_pulse', name: 'Atlantic Pulse (Cian)', style: 'custom', enabled: true, customCode: ATLANTIC_PULSE_GLSL },
   { id: 'galaxy', name: 'Constelación Sónica', style: 'custom', enabled: true, customCode: GALAXY_GLSL },
   { id: 'nova_plasma', name: 'Nova de Plasma', style: 'custom', enabled: true, customCode: NOVA_PLASMA_GLSL },
@@ -706,6 +1076,46 @@ export const LiveView: React.FC<LiveViewProps> = ({
   const [userVizIndex, setUserVizIndex] = useState<number | null>(null);
   const [showExtraDetails, setShowExtraDetails] = useState<boolean>(true);
   const [shareToast, setShareToast] = useState<string | null>(null);
+  const [showReelStudio, setShowReelStudio] = useState(false);
+
+  // Estados y Sincronización del Modo Karaoke
+  const [isKaraokeMode, setIsKaraokeMode] = useState(false);
+  const [karaokeViewMode, setKaraokeViewMode] = useState<'prompter' | 'sheet'>('prompter');
+  const [currentTime, setCurrentTime] = useState(0);
+  const activeKaraokeLineRef = useRef<HTMLParagraphElement | null>(null);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (audioEngine.getCurrentTime) {
+        setCurrentTime(audioEngine.getCurrentTime());
+      }
+    }, 100);
+    return () => clearInterval(interval);
+  }, []);
+
+  const rawLyrics = customMetadata?.lyricsSynced || customMetadata?.lyrics || (currentSong as any)?.lyricsSynced || (currentSong as any)?.lyrics || '';
+  const syncedLines = React.useMemo(() => parseLrc(rawLyrics), [rawLyrics]);
+  const hasLrcTimestamps = syncedLines.length > 0;
+  const cleanLyrics = React.useMemo(() => stripTimestamps(rawLyrics), [rawLyrics]);
+
+  const activeIdx = React.useMemo(() => {
+    if (!hasLrcTimestamps) return -1;
+    let index = -1;
+    for (let i = 0; i < syncedLines.length; i++) {
+      if (currentTime >= syncedLines[i].t - 0.15) {
+        index = i;
+      } else {
+        break;
+      }
+    }
+    return index;
+  }, [syncedLines, currentTime, hasLrcTimestamps]);
+
+  useEffect(() => {
+    if (isKaraokeMode && karaokeViewMode === 'sheet' && activeKaraokeLineRef.current) {
+      activeKaraokeLineRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [activeIdx, isKaraokeMode, karaokeViewMode]);
 
   const handleShareSong = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -720,29 +1130,9 @@ export const LiveView: React.FC<LiveViewProps> = ({
       }).catch(() => {});
 
       const shareData = buildShareMessage(currentSong, customMetadata, 'Aura Radio', null);
-
-      if (navigator.share) {
-        try {
-          // No separate `url` — already embedded at the end of shareData.text; passing
-          // both makes WhatsApp append its own mangled (unencoded-spaces) second copy.
-          await navigator.share({
-            title: shareData.title,
-            text: shareData.text
-          });
-          setShareToast('¡Canción compartida! +5 pts sumados al Top 20');
-          setTimeout(() => setShareToast(null), 3500);
-        } catch (err) {
-          console.warn('Native share cancelled or failed', err);
-        }
-      } else {
-        try {
-          await navigator.clipboard.writeText(shareData.text);
-          setShareToast('¡Enlace de canción copiado! +5 pts impulsados al Top 20');
-          setTimeout(() => setShareToast(null), 3500);
-        } catch (err) {
-          console.error('Failed to copy share text', err);
-        }
-      }
+      await executeShareMessage(shareData, '¡Enlace de canción copiado! +5 pts impulsados al Top 20');
+      setShareToast('¡Enlace de canción copiado! +5 pts impulsados al Top 20');
+      setTimeout(() => setShareToast(null), 3500);
     } else {
       if (onShare) onShare(e);
     }
@@ -909,18 +1299,29 @@ export const LiveView: React.FC<LiveViewProps> = ({
       alpha: Math.random() * 0.7 + 0.3,
     }));
 
-    // Attack/release envelope per audio band so GLSL uniforms track sustained energy
-    // instead of raw per-frame FFT jitter — raw bins can swing wildly frame-to-frame,
-    // which made shaders that tie animation speed/phase to audio look jumpy/incoherent.
-    // Fast attack keeps punch on transients (kicks, vocal hits); slow release smooths decay.
+    // --- Audio → visual mapping (estilo Resolume, "menos es más") -------------
+    // Tres drivers coherentes (bass/mid/treble) en vez de seis bandas peleándose,
+    // y el movimiento sigue el TRANSITORIO (energía por encima de una base lenta),
+    // no el nivel absoluto. Así un bombo/golpe PEGA y la música sostenida no clava
+    // todos los uniforms al techo — que era el bug (×1.8 + clamp a 1.15) que dejaba
+    // los shaders planos "a tope de energía" sin latir.
     const smoothed = { bass: 0, voice: 0, vocalPresence: 0, mid: 0, treble: 0, air: 0 };
-    const ATTACK = 0.45;
-    const RELEASE = 0.10;
-    const MAX_BAND = 1.15;
-    const smooth = (prev: number, target: number) => {
-      const clamped = Math.min(target, MAX_BAND);
-      const rate = clamped > prev ? ATTACK : RELEASE;
-      return prev + (clamped - prev) * rate;
+    const bands = {
+      bass:   { fast: 0, slow: 0 },
+      mid:    { fast: 0, slow: 0 },
+      treble: { fast: 0, slow: 0 },
+    };
+    const FAST_ATTACK = 0.55;   // subida rápida para que el golpe salte
+    const FAST_RELEASE = 0.14;  // caída suave tras el golpe
+    const SLOW_RATE = 0.02;     // la base deriva despacio = "volumen medio reciente"
+    const AMBIENT = 0.35;       // pequeña cama constante para que lo sostenido respire
+    const PUNCH = 2.6;          // cuánto pega el transitorio por encima de la base
+    const react = (band: { fast: number; slow: number }, x: number) => {
+      const fRate = x > band.fast ? FAST_ATTACK : FAST_RELEASE;
+      band.fast += (x - band.fast) * fRate;
+      band.slow += (band.fast - band.slow) * SLOW_RATE;
+      const transient = Math.max(0, band.fast - band.slow);
+      return Math.min(1, band.slow * AMBIENT + transient * PUNCH);
     };
 
     const render = () => {
@@ -956,35 +1357,48 @@ export const LiveView: React.FC<LiveViewProps> = ({
 
         if (isGLSL) {
           const analysis = audioEngine.getAudioAnalysis();
-          let bass = analysis.bass * (isPlaying ? 1.8 : 0.2);
-          let voice = analysis.voice * (isPlaying ? 2.2 : 0.2);
-          let vocalPresence = analysis.vocalPresence * (isPlaying ? 2.2 : 0.2);
-          let mid = analysis.mids * (isPlaying ? 1.6 : 0.2);
-          let treble = analysis.treble * (isPlaying ? 1.5 : 0.2);
-          let air = analysis.air * (isPlaying ? 1.5 : 0.2);
 
+          // Energía cruda (0–1) de los tres drivers. Solo recurrimos a los bins
+          // en bruto si el analyser devolvió un frame completamente muerto.
+          let rawBass = analysis.bass;
+          let rawMid = analysis.mids;
+          let rawTreble = analysis.treble;
           if (freqArray && freqArray.length >= 32 && analysis.overall === 0) {
-            let bSum = 0, vSum = 0, vpSum = 0, mSum = 0, tSum = 0, aSum = 0;
+            let bSum = 0, mSum = 0, tSum = 0;
             for (let i = 0; i < 3; i++) bSum += freqArray[i];
-            for (let i = 2; i < 16; i++) vSum += freqArray[i];
-            for (let i = 6; i < 20; i++) vpSum += freqArray[i];
-            for (let i = 12; i < 24; i++) mSum += freqArray[i];
-            for (let i = 24; i < 30; i++) tSum += freqArray[i];
-            for (let i = 30; i < 32; i++) aSum += freqArray[i];
-            bass = (bSum / 3 / 255) * (isPlaying ? 1.8 : 0.2);
-            voice = (vSum / 14 / 255) * (isPlaying ? 2.2 : 0.2);
-            vocalPresence = (vpSum / 14 / 255) * (isPlaying ? 2.2 : 0.2);
-            mid = (mSum / 12 / 255) * (isPlaying ? 1.6 : 0.2);
-            treble = (tSum / 6 / 255) * (isPlaying ? 1.5 : 0.2);
-            air = (aSum / 2 / 255) * (isPlaying ? 1.5 : 0.2);
+            for (let i = 5; i < 20; i++) mSum += freqArray[i];
+            for (let i = 24; i < 32; i++) tSum += freqArray[i];
+            rawBass = bSum / 3 / 255;
+            rawMid = mSum / 15 / 255;
+            rawTreble = tSum / 8 / 255;
           }
 
-          smoothed.bass = smooth(smoothed.bass, bass);
-          smoothed.voice = smooth(smoothed.voice, voice);
-          smoothed.vocalPresence = smooth(smoothed.vocalPresence, vocalPresence);
-          smoothed.mid = smooth(smoothed.mid, mid);
-          smoothed.treble = smooth(smoothed.treble, treble);
-          smoothed.air = smooth(smoothed.air, air);
+          let dBass: number, dMid: number, dTreble: number;
+          if (isPlaying) {
+            dBass = react(bands.bass, rawBass);
+            dMid = react(bands.mid, rawMid);
+            dTreble = react(bands.treble, rawTreble);
+          } else {
+            // Respiración suave en reposo para que no quede congelado; sembramos
+            // las envolventes para que el primer golpe al reanudar aún pegue.
+            const t = angle;
+            dBass = 0.18 + Math.sin(t * 0.7) * 0.08;
+            dMid = 0.15 + Math.sin(t * 0.9 + 1.0) * 0.06;
+            dTreble = 0.12 + Math.sin(t * 1.3 + 2.0) * 0.05;
+            bands.bass.fast = bands.bass.slow = dBass;
+            bands.mid.fast = bands.mid.slow = dMid;
+            bands.treble.fast = bands.treble.slow = dTreble;
+          }
+
+          // Alimentamos todos los uniforms que esperan los shaders, pero todos
+          // derivados de los tres drivers: la voz va con los medios, el aire con
+          // los agudos. Coherente y sin bandas fantasma.
+          smoothed.bass = dBass;
+          smoothed.mid = dMid;
+          smoothed.treble = dTreble;
+          smoothed.voice = dMid;
+          smoothed.vocalPresence = dMid;
+          smoothed.air = dTreble;
 
           const colorPrimaryRgb = hexToRgbNormalized(phaseInfo.primaryColor);
           const colorSecondaryRgb = hexToRgbNormalized(phaseInfo.secondaryColor);
@@ -1106,28 +1520,73 @@ export const LiveView: React.FC<LiveViewProps> = ({
         }
 
       } else if (vizType === 'radial') {
-        // MODE 4: Radial Frequency Spectrum Bars
-        const barCount = 42;
-        const radius = baseRadius * 0.9;
+        // MODE 4: 3-Layer 360° Circular Radial Spectrum (Bass, Voice, Treble)
+        const layers = [
+          {
+            radius: baseRadius * 0.45,
+            barCount: 18,
+            lineWidth: 7, // Grosor ancho para la capa interna (Bass)
+            color: phaseInfo.primaryColor,
+            freqOffset: 0,
+            audioVal: freqArray ? (freqArray[2] / 255) : freqIntensity,
+            rotSpeed: angle * 0.25,
+            maxHeight: 35
+          },
+          {
+            radius: baseRadius * 0.75,
+            barCount: 36,
+            lineWidth: 3.5, // Grosor medio para la capa intermedia (Voz/Mid)
+            color: phaseInfo.secondaryColor,
+            freqOffset: 8,
+            audioVal: freqArray ? (freqArray[10] / 255) : freqIntensity,
+            rotSpeed: -angle * 0.15,
+            maxHeight: 45
+          },
+          {
+            radius: baseRadius * 1.05,
+            barCount: 72,
+            lineWidth: 1.5, // Grosor fino (agujas) para la capa externa (Treble)
+            color: phaseInfo.secondaryColor || '#00f0ff',
+            freqOffset: 20,
+            audioVal: freqArray ? (freqArray[24] / 255) : freqIntensity,
+            rotSpeed: angle * 0.08,
+            maxHeight: 55
+          }
+        ];
 
-        for (let i = 0; i < barCount; i++) {
-          const radAngle = (i / barCount) * Math.PI * 2 + angle * 0.5;
-          const freqVal = freqArray ? (freqArray[i % 32] / 255) : 0.2;
-          const barHeight = 20 + freqVal * 90;
-
-          const x1 = centerX + Math.cos(radAngle) * radius;
-          const y1 = centerY + Math.sin(radAngle) * radius;
-          const x2 = centerX + Math.cos(radAngle) * (radius + barHeight);
-          const y2 = centerY + Math.sin(radAngle) * (radius + barHeight);
-
+        layers.forEach((layer) => {
+          // Anillo base circular sutil
           ctx.beginPath();
-          ctx.moveTo(x1, y1);
-          ctx.lineTo(x2, y2);
-          ctx.strokeStyle = i % 2 === 0 ? phaseInfo.primaryColor : phaseInfo.secondaryColor;
-          ctx.lineWidth = 4;
-          ctx.lineCap = 'round';
+          ctx.arc(centerX, centerY, layer.radius, 0, Math.PI * 2);
+          ctx.strokeStyle = layer.color + '44';
+          ctx.lineWidth = Math.max(1, layer.lineWidth * 0.4);
           ctx.stroke();
-        }
+
+          // Renderizar crestas 360° continuas para esta capa
+          for (let i = 0; i < layer.barCount; i++) {
+            const radAngle = (i / layer.barCount) * Math.PI * 2 + layer.rotSpeed;
+            const freqIdx = (layer.freqOffset + (i % 12)) % 32;
+            const rawVal = freqArray ? (freqArray[freqIdx] / 255) : (0.2 + Math.sin(i * 0.5 + angle * 2) * 0.1);
+            const val = rawVal * 0.7 + layer.audioVal * 0.3;
+            const barHeight = 8 + val * layer.maxHeight;
+
+            const x1 = centerX + Math.cos(radAngle) * layer.radius;
+            const y1 = centerY + Math.sin(radAngle) * layer.radius;
+            const x2 = centerX + Math.cos(radAngle) * (layer.radius + barHeight);
+            const y2 = centerY + Math.sin(radAngle) * (layer.radius + barHeight);
+
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.strokeStyle = layer.color;
+            ctx.lineWidth = layer.lineWidth;
+            ctx.lineCap = 'round';
+            ctx.shadowColor = layer.color;
+            ctx.shadowBlur = isPlaying ? 10 : 4;
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+          }
+        });
 
       } else if (vizType === 'matrix') {
         // MODE 5: Digital Matrix Rain
@@ -1375,6 +1834,28 @@ export const LiveView: React.FC<LiveViewProps> = ({
             <span className="hidden md:inline">{activeVisualizers[currentVizIndex]?.name}</span>
           </button>
 
+          {/* Dedicated Karaoke Button */}
+          <button
+            onClick={() => {
+              triggerHaptic(12);
+              setIsKaraokeMode(prev => !prev);
+            }}
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full border backdrop-blur-md text-xs font-black transition-all cursor-pointer active:scale-95 shadow-lg ${
+              isKaraokeMode
+                ? 'bg-gradient-to-r from-sky-400 via-indigo-500 to-purple-500 text-white border-sky-300 shadow-[0_0_20px_rgba(56,189,248,0.5)]'
+                : hasLrcTimestamps
+                ? 'bg-gradient-to-r from-purple-600/30 to-indigo-600/30 hover:from-purple-600/50 hover:to-indigo-600/50 border-purple-400/50 text-sky-300 hover:text-white shadow-[0_0_15px_rgba(168,85,247,0.3)] animate-pulse'
+                : 'bg-black/40 hover:bg-black/60 border-white/10 text-white/80 hover:text-white'
+            }`}
+            title="Cambiar a Modo Karaoke"
+          >
+            <Mic className="w-3.5 h-3.5 text-sky-300" />
+            <span>Karaoke</span>
+            {hasLrcTimestamps && (
+              <span className="w-2 h-2 rounded-full bg-sky-400 animate-ping ml-0.5" />
+            )}
+          </button>
+
           {/* Fullscreen Button (Pantalla Completa / Modo Ambiente) */}
           <button
             onClick={toggleFullscreen}
@@ -1483,6 +1964,26 @@ export const LiveView: React.FC<LiveViewProps> = ({
                 {showExtraDetails ? <EyeOff className="w-3.5 h-3.5 text-amber-300" /> : <Eye className="w-3.5 h-3.5 text-accent animate-pulse" />}
                 <span className="text-[11px] uppercase tracking-wider">{showExtraDetails ? 'Ocultar Info' : 'Mostrar Info'}</span>
               </button>
+
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  triggerHaptic(12);
+                  setIsKaraokeMode(prev => !prev);
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-bold transition-all cursor-pointer backdrop-blur-md shadow-lg active:scale-95 ${
+                  isKaraokeMode
+                    ? 'bg-gradient-to-r from-sky-400 via-indigo-500 to-purple-500 text-white border-sky-300 shadow-[0_0_15px_rgba(56,189,248,0.4)]'
+                    : hasLrcTimestamps
+                    ? 'bg-sky-500/20 hover:bg-sky-500/30 border-sky-400/40 text-sky-300 font-black animate-pulse'
+                    : 'bg-white/5 hover:bg-white/10 border-white/10 text-white/80'
+                }`}
+                title="Activar / Desactivar Modo Karaoke"
+              >
+                <Mic className="w-3.5 h-3.5 text-sky-300" />
+                <span className="text-[11px] uppercase tracking-wider">{isKaraokeMode ? 'Salir Karaoke' : 'Modo Karaoke'}</span>
+              </button>
             </div>
 
             {/* Current Playing Info (Always Visible: Title & Artist) */}
@@ -1505,6 +2006,135 @@ export const LiveView: React.FC<LiveViewProps> = ({
                 {currentSong?.artist || "Flujo continuo de música inteligente libre de derechos"}
               </p>
             </motion.div>
+
+            {/* MODO KARAOKE HUD DEDICADO OVERLAY */}
+            <AnimatePresence>
+              {isKaraokeMode && (
+                <motion.div
+                  key="karaoke-hud-card"
+                  initial={{ opacity: 0, scale: 0.95, y: 15 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95, y: -15 }}
+                  transition={{ duration: 0.4 }}
+                  className="w-full max-w-xl mx-auto bg-black/85 border border-sky-500/40 rounded-3xl p-5 sm:p-7 backdrop-blur-2xl shadow-[0_0_50px_rgba(56,189,248,0.3)] text-center relative overflow-hidden my-4 z-30"
+                >
+                  <div className="absolute inset-0 bg-gradient-to-r from-sky-500/10 via-purple-500/10 to-indigo-500/10 pointer-events-none" />
+
+                  {/* Header Bar inside Karaoke Card */}
+                  <div className="flex items-center justify-between gap-2 border-b border-white/10 pb-3 mb-4 relative z-10">
+                    <div className="flex items-center gap-2">
+                      <span className="relative flex h-2.5 w-2.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-sky-500"></span>
+                      </span>
+                      <span className="text-[11px] font-mono font-black tracking-widest text-sky-300 uppercase flex items-center gap-1.5">
+                        🎤 AURA KARAOKE HUD
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-white/60 font-mono font-bold bg-white/10 px-2.5 py-1 rounded-full border border-white/15">
+                        {Math.floor(currentTime / 60)}:{String(Math.floor(currentTime % 60)).padStart(2, '0')}
+                      </span>
+
+                      {hasLrcTimestamps && (
+                        <div className="flex items-center bg-white/10 p-0.5 rounded-xl border border-white/15 text-[10px] font-mono">
+                          <button
+                            onClick={() => { setKaraokeViewMode('prompter'); triggerHaptic(6); }}
+                            className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                              karaokeViewMode === 'prompter' ? 'bg-sky-500 text-white font-bold' : 'text-white/50 hover:text-white'
+                            }`}
+                          >
+                            Prompter
+                          </button>
+                          <button
+                            onClick={() => { setKaraokeViewMode('sheet'); triggerHaptic(6); }}
+                            className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                              karaokeViewMode === 'sheet' ? 'bg-sky-500 text-white font-bold' : 'text-white/50 hover:text-white'
+                            }`}
+                          >
+                            Lista
+                          </button>
+                        </div>
+                      )}
+
+                      <button
+                        onClick={() => setIsKaraokeMode(false)}
+                        className="p-1.5 text-white/50 hover:text-white bg-white/10 hover:bg-white/20 rounded-full transition-all cursor-pointer"
+                        title="Cerrar Karaoke"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Content Body */}
+                  {hasLrcTimestamps ? (
+                    karaokeViewMode === 'prompter' ? (
+                      /* PROMPTER 3D VIEW (3 LINES) */
+                      <div className="relative text-center min-h-[130px] flex flex-col items-center justify-center py-2">
+                        <p className="text-xs sm:text-sm text-white/30 truncate transition-all duration-300 min-h-[20px]">
+                          {activeIdx > 0 ? syncedLines[activeIdx - 1]?.text : ' '}
+                        </p>
+
+                        <p className="text-lg sm:text-2xl font-black my-2 px-4 py-1 transition-all duration-300 text-transparent bg-clip-text bg-gradient-to-r from-sky-300 via-indigo-200 to-fuchsia-300 drop-shadow-[0_0_30px_rgba(56,189,248,0.7)] scale-105">
+                          {activeIdx >= 0 ? syncedLines[activeIdx]?.text : (syncedLines[0]?.text || 'Iniciando letra...')}
+                        </p>
+
+                        <p className="text-xs sm:text-sm text-white/35 truncate transition-all duration-300 min-h-[20px]">
+                          {activeIdx + 1 < syncedLines.length ? syncedLines[activeIdx + 1]?.text : ' '}
+                        </p>
+                      </div>
+                    ) : (
+                      /* SCROLLING LYRIC SHEET VIEW */
+                      <div className="max-h-60 overflow-y-auto no-scrollbar space-y-2 py-2 px-2 text-center">
+                        {syncedLines.map((line, idx) => {
+                          const isActive = idx === activeIdx;
+                          return (
+                            <p
+                              key={idx}
+                              ref={isActive ? activeKaraokeLineRef : null}
+                              className={`transition-all duration-300 text-xs sm:text-sm font-bold py-1.5 px-3 rounded-xl cursor-pointer ${
+                                isActive
+                                  ? 'bg-sky-500/20 text-sky-200 border border-sky-500/40 shadow-[0_0_20px_rgba(56,189,248,0.3)] scale-105 font-black'
+                                  : 'text-white/40 hover:text-white/70'
+                              }`}
+                              onClick={() => {
+                                if (audioEngine.seek) audioEngine.seek(line.t);
+                              }}
+                            >
+                              {line.text}
+                            </p>
+                          );
+                        })}
+                      </div>
+                    )
+                  ) : cleanLyrics ? (
+                    /* PLAIN TEXT FALLBACK */
+                    <div className="space-y-3 py-2">
+                      <div className="inline-flex items-center gap-1.5 text-[10px] font-mono text-amber-300 bg-amber-500/10 px-3 py-1 rounded-full border border-amber-500/20">
+                        <span>ℹ️ Letra en formato lectura (sin sincronización temporal LRC)</span>
+                      </div>
+                      <p className="text-xs sm:text-sm text-white/90 leading-relaxed font-semibold whitespace-pre-line max-h-56 overflow-y-auto no-scrollbar select-text text-center">
+                        {cleanLyrics}
+                      </p>
+                    </div>
+                  ) : (
+                    /* NO LYRICS AVAILABLE */
+                    <div className="py-6 space-y-3">
+                      <p className="text-sm font-bold text-white/70">Esta canción no dispone de letra ni Karaoke configurado aún.</p>
+                      <p className="text-xs text-white/40">Puedes sincronizar las letras desde el catálogo o explorar canciones con Karaoke en el Blog.</p>
+                      <a
+                        href="/blog"
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 text-xs font-black border border-sky-500/30 transition-all"
+                      >
+                        <span>Explorar canciones con Karaoke en el Blog →</span>
+                      </a>
+                    </div>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             {/* Collapsible Secondary Info: Lyrics & Rotating Quote */}
             <AnimatePresence>
@@ -1636,12 +2266,22 @@ export const LiveView: React.FC<LiveViewProps> = ({
           )}
 
           <button
-            onClick={handleShareSong}
+            onClick={onShare || handleShareSong}
             className="p-3 bg-black/40 hover:bg-black/60 text-white/80 hover:text-white rounded-full border border-white/10 backdrop-blur-md transition-all active:scale-95 cursor-pointer shadow-md relative"
             title="Compartir esta canción (+5 pts Top 20)"
           >
             <Share2 className="w-5 h-5 text-accent" />
           </button>
+
+          {currentSong && !currentSong.isLive && currentSong.streamUrl && (
+            <button
+              onClick={() => { triggerHaptic(10); setShowReelStudio(true); }}
+              className="p-3 bg-black/40 hover:bg-black/60 text-white/80 hover:text-white rounded-full border border-white/10 backdrop-blur-md transition-all active:scale-95 cursor-pointer shadow-md"
+              title="Crear un Reel de esta canción"
+            >
+              <Video className="w-5 h-5 text-accent" />
+            </button>
+          )}
         </div>
 
         <div className="flex items-center gap-3">
@@ -1656,6 +2296,28 @@ export const LiveView: React.FC<LiveViewProps> = ({
           </button>
         </div>
       </div>
+
+      <ReelStudio
+        isOpen={showReelStudio}
+        onClose={() => setShowReelStudio(false)}
+        song={React.useMemo(() => (currentSong ? {
+          id: currentSong.id,
+          title: customMetadata?.title || currentSong.title,
+          artist: customMetadata?.artist || currentSong.artist,
+          streamUrl: currentSong.streamUrl,
+          lyrics: customMetadata?.lyricsSynced || customMetadata?.lyrics || (currentSong as any).lyrics || ''
+        } : null), [
+          currentSong?.id,
+          currentSong?.title,
+          currentSong?.artist,
+          currentSong?.streamUrl,
+          customMetadata?.title,
+          customMetadata?.artist,
+          customMetadata?.lyricsSynced,
+          customMetadata?.lyrics
+        ])}
+        stationName="Aura Radio"
+      />
     </div>
   );
 };
